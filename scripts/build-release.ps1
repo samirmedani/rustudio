@@ -4,8 +4,9 @@ Fabrique la release de Rustudio (sous Windows, Rust stable) :
   dist\Rustudio.zip         archive de la mise a jour integree, et dist\Rustudio.sha256
   dist\GoXLR-Mini.zip       passage depuis GoXLR Mini 4.x (publie aussi sur l'ancien depot), et dist\GoXLR-Mini.sha256
 Le manifeste (manifest.json) donne la version, le commit et l'empreinte de chaque fichier.
+-PayloadOnly : seulement Rustudio.zip et Rustudio.sha256 (test de la mise a jour integree).
 #>
-param([string]$Out = (Join-Path $PSScriptRoot '..\dist'))
+param([string]$Out = (Join-Path $PSScriptRoot '..\dist'), [switch]$PayloadOnly)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -56,6 +57,11 @@ try {
   Write-Manifest $stage 'Rustudio' $version $commit
   $zip = Join-Path $Out 'Rustudio.zip'
   New-Zip $stage $zip
+  if ($PayloadOnly) {
+    [IO.File]::WriteAllText((Join-Path $Out 'Rustudio.sha256'), ((Sha $zip) + '  Rustudio.zip' + $nl), $utf8)
+    Write-Host ("Rustudio.zip : {0:N1} Mo" -f ((Get-Item $zip).Length / 1MB))
+    return
+  }
 
   # 2. installeur : l'archive est embarquee dans l'exe
   $env:RUSTUDIO_PAYLOAD = $zip

@@ -876,6 +876,8 @@ fn initial_state(cfg: &Config) -> Value {
 impl Ctl {
     pub fn new(cfg: Config, loader: Loader, sim: Option<Sim>, persist: bool) -> Arc<Ctl> {
         let wake = Arc::new(Event::new());
+        // premier lancement (reglages repris de GoXLR Mini ou profil par defaut) : on les ecrit tout de suite
+        let first_run = !cfg.state_path().exists();
         let mut st = state::normalize_state(&initial_state(&cfg));
         if theme(&st.lighting.theme).is_some() {
             lighting::apply_theme(&mut st);
@@ -886,7 +888,7 @@ impl Ctl {
         let inner = Inner {
             state: st, connected: false, present: None, last_error: None, connected_since: None, conn_mono: None,
             live: Live::default(), version: 1, job: None, fast_level: false, level_until: None, dirty: HashSet::new(),
-            want: 0, done: 0, save_dirty: false, prev_mask: 0, prev_pos: None, pos_cand: [0; 4], pos_count: [0; 4],
+            want: 0, done: 0, save_dirty: first_run, prev_mask: 0, prev_pos: None, pos_cand: [0; 4], pos_count: [0; 4],
             faders_seen: false, btn: HashMap::new(), bleep: false, blink: HashMap::new(), gain_override: None,
             listen_until: None, listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
             errors: VecDeque::new(), connects: 0, reconnects: 0, fail_streak: 0, auto_active: AutoActive::Off,

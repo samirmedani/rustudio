@@ -29,6 +29,9 @@ jobs:
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1
+      - name: Passage depuis GoXLR Mini 4.8.0
+        shell: pwsh
+        run: ./scripts/migration-test.ps1
       - name: Installation complète sur la machine de test
         shell: pwsh
         run: ./scripts/smoke-test.ps1

@@ -538,6 +538,9 @@ fn scenes_automatiques() {
 #[test]
 fn etat_sauve_et_relu() {
     let b = Bench::new();
+    // premier lancement : l'etat s'ecrit sans attendre un changement
+    b.ctl.save_if_dirty();
+    assert!(b.tmp.join("state.json").exists(), "état du premier lancement non écrit");
     b.act("volume", json!({"channel": "Chat", "value": 33}));
     b.act("settings", json!({"mic_button": {"mode": "hold"}}));
     b.ctl.save_if_dirty();

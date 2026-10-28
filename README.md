@@ -165,9 +165,11 @@ cargo run -p rustudio-engine -- run --child --simulate --port 14566   # puis htt
 ```
 
 Depuis macOS ou Linux, [cargo-xwin](https://github.com/rust-cross/cargo-xwin) fabrique les `.exe` Windows. Une
-release se publie en poussant un tag `vX.Y.Z` : GitHub compile tout, installe Rustudio sur une machine Windows de
-test (service, moteur, appli, désinstallation), puis publie les fichiers et les notes tirées de
-[CHANGELOG.md](CHANGELOG.md). Voir [CONTRIBUTING.md](CONTRIBUTING.md).
+release se publie en poussant un tag `vX.Y.Z` : GitHub compile tout et, sur une machine Windows de test, joue le
+passage depuis la vraie GoXLR Mini 4.8.0 (son updater, un faux GitHub local, reprise des réglages), puis
+l'installation complète (service, moteur, appli, désinstallation), avant de publier les fichiers et les notes
+tirées de [CHANGELOG.md](CHANGELOG.md). À chaque push, la CI teste aussi la mise à jour intégrée vers une version
+suivante. Voir [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Ajouter un appareil
 

@@ -555,7 +555,8 @@ impl Updater {
         if plan.exists() && !work.join("result.json").exists() {
             let done = read_json(&plan).and_then(|p| p.get("version").and_then(|v| v.as_str()).map(String::from)) == Some(self.current());
             let age = std::fs::metadata(&plan).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(9999);
-            if !done && age < 300 {
+            // l'installation ecrit son resultat apres avoir relance le moteur et rouvert l'appli : on l'attend
+            if age < if done { 120 } else { 300 } {
                 return false; // installation peut-etre en cours
             }
         }

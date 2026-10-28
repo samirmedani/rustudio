@@ -23,6 +23,10 @@ $code = try { (Invoke-WebRequest -Method Post http://127.0.0.1:14565/api/volume 
 if ($code -ne 403) { throw "POST sans en-tete accepte ($code)" }
 $r = Invoke-RestMethod -Method Post http://127.0.0.1:14565/api/volume -Headers @{ 'X-Rustudio' = '1' } -Body '{"channel":"Mic","value":200}' -ContentType 'application/json'
 if (-not $r.ok) { throw 'Action refusee' }
+$sp = Join-Path $data 'state.json'
+function Saved-Mic { try { (Get-Content $sp -Raw | ConvertFrom-Json).volumes.Mic } catch { $null } }
+for ($i = 0; $i -lt 20 -and (Saved-Mic) -ne 200; $i++) { Start-Sleep -Milliseconds 500 }
+if ((Saved-Mic) -ne 200) { Show-Log; throw 'Reglage jamais enregistre sur le disque' }
 if (-not (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Rustudio' -ErrorAction SilentlyContinue)) { throw 'Entree Applications absente' }
 
 # moteur tue : le superviseur le relance
@@ -45,5 +49,5 @@ Start-Process (Join-Path $dir 'rustudio-engine.exe') -ArgumentList 'uninstall', 
 for ($i = 0; $i -lt 40 -and ((Get-Service Rustudio -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $dir 'Rustudio.exe'))); $i++) { Start-Sleep 1 }
 if (Get-Service Rustudio -ErrorAction SilentlyContinue) { throw 'Service toujours present apres desinstallation' }
 if (Test-Path (Join-Path $dir 'Rustudio.exe')) { throw 'Fichiers toujours presents apres desinstallation' }
-if (-not (Test-Path (Join-Path $data 'state.json'))) { throw 'Reglages perdus a la desinstallation' }
+if ((Saved-Mic) -ne 200) { throw 'Reglages perdus a la desinstallation' }
 Write-Host 'Installation, service, moteur, interface, appli et desinstallation : OK'

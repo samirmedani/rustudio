@@ -25,6 +25,7 @@ coverage/
 
 # release
 dist/
+dist-next/
 
 # Tauri (schemas generes)
 crates/app/gen/

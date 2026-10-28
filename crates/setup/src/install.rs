@@ -91,6 +91,11 @@ fn health() -> Option<Value> {
 /// Arrete ce qui tourne : Rustudio (service, appli) et GoXLR Mini (tache, moteur Python, appli).
 fn stop_all() {
     run("sc", &["stop", NAME]);
+    // le service s'arrete proprement (pas de relance automatique) avant qu'on touche a ses fichiers
+    powershell(&format!(
+        "$s = Get-Service {} -ErrorAction SilentlyContinue; if ($s) {{ try {{ $s.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(15)) }} catch {{ }} }}",
+        q(NAME)
+    ));
     run("schtasks", &["/end", "/tn", LEGACY]);
     let dirs = [install_dir(), legacy_dir()];
     let pat = dirs.iter().map(|d| q(&format!("{}\\", d.display()))).collect::<Vec<_>>().join(",");

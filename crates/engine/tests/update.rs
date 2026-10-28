@@ -257,8 +257,12 @@ fn nettoyage_apres_installation() {
     let work = u.tmp.join("data/update");
     std::fs::create_dir_all(work.join("new")).unwrap();
     std::fs::write(work.join("plan.json"), json!({"version": "4.9.0"}).to_string()).unwrap();
+    assert!(!u.ctl.updater.cleanup_after_install(), "installation pas encore terminee (pas de resultat)");
+    std::fs::write(work.join("result.json"), json!({"version": "4.9.0", "ok": true}).to_string()).unwrap();
     assert!(u.ctl.updater.cleanup_after_install());
-    assert_eq!(std::fs::read_dir(&work).unwrap().count(), 0);
+    assert!(!work.join("new").exists() && !work.join("plan.json").exists());
+    assert!(work.join("result.json").exists(), "le resultat reste pour l'avis « installee »");
+    std::fs::remove_file(work.join("result.json")).unwrap();
     std::fs::create_dir_all(work.join("new")).unwrap();
     std::fs::write(work.join("plan.json"), json!({"version": "9.9.9"}).to_string()).unwrap();
     assert!(!u.ctl.updater.cleanup_after_install(), "installation d'une autre version peut-etre en cours");

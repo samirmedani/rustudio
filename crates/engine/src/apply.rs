@@ -186,18 +186,23 @@ fn engine_pids(root: &Path) -> Vec<u32> {
 impl Hooks for WinHooks {
     fn stop(&self, plan: &Plan) {
         crate::win::run_hidden("sc", &["stop", &plan.service]);
+        // arret propre d'abord : un service tue en plein arret se croit en panne et Windows le relancerait
+        // pendant l'echange des fichiers
         for _ in 0..30 {
+            if engine_pids(&plan.to).is_empty() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        for _ in 0..10 {
             let pids = engine_pids(&plan.to);
             if pids.is_empty() {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(500));
-            if engine_pids(&plan.to).is_empty() {
-                return;
-            }
-            for pid in engine_pids(&plan.to) {
+            for pid in pids {
                 crate::win::kill_pid(pid);
             }
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
     fn start(&self, plan: &Plan) {
