@@ -1,0 +1,30 @@
+[package]
+name = "rustudio-app"
+description = "Rustudio : appli Windows (fenetre, icone d'etat, bulle a l'ecran, peripheriques son par defaut)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "Rustudio"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2.5"
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "2.12", default-features = false, features = ["json"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+webview2-com = "0.39"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation", "Win32_Media_Audio", "Win32_System_Com", "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_System_Com_StructuredStorage", "Win32_Devices_FunctionDiscovery",
+  "Win32_UI_Shell_PropertiesSystem", "Win32_System_Threading",
+] }

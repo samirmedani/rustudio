@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Rustudio</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#F5F5F7;color:#1d1d1f;font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;user-select:none;-webkit-font-smoothing:antialiased}
+body{background:radial-gradient(900px 500px at 15% -10%,rgba(94,92,230,.10),transparent 60%),radial-gradient(700px 500px at 110% 20%,rgba(255,55,95,.08),transparent 60%),#F5F5F7}
+.wrap{height:100%;max-width:540px;margin:0 auto;display:flex;flex-direction:column;align-items:center;padding:44px 40px 28px}
+.logo{width:96px;height:96px;filter:drop-shadow(0 18px 30px rgba(16,16,20,.28));margin-bottom:22px}
+h1{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px}
+.sub{color:#6e6e73;font-size:14.5px;margin:0 0 26px;text-align:center;line-height:1.45}
+.card{width:100%;background:rgba(255,255,255,.82);backdrop-filter:blur(20px);border-radius:18px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 28px rgba(0,0,0,.06);padding:6px 18px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 0}
+.row+.row{border-top:.5px solid rgba(0,0,0,.08)}
+.row b{font-weight:600;font-size:14px;display:block}.row small{color:#6e6e73;font-size:12.5px;display:block;margin-top:2px}
+.sw{width:46px;height:28px;border-radius:14px;background:rgba(120,120,128,.2);position:relative;flex:none;cursor:pointer;transition:background .25s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.2);transition:transform .3s cubic-bezier(.2,.9,.2,1)}
+.sw.on{background:#34C759}.sw.on::after{transform:translateX(18px)}
+.note{width:100%;margin-top:14px;border-radius:14px;padding:12px 14px;background:rgba(0,113,227,.07);color:#0b4f9c;font-size:12.8px;line-height:1.45;display:none}
+.note.on{display:block}
+.grow{flex:1}
+.btn{border:0;border-radius:980px;height:44px;padding:0 26px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,background .2s}
+.btn:active{transform:scale(.98)}
+.primary{background:#0071E3;color:#fff;box-shadow:0 6px 18px rgba(0,113,227,.28)}.primary:hover{background:#0077ED}
+.ghost{background:rgba(0,0,0,.05);color:#1d1d1f}
+.actions{display:flex;gap:10px;justify-content:center;width:100%}
+.prog{width:100%;height:8px;border-radius:4px;background:rgba(0,0,0,.07);overflow:hidden;margin:26px 0 12px}
+.bar{height:100%;width:0;background:linear-gradient(90deg,#5E5CE6,#0071E3);border-radius:4px;transition:width .35s ease}
+.step{color:#6e6e73;font-size:13.5px;min-height:20px}
+.ok{width:64px;height:64px;border-radius:50%;background:#34C759;display:grid;place-items:center;margin:8px auto 18px;box-shadow:0 10px 24px rgba(52,199,89,.35)}
+.ok svg{width:30px;height:30px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.ko{background:#FF3B30;box-shadow:0 10px 24px rgba(255,59,48,.3)}
+.view{display:none;width:100%;flex:1;flex-direction:column;align-items:center}.view.on{display:flex}
+.center{text-align:center}
+.legal{color:#8e8e93;font-size:11px;text-align:center;margin-top:14px;line-height:1.4}
+</style></head>
+<body><div class="wrap">
+<div class="logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="lg-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34343c"/><stop offset="1" stop-color="#101014"/></linearGradient><linearGradient id="lg-a" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#5E5CE6"/><stop offset="1" stop-color="#64D2FF"/></linearGradient><linearGradient id="lg-b" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#FF375F"/><stop offset="1" stop-color="#FF9F0A"/></linearGradient></defs><rect x="2" y="2" width="60" height="60" rx="16" fill="url(#lg-bg)"/><rect x="2.5" y="2.5" width="59" height="59" rx="15.5" fill="none" stroke="rgba(255,255,255,.14)"/><g><rect x="14" y="14" width="6" height="36" rx="3" fill="#000" opacity=".55"/><rect x="14" y="30" width="6" height="20" rx="3" fill="url(#lg-a)"/><rect x="11" y="27" width="12" height="6" rx="3" fill="#fff"/><rect x="25" y="14" width="6" height="36" rx="3" fill="#000" opacity=".55"/><rect x="25" y="21" width="6" height="29" rx="3" fill="url(#lg-b)"/><rect x="22" y="18" width="12" height="6" rx="3" fill="#fff"/><rect x="36" y="14" width="6" height="36" rx="3" fill="#000" opacity=".55"/><rect x="36" y="36" width="6" height="14" rx="3" fill="url(#lg-a)"/><rect x="33" y="33" width="12" height="6" rx="3" fill="#fff"/><rect x="47" y="14" width="6" height="36" rx="3" fill="#000" opacity=".55"/><rect x="47" y="26" width="6" height="24" rx="3" fill="url(#lg-b)"/><rect x="44" y="23" width="12" height="6" rx="3" fill="#fff"/></g></svg></div>
+<div class="view on" id="v-welcome">
+  <h1>Rustudio</h1>
+  <p class="sub">Ta GoXLR Mini, ta voix et ton son, réglés proprement.<br><span id="ver"></span></p>
+  <div class="card">
+    <div class="row"><div><b>Démarrer avec Windows</b><small>L'icône attend près de l'horloge.</small></div><div class="sw on" id="sw-startup"></div></div>
+    <div class="row"><div><b>Raccourci sur le Bureau</b><small>En plus du menu Démarrer.</small></div><div class="sw on" id="sw-desktop"></div></div>
+  </div>
+  <div class="note" id="note"></div>
+  <div class="grow"></div>
+  <div class="actions"><button class="btn ghost" id="b-cancel">Annuler</button><button class="btn primary" id="b-install">Installer</button></div>
+  <p class="legal">Logiciel libre (licence MIT). Projet indépendant, non affilié à TC-Helicon ni à Music Tribe.</p>
+</div>
+<div class="view" id="v-work">
+  <h1>Installation…</h1>
+  <p class="sub">Quelques secondes. Le son peut couper un instant.</p>
+  <div class="prog"><div class="bar" id="bar"></div></div>
+  <div class="step" id="step">Préparation…</div>
+</div>
+<div class="view" id="v-done">
+  <div class="ok"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+  <h1 class="center">Rustudio est installé</h1>
+  <p class="sub" id="done-sub"></p>
+  <div class="grow"></div>
+  <div class="actions"><button class="btn ghost" id="b-close">Fermer</button><button class="btn primary" id="b-open">Ouvrir Rustudio</button></div>
+</div>
+<div class="view" id="v-fail">
+  <div class="ok ko"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></div>
+  <h1 class="center">Installation impossible</h1>
+  <p class="sub" id="fail-sub"></p>
+  <div class="grow"></div>
+  <div class="actions"><button class="btn primary" id="b-close2">Fermer</button></div>
+</div>
+</div>
+<script>
+function $(i){return document.getElementById(i)}
+function send(m){if(window.ipc)window.ipc.postMessage(JSON.stringify(m))}
+function view(v){document.querySelectorAll(".view").forEach(function(e){e.classList.toggle("on",e.id==="v-"+v)})}
+["sw-startup","sw-desktop"].forEach(function(id){$(id).addEventListener("click",function(){this.classList.toggle("on")})});
+$("b-install").addEventListener("click",function(){view("work");send({cmd:"install",startup:$("sw-startup").classList.contains("on"),desktop:$("sw-desktop").classList.contains("on")})});
+$("b-cancel").addEventListener("click",function(){send({cmd:"close"})});
+$("b-close").addEventListener("click",function(){send({cmd:"close"})});
+$("b-close2").addEventListener("click",function(){send({cmd:"close"})});
+$("b-open").addEventListener("click",function(){send({cmd:"open"})});
+window.rs={
+  info:function(i){$("ver").textContent="Version "+i.version+(i.installed?" · installée : "+i.installed:"");
+    if(i.legacy){$("note").textContent="GoXLR Mini est installé : Rustudio le remplace et reprend tes réglages (voix, scènes, couleurs, égaliseur).";$("note").classList.add("on")}
+    if(i.installed){$("b-install").textContent=i.installed===i.version?"Réinstaller":"Mettre à jour"}},
+  step:function(t,p){$("step").textContent=t;$("bar").style.width=Math.round(p*100)+"%"},
+  done:function(r){$("done-sub").textContent=(r.migrated?"GoXLR Mini a été remplacé, tes réglages sont repris. ":"")+(r.connected?"Ta GoXLR est connectée.":"Branche ta GoXLR : Rustudio la reprend toute seule.");view("done")},
+  fail:function(m){$("fail-sub").textContent=m;view("fail")}
+};
+if(window.ipc)send({cmd:"ready"});else rs.info({version:"5.0.0",installed:null,legacy:true}); // apercu hors installeur (documentation)
+</script></body></html>

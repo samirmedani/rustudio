@@ -1,0 +1,24 @@
+[package]
+name = "rustudio-setup"
+description = "Rustudio : installeur Windows (un seul fichier) et passage depuis GoXLR Mini"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "Rustudio-Setup"
+path = "src/main.rs"
+
+[build-dependencies]
+embed-resource = "3"
+
+[dependencies]
+serde_json.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+tao = "0.37"
+wry = "0.57"
+winreg = "0.55"
+ureq = { version = "2.12", default-features = false, features = ["json"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

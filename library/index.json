@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "updated": "2026-10-28",
+  "modules": [
+    {
+      "id": "goxlr-mini",
+      "name": "GoXLR Mini",
+      "vendor": "TC-Helicon",
+      "kind": "audio-interface",
+      "status": "official",
+      "builtin": true,
+      "usb": [
+        {
+          "vid": "1220",
+          "pid": "8FE4"
+        }
+      ],
+      "source": "crates/goxlr",
+      "summary": "Faders, mutes par sortie, routage, micro (48 V, gain, traitements à la carte), éclairage, scènes et égaliseur du casque. Fonctionne avec le pilote officiel.",
+      "features": [
+        "Mixeur",
+        "Routage",
+        "Micro",
+        "Éclairage",
+        "Scènes",
+        "Égaliseur casque"
+      ]
+    },
+    {
+      "id": "goxlr-full",
+      "name": "GoXLR",
+      "vendor": "TC-Helicon",
+      "kind": "audio-interface",
+      "status": "wanted",
+      "usb": [
+        {
+          "vid": "1220",
+          "pid": "8FE0"
+        }
+      ],
+      "source": "",
+      "summary": "La GoXLR complète : effets vocaux, sampler et écrans des faders. Son protocole est proche de celui de la Mini : à contribuer.",
+      "features": [
+        "Effets",
+        "Sampler",
+        "Écrans des faders"
+      ]
+    },
+    {
+      "id": "attack-shark-r5-ultra",
+      "name": "R5 Ultra",
+      "vendor": "Attack Shark",
+      "kind": "mouse",
+      "status": "wanted",
+      "usb": [],
+      "source": "",
+      "summary": "Souris gaming : DPI, taux de rafraîchissement, boutons, éclairage. Demandée : à contribuer (protocole HID à documenter).",
+      "features": [
+        "DPI",
+        "Polling rate",
+        "Boutons",
+        "Éclairage"
+      ]
+    },
+    {
+      "id": "ddc-monitor",
+      "name": "Écrans (DDC/CI)",
+      "vendor": "Générique",
+      "kind": "monitor",
+      "status": "wanted",
+      "usb": [],
+      "source": "",
+      "summary": "Luminosité, contraste, entrée vidéo et volume des écrans compatibles DDC/CI. À contribuer.",
+      "features": [
+        "Luminosité",
+        "Contraste",
+        "Entrée vidéo"
+      ]
+    }
+  ]
+}

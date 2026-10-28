@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "engine-ui",
+  "description": "Interface servie par le moteur local : seulement http://127.0.0.1:14565",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:14565",
+      "http://127.0.0.1:14565/*"
+    ]
+  },
+  "permissions": [
+    "core:event:default",
+    "allow-audio-defaults",
+    "allow-audio-fix",
+    "allow-open-external",
+    "allow-app-info",
+    "allow-set-startup"
+  ]
+}

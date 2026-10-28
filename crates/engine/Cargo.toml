@@ -1,0 +1,37 @@
+[package]
+name = "rustudio-engine"
+description = "Rustudio : moteur (service Windows) qui pilote la GoXLR Mini, sert l'interface et l'API locale"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rustudio-engine"
+path = "src/main.rs"
+
+[dependencies]
+rustudio-core.workspace = true
+rustudio-goxlr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+tiny_http = "0.12"
+ureq = { version = "2.12", default-features = false, features = ["gzip", "json"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(not(windows))'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[target.'cfg(windows)'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
+winreg = "0.55"
+windows-service = "0.8"
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_System_Threading", "Win32_Security", "Win32_System_ProcessStatus", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]

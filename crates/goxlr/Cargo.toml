@@ -1,0 +1,15 @@
+[package]
+name = "rustudio-goxlr"
+description = "Rustudio : protocole USB de la GoXLR Mini (pilote officiel TC-Helicon) et fausse GoXLR pour les tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustudio-core.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.9"

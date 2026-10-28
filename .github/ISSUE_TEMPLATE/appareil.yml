@@ -1,0 +1,35 @@
+name: Nouvel appareil
+description: Proposer (ou demander) le module d'un appareil
+labels: ["appareil"]
+body:
+  - type: input
+    id: nom
+    attributes:
+      label: Appareil
+      description: Marque et modèle exacts
+      placeholder: Attack Shark R5 Ultra
+    validations:
+      required: true
+  - type: input
+    id: usb
+    attributes:
+      label: Identifiants USB
+      description: Gestionnaire de périphériques › Détails › Numéros d'identification (VID et PID seulement, jamais le numéro de série)
+      placeholder: VID_XXXX&PID_XXXX
+  - type: textarea
+    id: reglages
+    attributes:
+      label: Ce que tu veux régler
+      placeholder: DPI, polling rate, boutons, éclairage…
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Tu proposes
+      options:
+        - De coder le module (moi ou mon agent)
+        - Seulement de le tester sur mon appareil
+        - Rien, je le demande
+    validations:
+      required: true

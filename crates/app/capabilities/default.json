@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Fenetres locales de l'appli (demarrage, bulle)",
+  "windows": [
+    "main",
+    "osd"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-osd-done"
+  ]
+}

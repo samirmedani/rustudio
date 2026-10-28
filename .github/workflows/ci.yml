@@ -1,0 +1,54 @@
+name: Vérification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Tests (fausse GoXLR)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  windows:
+    name: Windows (tests, paquet, installation complète)
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo test --locked -p rustudio-app
+      - name: Paquet
+        shell: pwsh
+        run: ./scripts/build-release.ps1
+      - name: Installation, service, appli et désinstallation
+        shell: pwsh
+        run: ./scripts/smoke-test.ps1
+
+  leaks:
+    name: Données personnelles et secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Données personnelles et fichiers interdits
+        run: python3 scripts/leakscan.py
+      - name: Secrets dans tout l'historique (gitleaks)
+        run: docker run --rm -v "$PWD:/repo" -w /repo --entrypoint sh zricethezav/gitleaks:latest -c 'git config --global --add safe.directory /repo && gitleaks git /repo --no-banner --redact'

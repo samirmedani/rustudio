@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<style>
+html,body{margin:0;background:transparent;overflow:hidden;font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;user-select:none}
+.b{position:absolute;inset:6px;border-radius:22px;background:rgba(28,28,32,.94);display:flex;align-items:center;gap:14px;padding:0 18px;
+   box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(8px) scale(.98);transition:opacity .22s ease,transform .3s cubic-bezier(.2,.9,.2,1)}
+.b.on{opacity:1;transform:none}
+.d{width:40px;height:40px;border-radius:50%;flex:none;display:grid;place-items:center}
+.d svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.t b{display:block;color:#f5f5f7;font-size:17px;font-weight:600}
+.t small{display:block;color:#a0a0a8;font-size:12.5px;margin-top:2px}
+</style></head>
+<body><div class="b" id="b"><div class="d" id="d"></div><div class="t"><b id="h"></b><small id="s"></small></div></div>
+<script>
+var MIC = '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+var OFF = '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M4 4l16 16"/></svg>';
+var timer = null;
+window.addEventListener("DOMContentLoaded", function () {
+  if (!window.__TAURI__) return;
+  window.__TAURI__.event.listen("osd", function (e) {
+    var p = e.payload, b = document.getElementById("b");
+    document.getElementById("h").textContent = p.title;
+    document.getElementById("s").textContent = p.sub;
+    var d = document.getElementById("d"); d.style.background = p.color; d.innerHTML = p.off ? OFF : MIC;
+    b.classList.add("on");
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      b.classList.remove("on");
+      setTimeout(function () { window.__TAURI__.core.invoke("osd_done"); }, 260);
+    }, p.ms || 1500);
+  });
+});
+</script></body></html>
