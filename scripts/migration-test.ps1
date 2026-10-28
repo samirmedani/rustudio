@@ -49,6 +49,8 @@ Wait-Until { (Health).version -eq '4.8.0' } 90 'GoXLR Mini 4.8.0 en marche'
 
 # 2. son moteur, relance pour lire les releases sur le faux GitHub (meme code, memes droits administrateur)
 $fake = Start-Process python -ArgumentList ('"' + (Join-Path $root 'scripts\fake_github.py') + '"'), ('"' + $dist + '"'), $version, '8765' -PassThru -WindowStyle Hidden
+# l'appli 4.8.0 relance la tache du moteur des qu'il ne repond plus : tache desactivee, seul notre moteur reste
+Disable-ScheduledTask -TaskName 'GoXLR Mini' | Out-Null
 Stop-ScheduledTask -TaskName 'GoXLR Mini'
 Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$legacy\", [StringComparison]::OrdinalIgnoreCase) } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
