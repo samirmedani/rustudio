@@ -65,9 +65,10 @@ try { Post 'update-check' | Out-Null } catch { }
 Wait-Until { $u = Update; $u.status -eq 'available' -and $u.latest.version -eq $next -and $u.installable } 60 "Rustudio $cur propose la $next"
 Post 'update-install' | Out-Null
 Wait-Until { (Health).version -eq $next } 180 "Rustudio $next en marche"
-Wait-Until { (Update).installed.version -eq $next } 60 'Avis « installee » pour l appli'
-$res = (Update).installed
-if (-not $res.ok) { Fail "Installation signalee en echec : $($res.error)" }
+# l'appli ouverte affiche l'avis « installee » puis l'efface : le journal du moteur fait foi
+$logf = Join-Path $data 'rustudio.log'
+Wait-Until { Select-String -Path $logf -SimpleMatch "Version $next installée" -Quiet } 60 'Installation terminee'
+if (Select-String -Path $logf -SimpleMatch "Échec, retour à $cur" -Quiet) { Fail 'Retour arriere pendant la mise a jour' }
 
 # 4. fichiers, version affichee, sauvegarde de l'ancienne version, reglages
 if ((Get-Content (Join-Path $dir 'manifest.json') -Raw | ConvertFrom-Json).version -ne $next) { Fail 'Manifeste installe pas a jour' }
