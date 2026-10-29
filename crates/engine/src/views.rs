@@ -41,7 +41,8 @@ impl Ctl {
         json!({"v": v, "boot": self.boot_id, "connected": g.connected, "live": live_json(&g.live),
                "job": g.job.clone().map(Value::Object), "mic": {"muted": s.muted("Mic"), "partial": s.partial_of("Mic")},
                "health": self.health_status(&g), "sim": self.simulated(), "osd": s.prefs.osd, "scene": s.scene,
-               "app_version": VERSION, "update": brief, "usb": g.usb, "listening": listening})
+               "app_version": VERSION, "update": brief, "usb": g.usb, "listening": listening,
+               "sound_test": g.sound_test_until.is_some()})
     }
 
     pub fn health(&self) -> Value {

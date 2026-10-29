@@ -6,6 +6,7 @@
 
 mod audio;
 mod badge;
+mod soundcheck;
 
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -97,6 +98,16 @@ fn audio_fix() -> Value {
     st["fixed"] = json!(n);
     st
 }
+/// Test « son qui crépite » : écoute les voies GoXLR sans rien jouer (hors du fil de la fenêtre).
+#[tauri::command]
+async fn sound_check(seconds: f64) -> Value {
+    tauri::async_runtime::spawn_blocking(move || soundcheck::run(seconds)).await.unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+/// Test en boucle : son discret joue sur Sample (isole par le moteur), reecoute par le Stream Mix.
+#[tauri::command]
+async fn sound_loop_test(seconds: f64) -> Value {
+    tauri::async_runtime::spawn_blocking(move || soundcheck::loop_test(seconds)).await.unwrap_or_else(|e| json!({"status": "error", "error": e.to_string()}))
+}
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
@@ -117,14 +128,28 @@ fn set_startup(on: bool) -> bool {
 fn osd_done(app: AppHandle) {
     if let Some(w) = app.get_webview_window("osd") {
         let _ = w.hide();
+        webview_visible(&w, false);
     }
 }
 
 // ---------- fenetre ----------
+/// Dit a WebView2 si la page est visible. Cachee ou reduite, la page passe en « hidden » : plus de rendu ni
+/// d'animation, et l'interface ralentit ses lectures (WebView2 ne le devine pas seul pour une fenetre cachee).
+fn webview_visible(w: &WebviewWindow, on: bool) {
+    #[cfg(windows)]
+    {
+        let _ = w.with_webview(move |wv| unsafe {
+            let _ = wv.controller().SetIsVisible(on);
+        });
+    }
+    let _ = (w, on);
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
+        webview_visible(&w, true);
         let _ = w.set_focus();
     }
 }
@@ -179,6 +204,7 @@ fn osd(app: &AppHandle, title: &str, sub: &str, colour: &str, off: bool) {
         let y = mp.y + ms.height as i32 - bh - (110.0 * sc) as i32;
         let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
     }
+    webview_visible(&w, true);
     show_no_activate(&w);
     let _ = w.emit("osd", json!({"title": title, "sub": sub, "color": colour, "off": off, "ms": 1400}));
 }
@@ -403,6 +429,18 @@ fn monitor(app: AppHandle, tray: TrayIcon) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let tray_only = args.iter().any(|a| a == "--tray");
+    // diagnostic sans fenetre : Rustudio.exe --sound-check|--loop-test <secondes> <fichier.json>
+    if let Some(i) = args.iter().position(|a| a == "--sound-check" || a == "--loop-test") {
+        let secs = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(30.0);
+        let out = if args[i] == "--loop-test" { soundcheck::loop_test(secs) } else { soundcheck::run(secs) }.to_string();
+        match args.get(i + 2) {
+            Some(f) => {
+                let _ = std::fs::write(f, out);
+            }
+            None => println!("{out}"),
+        }
+        return;
+    }
     // relance apres mise a jour : on attend que l'ancienne instance soit partie
     if let Some(i) = args.iter().position(|a| a == "--relaunch") {
         if let Some(pid) = args.get(i + 1).and_then(|p| p.parse::<u32>().ok()) {
@@ -415,7 +453,7 @@ fn main() {
     let ui_url = format!("{ENGINE}/");
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| show_main(app)))
-        .invoke_handler(tauri::generate_handler![audio_defaults, audio_fix, open_external, app_info, set_startup, osd_done])
+        .invoke_handler(tauri::generate_handler![audio_defaults, audio_fix, sound_check, sound_loop_test, open_external, app_info, set_startup, osd_done])
         .setup(move |app| {
             let handle = app.handle().clone();
             let main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -460,12 +498,23 @@ fn main() {
                 .build(app)?;
             static TOLD: Mutex<bool> = Mutex::new(false);
             let h2 = handle.clone();
+            if tray_only {
+                webview_visible(&main, false);
+            }
+            webview_visible(&_osd, false);
             main.on_window_event(move |ev| {
+                if let tauri::WindowEvent::Resized(_) = ev {
+                    if let Some(w) = h2.get_webview_window("main") {
+                        let shown = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
+                        webview_visible(&w, shown);
+                    }
+                }
                 if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
                     if !QUITTING.load(Ordering::SeqCst) {
                         api.prevent_close();
                         if let Some(w) = h2.get_webview_window("main") {
                             let _ = w.hide();
+                            webview_visible(&w, false);
                         }
                         let mut t = TOLD.lock().unwrap();
                         if !*t {

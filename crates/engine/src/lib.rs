@@ -3,6 +3,7 @@ pub mod apply;
 pub mod config;
 pub mod controller;
 pub mod eqapo;
+pub mod glitches;
 pub mod http;
 pub mod jobs;
 pub mod library;
@@ -14,6 +15,7 @@ pub mod supervisor;
 #[cfg(windows)]
 pub mod uninstall;
 pub mod updater;
+pub mod usbmap;
 pub mod views;
 pub mod watch;
 pub mod win;
@@ -73,6 +75,12 @@ pub fn run_engine(cfg: config::Config) -> i32 {
     spawn("updates", Box::new(move || c.updater.run_loop()));
     if cfg.supervised {
         spawn("parent", Box::new(supervisor::watch_parent));
+    }
+    if !cfg.simulate {
+        // journal des coupures du son : allume des le depart, pour que le diagnostic ait un historique
+        spawn("glitches", Box::new(|| {
+            glitches::ensure_enabled();
+        }));
     }
     logf!("Interface et API sur http://127.0.0.1:{}/", cfg.port);
     http::serve(ctl.clone(), server, 8);

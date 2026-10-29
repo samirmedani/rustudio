@@ -179,6 +179,8 @@ impl EqApo {
         let cfg_dir = self.dir.join("config");
         let _ = std::fs::create_dir_all(&cfg_dir);
         let cfg = cfg_dir.join("config.txt");
+        // fichier temporaire oublie par GoXLR Mini (inerte, mais trompeur)
+        let _ = std::fs::remove_file(cfg_dir.join("goxlr-mini.txt.tmp"));
         let cur = std::fs::read(&cfg).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string()).unwrap_or_default();
         if cur.contains(&format!("Include: {CONFIG_FILE}")) {
             return;

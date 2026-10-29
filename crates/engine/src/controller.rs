@@ -135,6 +135,8 @@ pub struct Inner {
     pub blink: HashMap<String, bool>,
     pub gain_override: Option<(String, i32)>,
     pub listen_until: Option<Instant>,
+    /// test « son qui crépite » : la voie Sample part seulement vers le Stream Mix jusqu'à cet instant
+    pub sound_test_until: Option<Instant>,
     pub listen_level: i32,
     pub force_reconnect: bool,
     pub usb: Option<String>,
@@ -212,7 +214,15 @@ impl Inner {
         self.preset_dsp(if name == "brut" { "naturel" } else { &name })
     }
     pub fn effective_routing(&self, input: &str) -> indexmap::IndexMap<String, bool> {
-        routing::effective_routing(&self.state, input, self.mix2, self.listening())
+        let mut r = routing::effective_routing(&self.state, input, self.mix2, self.listening());
+        if input == "Samples" && self.sound_test_until.is_some() {
+            // son de test : ni casque, ni Discord, ni enceintes ; seulement le Stream Mix, que le test réécoute
+            for (out, on) in r.iter_mut() {
+                *on = out == "BroadcastMix";
+            }
+            r.insert("BroadcastMix".into(), true);
+        }
+        r
     }
     pub fn vod_output(&self) -> &'static str {
         routing::vod_output(self.mix2)
@@ -734,6 +744,12 @@ impl Inner {
                 self.auto_active = AutoActive::Unknown; // re-evaluation au prochain passage
                 self.auto_seen = true;
             }
+            "sound-test" => {
+                let secs = num(get(p, "seconds")).unwrap_or(40.0).clamp(0.0, 150.0);
+                self.sound_test_until = (secs > 0.0).then(|| Instant::now() + Duration::from_secs_f64(secs));
+                self.mark(&[Key::Route(inp("Samples"))], false);
+                return Ok(json!({ "ok": true, "seconds": secs }));
+            }
             "mic-listen" => {
                 let secs = num(get(p, "seconds")).unwrap_or(15.0).clamp(0.0, 30.0);
                 self.listen_level = p.get("level").and_then(|v| clamp(v, 0, 255)).unwrap_or(191);
@@ -890,7 +906,7 @@ impl Ctl {
             live: Live::default(), version: 1, job: None, fast_level: false, level_until: None, dirty: HashSet::new(),
             want: 0, done: 0, save_dirty: first_run, prev_mask: 0, prev_pos: None, pos_cand: [0; 4], pos_count: [0; 4],
             faders_seen: false, btn: HashMap::new(), bleep: false, blink: HashMap::new(), gain_override: None,
-            listen_until: None, listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
+            listen_until: None, sound_test_until: None, listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
             errors: VecDeque::new(), connects: 0, reconnects: 0, fail_streak: 0, auto_active: AutoActive::Off,
             auto_note: None, auto_seen: false, mix2: false, submixes: false, wake: wake.clone(),
         };
@@ -1109,6 +1125,10 @@ impl Ctl {
             if matches!(g.listen_until, Some(t) if Instant::now() > t) {
                 g.listen_until = None;
                 g.mark(&[Key::Volume(ch("MicMonitor")), Key::Route(inp("Microphone"))], false);
+            }
+            if matches!(g.sound_test_until, Some(t) if Instant::now() > t) {
+                g.sound_test_until = None;
+                g.mark(&[Key::Route(inp("Samples"))], false);
             }
         }
         self.run_calls(dev)?;

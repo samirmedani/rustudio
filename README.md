@@ -79,6 +79,10 @@ code, peut ajouter le sien par une pull request.
   (jamais de focus, même en jeu), menu rapide, démarrage avec Windows.
 - **Incrustation OBS** : « Micro coupé » à l'écran du stream (`http://127.0.0.1:14565/overlay`).
 - **Diagnostic** en direct : connexion, commandes, reconnexions, journal ; bouton « Reconnecter ».
+- **Son qui crépite ?** Un test fait l'aller-retour d'un son aigu discret entre le PC et la GoXLR, sans que tu
+  l'entendes, et écoute chaque voie : coupures USB, coupures notées par Windows (journal allumé par Rustudio),
+  saturation de l'égaliseur ou du micro. Verdict en clair, à lancer pendant que tu joues, avec le port USB à
+  préférer (relié au processeur, sans hub) quand le son coupe.
 
 <p align="center">
   <img src="docs/captures/echo.jpg" width="720" alt="Anti-écho : routage de la GoXLR, Windows, Discord et test acoustique">

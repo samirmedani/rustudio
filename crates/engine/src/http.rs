@@ -7,12 +7,12 @@ use std::io::Read;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Request, Response, Server};
 
-pub const ACTIONS: [&str; 37] = [
+pub const ACTIONS: [&str; 38] = [
     "volume", "mute", "fader", "route", "colour", "mic", "raw", "profile", "dsp", "mic-preset", "scene", "scene-save",
     "scene-delete", "theme", "lighting", "detect-mic", "auto-gain", "voice-setup", "mic-listen", "job-cancel", "settings",
     "auto-scenes", "reconnect", "restart-engine", "fx", "hp-eq", "hp-eq-save", "hp-eq-delete", "hp-eq-setup",
     "hp-eq-remove", "update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh",
-    "echo-check",
+    "echo-check", "sound-test",
 ];
 
 pub const UI_HTML: &str = include_str!("../../../ui/index.html");
@@ -88,6 +88,15 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                 "/api/state" | "/status" => ctl.snapshot(),
                 "/api/health" => ctl.health(),
                 "/api/update" => ctl.update_snapshot(),
+                "/api/usb" => crate::usbmap::query(),
+                "/api/glitches" => {
+                    let since = query
+                        .split('&')
+                        .find_map(|q| q.strip_prefix("since="))
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or_else(|| crate::config::now_epoch() - 86400.0);
+                    crate::glitches::query(since)
+                }
                 "/api/processes" => ctl.user_apps(),
                 "/api/library" => crate::library::snapshot(),
                 "/api/default-profile" => {

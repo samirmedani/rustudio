@@ -1,5 +1,31 @@
 # Nouveautés
 
+## 5.1.0
+
+**Nouveau**
+- « Son qui crépite ? » (menu ⋯ et Diagnostic) : un test de 30 secondes ou de 5 minutes, à lancer pendant que
+  tu joues ou écoutes de la musique. Rustudio fait l'aller-retour d'un son aigu discret entre le PC et la GoXLR
+  par le Stream Mix : tu ne l'entends pas, Discord non plus. Il écoute aussi chacune de tes voies. Le verdict est
+  donné en clair : coupures entre le PC et la GoXLR, données perdues à l'entrée, coupures notées par Windows,
+  niveaux et saturation de chaque voie, micro qui sature.
+- Port USB conseillé : quand le test trouve des coupures, Rustudio regarde sur quel contrôleur USB est branchée
+  la GoXLR et avec combien d'appareils elle le partage. Il désigne un meilleur port en nommant l'appareil déjà
+  branché dessus (« à la place de ta webcam ») : sur les PC AMD, il sait reconnaître les ports reliés
+  directement au processeur.
+- Le journal Windows des coupures du son, éteint d'usine, est allumé par Rustudio. La fenêtre du test résume
+  les dernières 24 heures : un crépitement rare se voit même après coup.
+- Égaliseur du casque : au-delà de +12 dB de basses, Rustudio prévient. Le reste du son est alors baissé
+  d'autant, le volume finit au maximum, et le casque grésille sur les sons forts. Le bouton « Adoucir »
+  ramène tes réglages à +10 dB au plus.
+
+**Amélioré**
+- Fenêtre cachée ou réduite, l'interface s'endort : plus de rendu ni d'animation, une lecture du moteur toutes
+  les 2 secondes au lieu de 20 par seconde, et plus de lecture du vumètre. Avant, elle occupait
+  jusqu'à la moitié d'un cœur du processeur en arrière-plan.
+- Le fond de l'interface ne s'anime plus : même affichée sur un second écran pendant un jeu, elle ne charge
+  plus la carte graphique.
+- Le fichier temporaire laissé par GoXLR Mini dans le dossier d'Equalizer APO est retiré.
+
 ## 5.0.0
 
 GoXLR Mini devient **Rustudio**, réécrit en Rust.

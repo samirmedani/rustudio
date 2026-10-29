@@ -647,3 +647,19 @@ fn http_routes_et_protections() {
     assert!(html.contains("<html"), "interface servie");
     assert_eq!(code(agent.post(&url("/api/sim/press")).set("X-Rustudio", "1").send_json(json!({"button": "Bleep"}))), 200);
 }
+
+#[test]
+fn test_du_son_route_sample_vers_le_stream_seulement() {
+    let b = Bench::new();
+    let c = &b.ctl;
+    let before = c.lock().effective_routing("Samples");
+    assert!(before["Headphones"], "routage d'usine : Sample dans le casque");
+    b.act("sound-test", json!({"seconds": 30}));
+    let r = c.lock().effective_routing("Samples");
+    assert!(r["BroadcastMix"] && !r["Headphones"] && !r["ChatMic"] && !r["LineOut"], "{r:?}");
+    assert!(wait_for(3.0, || b.sim.lock().dev.route_on("Samples", "BroadcastMix") && !b.sim.lock().dev.route_on("Samples", "Headphones")));
+    assert_eq!(c.lock().state.routing["Samples"]["Headphones"], true, "réglages enregistrés intacts");
+    b.act("sound-test", json!({"seconds": 0}));
+    assert!(wait_for(3.0, || b.sim.lock().dev.route_on("Samples", "Headphones")), "routage remis à la fin du test");
+    assert_eq!(c.lock().effective_routing("Samples"), before);
+}

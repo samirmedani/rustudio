@@ -34,13 +34,12 @@ svg{display:block}
 
 /* fond ambiant */
 .ambient{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:radial-gradient(1200px 700px at 30% -10%,#fff 0%,rgba(255,255,255,0) 60%),var(--bg)}
-.ambient span{position:absolute;border-radius:50%;filter:blur(70px);opacity:.75;animation:drift 40s var(--ease) infinite alternate}
+.ambient span{position:absolute;border-radius:50%;filter:blur(70px);opacity:.75}
 .ambient .a{width:55vw;height:55vw;left:-14vw;top:-22vw;background:radial-gradient(circle,#ffd9c4 0%,rgba(255,217,196,0) 68%)}
 .ambient .b{width:48vw;height:48vw;right:-12vw;top:-14vw;background:radial-gradient(circle,#cfe4ff 0%,rgba(207,228,255,0) 68%);animation-duration:48s}
 .ambient .c{width:42vw;height:42vw;left:28vw;bottom:-24vw;background:radial-gradient(circle,#e8dcff 0%,rgba(232,220,255,0) 68%);animation-duration:56s}
 .ambient .d{width:32vw;height:32vw;right:4vw;bottom:-10vw;background:radial-gradient(circle,#d2f4e6 0%,rgba(210,244,230,0) 68%);animation-duration:62s}
-@keyframes drift{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(5vw,4vw,0) scale(1.1)}}
-@media (prefers-reduced-motion:reduce){.ambient span{animation:none}}
+html.asleep *,html.asleep *::before,html.asleep *::after{animation-play-state:paused!important}
 
 /* verre */
 aside,.card,.pop,#toast,.sheet-box,.others{
@@ -683,8 +682,10 @@ function refresh() {
   return api("/api/state").then(function (s) { S = s; V = s.v; render(); });
 }
 var liveChanged = true, liveKey = "", bootId = null;
+document.addEventListener("visibilitychange", function () { document.documentElement.classList.toggle("asleep", document.hidden); });
+document.documentElement.classList.toggle("asleep", document.hidden);
 function liveLoop() {
-  api("/api/live?level=1").then(function (l) {
+  api(document.hidden ? "/api/live" : "/api/live?level=1").then(function (l) {
     if (bootId && l.boot && l.boot !== bootId) { location.reload(); return; }
     bootId = l.boot || bootId;
     L = l; setOnline(true, l.connected, l.health, l.usb);
@@ -692,7 +693,7 @@ function liveLoop() {
     if (k !== liveKey) { liveKey = k; liveChanged = true; }
     if (l.v !== V && !pending) return refresh();
   }).catch(function () { setOnline(false, false); })
-    .finally(function () { setTimeout(liveLoop, document.hidden ? 1000 : 50); });
+    .finally(function () { setTimeout(liveLoop, document.hidden ? 2000 : 50); });
 }
 
 /* ---------- curseur generique ---------- */
@@ -1377,8 +1378,13 @@ function renderHpStyles() {
   Object.keys(eq.custom).forEach(function (n) { card("custom:" + n, n, "Ton profil.", "save", "#0071E3", true); });
 }
 function hpPreText() {
-  var pre = hpPreamp(S.state.hp_eq);
-  hp.pre.textContent = pre < 0 ? "Volume baissé de " + (-pre).toFixed(1).replace(".", ",") + " dB avant l\u2019égaliseur : jamais de saturation." : "Aucune baisse de volume nécessaire.";
+  var pre = hpPreamp(S.state.hp_eq), boost = pre < 0 ? -pre - .3 : 0, key = Math.round(boost * 10);
+  if (hp.preKey === key) return;
+  hp.preKey = key; hp.pre.innerHTML = "";
+  if (boost > HP_SAFE_DB + 2) {
+    hp.pre.appendChild(h("span", {"class": "hp-err"}, "Basses poussées de +" + Math.round(boost) + " dB : le reste du son est baissé d\u2019autant et, volume au maximum, le casque grésille sur les sons forts. "));
+    hp.pre.appendChild(h("button", {"class": "pill", style: "margin-top:8px;height:30px", onclick: function () { hpSoften(); }}, "Adoucir à +" + HP_SAFE_DB + " dB"));
+  } else hp.pre.textContent = pre < 0 ? "Volume baissé de " + (-pre).toFixed(1).replace(".", ",") + " dB avant l\u2019égaliseur : jamais de saturation." : "Aucune baisse de volume nécessaire.";
 }
 function drawHp() {
   var cv = hp.cv; if (!cv || !cv.offsetWidth) return;
@@ -1862,6 +1868,135 @@ function echoItem(state, t, d, label, fn) {
   it.appendChild(body);
   return it;
 }
+/* ---------- son qui crepite ---------- */
+function openSoundSheet() {
+  closePop();
+  var body = h("div");
+  sheet({wide: true, sound: true, body: body, res: null, day: null, actions: [["Fermer", null, "primary"]],
+    onClose: function () { if (st.res && st.res.running) post("sound-test", {seconds: 0}); clearInterval(st.timer); }});
+  var st = sheetState;
+  api("/api/glitches").then(function (g) { if (sheetState === st) { st.day = g; paintSound(); } }, function () {});
+  api("/api/usb").then(function (u) { if (sheetState === st) { st.usb = u; paintSound(); } }, function () {});
+  paintSound();
+}
+/* conseil de port USB, d'apres l'arbre des peripheriques lu par le moteur */
+function usbAdvice(u) {
+  if (!u || !u.found) return null;
+  if (u.via_hub) return "Ta GoXLR passe par un hub USB : branche-la directement sur le PC" + (u.suggest && u.suggest.anchor ? ", à la place de « " + esc(u.suggest.anchor) + " »" + (u.suggest.cpu ? " (port relié au processeur)" : "") : "") + ", puis refais le test.";
+  if (u.suggest && u.suggest.anchor) return "Ta GoXLR partage son contrôleur USB" + (u.controller_cpu === false ? " (celui du chipset)" : "") + " avec " + u.shared.length + " appareil" + (u.shared.length > 1 ? "s" : "") +
+    ". Branche-la à la place de « " + esc(u.suggest.anchor) + " » (" + (u.suggest.cpu ? "port relié directement au processeur" : "autre contrôleur") + "), puis refais le test. Garde ensuite ce port : à chaque nouveau port, Windows recrée les voies GoXLR, et Anti-écho les remet par défaut en un clic.";
+  return null;
+}
+function soundLevel(c) {
+  var d = c.peak_db != null ? c.peak_db : c.meter_db;
+  return d == null ? "silence" : "max " + (d > -0.05 ? "0" : String(Math.round(d * 10) / 10).replace(".", ",")) + " dB";
+}
+function soundAt(s) { s = Math.round(s); return s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60 ? (s % 60) + " s" : "").trim(); }
+function hpBoost() {
+  var eq = S.state.hp_eq, c = hpFilters(eq), mx = 0;
+  if (!eq.enabled) return 0;
+  for (var i = 0; i < 200; i++) mx = Math.max(mx, hpResp(c, 20 * Math.pow(1000, i / 199)));
+  return mx;
+}
+/* baisse proportionnellement les bandes du style pour que la courbe totale ne monte pas au-dela de max dB */
+function hpSoftBands(max) {
+  var eq = S.state.hp_eq, b = eq.bands.slice();
+  for (var s = 1; s >= 0; s -= .05) {
+    b = eq.bands.map(function (v) { return v > 0 ? Math.round(v * s) : v; }); /* meme forme, en plus doux */
+    var c = hpFilters(Object.assign({}, eq, {bands: b})), mx = 0;
+    for (var i = 0; i < 200; i++) mx = Math.max(mx, hpResp(c, 20 * Math.pow(1000, i / 199)));
+    if (mx <= max + .05) break;
+  }
+  return b;
+}
+function hpSoften() {
+  var b = hpSoftBands(HP_SAFE_DB);
+  return post("hp-eq", {bands: b}).then(function () { toast("Basses adoucies : +" + HP_SAFE_DB + " dB au plus"); return refresh(); });
+}
+var HP_SAFE_DB = 10;
+function paintSound() {
+  var st = sheetState; if (!st || !st.sound) return;
+  var b = st.body; b.innerHTML = "";
+  b.appendChild(h("div", {"class": "diag-head"}, chipIco("audioLines", "#0071E3") + "<div><h2>Son qui crépite ?</h2><p class=\"muted-txt\">Rustudio cherche les coupures entre le PC et la GoXLR, et ce qui sature.</p></div>"));
+  var r = st.res, t = h("div", {"class": "echo-sec"}, "<h4>Test</h4>");
+  if (!inApp()) t.appendChild(echoItem("tip", "Dans l\u2019appli Rustudio", "Ouvre l\u2019appli Windows : c\u2019est elle qui écoute les voies GoXLR."));
+  else if (r && r.running) {
+    var left = Math.max(0, Math.ceil(r.secs - (Date.now() - r.t0) / 1000));
+    t.appendChild(echoItem("info", "Test en cours, encore " + fmtDur(left), "Continue comme d\u2019habitude : joue, écoute de la musique. C\u2019est pendant l\u2019usage normal que les coupures se voient."));
+  } else {
+    if (r && r.error) t.appendChild(echoItem("warn", "Test impossible", esc(r.error)));
+    var it = echoItem("info", r && r.loop ? "Refaire le test" : "30 secondes ou 5 minutes", "Rustudio écoute tes voies GoXLR et fait l\u2019aller-retour d\u2019un son aigu discret par le Stream Mix : tu ne l\u2019entends pas, Discord non plus. Pour un crépitement rare, prends le test long.", "Tester 30 s", function () { runSound(30); });
+    var long = h("button", {"class": "pill", style: "margin-left:8px"}, "Test long, 5 min");
+    long.addEventListener("click", function () { runSound(300); });
+    it.querySelector(".pill").after(long);
+    t.appendChild(it);
+  }
+  b.appendChild(t);
+  if (r && r.loop) paintSoundResult(b, r);
+  var day = st.day;
+  if (day && !day.unsupported) {
+    var d = h("div", {"class": "echo-sec"}, "<h4>Ces dernières 24 heures</h4>");
+    d.appendChild(day.total ? echoItem("warn", day.total + " coupure" + (day.total > 1 ? "s" : "") + " notée" + (day.total > 1 ? "s" : "") + " par Windows",
+      (day.kinds.app ? day.kinds.app + " côté programme (un jeu ou une appli n\u2019a pas fourni le son à temps). " : "") + (day.kinds.driver ? day.kinds.driver + " côté pilote ou GoXLR. " : "") + (day.last ? "Dernière : " + new Date(day.last).toLocaleString("fr-FR") + "." : ""))
+      : echoItem("ok", "Aucune coupure notée par Windows", day.was_enabled === false ? "Le journal vient d\u2019être allumé : il notera les prochaines." : "Le son de Windows n\u2019a pas sauté."));
+    b.appendChild(d);
+  }
+  var boost = hpBoost();
+  if (boost > HP_SAFE_DB + 2) {
+    var e = h("div", {"class": "echo-sec"}, "<h4>Égaliseur du casque</h4>");
+    e.appendChild(echoItem("warn", "Basses poussées de +" + Math.round(boost) + " dB", "Pour garder ces basses, le reste du son est baissé d\u2019autant, et le volume finit au maximum : sur les sons forts, l\u2019ampli casque et la membrane saturent et grésillent. Au-delà de +" + HP_SAFE_DB + " dB, ça s\u2019entend.", "Adoucir à +" + HP_SAFE_DB + " dB", function () { return hpSoften().then(paintSound); }));
+    b.appendChild(e);
+  }
+}
+function paintSoundResult(b, r) {
+  var st = sheetState, lp = r.loop, ch = (r.check && r.check.channels) || [], win = r.win;
+  var ins = ch.filter(function (c) { return c.kind === "input"; }), outs = ch.filter(function (c) { return c.kind === "output"; });
+  var badIn = ins.filter(function (c) { return c.status === "dropouts"; });
+  var s = h("div", {"class": "echo-sec"}, "<h4>Transport du son</h4>");
+  if (lp.status === "ok") s.appendChild(echoItem("ok", "PC → GoXLR → PC : aucun trou", "Un son de test a fait l\u2019aller-retour pendant " + fmtDur(Math.round(lp.analysed_s)) + " sans une seule coupure."));
+  else if (lp.status === "glitches") s.appendChild(echoItem("warn", (lp.dropouts + lp.jumps) + " coupure" + (lp.dropouts + lp.jumps > 1 ? "s" : "") + " entre le PC et la GoXLR",
+    "C\u2019est ce qu\u2019on entend comme des crépitements" + (lp.events.length ? " (première au bout de " + soundAt(lp.events[0].t) + ")" : "") + ". " + (usbAdvice(st.usb) || "Branche la GoXLR sur un port USB à l\u2019arrière du PC, directement sur la carte mère, sans hub ni rallonge, puis refais le test.")));
+  else if (lp.status === "no-signal") s.appendChild(echoItem("tip", "Le son de test n\u2019est pas revenu", "La voie Sample est peut-être coupée, ou la GoXLR débranchée."));
+  else if (lp.status === "test-late") s.appendChild(echoItem("tip", "Test perturbé", "Le PC était trop chargé pour jouer le son de test à temps : refais-le."));
+  else s.appendChild(echoItem("tip", "Aller-retour impossible", esc(lp.error || "voies GoXLR absentes")));
+  if (lp.status !== "glitches" && st.usb && st.usb.found) {
+    var adv = usbAdvice(st.usb);
+    s.appendChild(adv ? echoItem("tip", "Port USB", adv.replace("Branche-la", "Si ça crépite un jour, branche-la").replace(", puis refais le test", "")) : echoItem("ok", "Port USB", "Relié directement au processeur, sans hub : le meilleur choix."));
+  }
+  if (ins.length) s.appendChild(echoItem(badIn.length ? "warn" : "ok", badIn.length ? "Données perdues à l\u2019entrée" : "Micro, Stream Mix et VOD : rien de perdu",
+    badIn.length ? badIn.map(function (c) { return esc(c.name) + " : " + (c.discontinuities + c.gaps) + " coupure(s), " + c.gap_ms + " ms"; }).join(" · ") : "Windows a reçu chaque échantillon envoyé par la GoXLR."));
+  if (win && !win.unsupported) s.appendChild(echoItem(win.total ? "warn" : "ok", win.total ? win.total + " coupure(s) notée(s) par Windows pendant le test" : "Windows n\u2019a noté aucune coupure",
+    win.total ? (win.kinds.app ? "Côté programme : un jeu ou une appli n\u2019a pas fourni le son à temps (PC très chargé). " : "") + (win.kinds.driver ? "Côté pilote ou GoXLR." : "") : "Ni côté programmes, ni côté pilote."));
+  b.appendChild(s);
+  var n = h("div", {"class": "echo-sec"}, "<h4>Niveaux</h4>");
+  var playing = outs.filter(function (c) { return c.active_s > 0 || c.meter_db != null; });
+  if (!playing.length) n.appendChild(echoItem("tip", "Rien ne jouait sur tes voies", "Lance ta musique ou ton jeu et refais le test : il vérifiera aussi que rien ne sature."));
+  playing.forEach(function (c) {
+    var lab = HP_CH_LABELS[c.name] || c.name;
+    n.appendChild(c.status === "clipping" ? echoItem("warn", esc(lab) + " sature", "Le son dépasse 0 dB après l\u2019égaliseur (" + c.clipped + " échantillons) : baisse le style ou le volume de l\u2019appli.") : echoItem("ok", esc(lab) + " : " + soundLevel(c), "Pas de saturation."));
+  });
+  var mic = ins.filter(function (c) { return c.name === "Chat Mic"; })[0];
+  if (mic && mic.status === "clipping") n.appendChild(echoItem("warn", "Ton micro sature", "Il atteint 0 dB : baisse le gain dans la page Micro, ou recule un peu.", "Page Micro", function () { closeSheet(); go("mic"); }));
+  b.appendChild(n);
+}
+function runSound(secs) {
+  var st = sheetState; if (!st || !st.sound || (st.res && st.res.running)) return Promise.resolve();
+  var t0 = Math.floor(Date.now() / 1000);
+  st.res = {running: true, t0: Date.now(), secs: secs}; paintSound();
+  clearInterval(st.timer);
+  st.timer = setInterval(function () { if (sheetState !== st || !st.res || !st.res.running) { clearInterval(st.timer); return; } paintSound(); }, 1000);
+  return post("sound-test", {seconds: secs + 20}).then(function () {
+    return Promise.all([invoke("sound_check", {seconds: secs}), invoke("sound_loop_test", {seconds: secs})]);
+  }).then(function (r) {
+    return api("/api/glitches?since=" + t0).then(function (g) { return [r[0], r[1], g]; }, function () { return [r[0], r[1], null]; });
+  }).then(function (r) { st.res = {check: r[0], loop: r[1], win: r[2]}; },
+    function (e) { st.res = {error: e && e.message ? e.message : String(e || "erreur inconnue")}; })
+    .then(function () {
+      clearInterval(st.timer);
+      post("sound-test", {seconds: 0});
+      return api("/api/glitches").then(function (g) { st.day = g; }, function () {});
+    }).then(function () { paintSound(); });
+}
 function openEchoSheet() {
   closePop();
   var body = h("div");
@@ -2058,6 +2193,7 @@ function openMenu() {
   item("settings", "Réglages", openSettingsSheet);
   item("activity", "Diagnostic", openDiag);
   item("shield", "Anti-écho", openEchoSheet);
+  item("audioLines", "Son qui crépite ?", openSoundSheet);
   item("refresh", "Rechercher une mise à jour", checkUpdate);
   box.appendChild(h("div", {"class": "menu-sep"}));
   item("download", "Exporter ma configuration", function () {
@@ -2085,7 +2221,7 @@ function fmtDur(s) { if (s == null) return "—"; if (s < 60) return s + " s"; i
 var STATUS_FR = {ok: ["Tout va bien", "#30D158", "ok"], absent: ["GoXLR débranchée", "#FF9F0A", "warn"], error: ["Connexion impossible", "#FF9F0A", "warn"], blocked: ["Pilote USB bloqué", "#FF453A", "warn"], starting: ["Démarrage", "#64D2FF", "info"]};
 function openDiag() {
   var body = h("div");
-  sheet({wide: true, body: body, actions: [["Copier le rapport", function () { copyReport(); }, "", true], ["Reconnecter la GoXLR", function () { post("reconnect").then(function () { toast("Reconnexion demandée"); }); }, "", true], ["Fermer", null, "primary"]]});
+  sheet({wide: true, body: body, actions: [["Copier le rapport", function () { copyReport(); }, "", true], ["Son qui crépite ?", openSoundSheet, "", true], ["Reconnecter la GoXLR", function () { post("reconnect").then(function () { toast("Reconnexion demandée"); }); }, "", true], ["Fermer", null, "primary"]]});
   function paint() {
     api("/api/health").then(function (hl) {
       if (!sheetState || sheetState.body !== body) return;

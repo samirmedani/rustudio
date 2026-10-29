@@ -171,6 +171,19 @@ pub fn status() -> Value {
     }
 }
 
+/// Voies actives (entrees si capture), lues dans le registre de Windows.
+pub fn active_endpoints(capture: bool) -> Vec<Endpoint> {
+    #[cfg(windows)]
+    {
+        win::active(capture)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = capture;
+        vec![]
+    }
+}
+
 pub fn fix() -> i32 {
     #[cfg(windows)]
     {

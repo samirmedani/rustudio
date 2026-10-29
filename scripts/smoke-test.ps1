@@ -28,6 +28,17 @@ function Saved-Mic { try { (Get-Content $sp -Raw | ConvertFrom-Json).volumes.Mic
 for ($i = 0; $i -lt 20 -and (Saved-Mic) -ne 200; $i++) { Start-Sleep -Milliseconds 500 }
 if ((Saved-Mic) -ne 200) { Show-Log; throw 'Reglage jamais enregistre sur le disque' }
 if (-not (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Rustudio' -ErrorAction SilentlyContinue)) { throw 'Entree Applications absente' }
+# journal Windows des coupures du son : allume par le moteur (compte systeme) et lisible par l'API
+$g = $null
+for ($i = 0; $i -lt 20 -and -not ($g -and $g.enabled); $i++) { Start-Sleep -Milliseconds 500; $g = Invoke-RestMethod http://127.0.0.1:14565/api/glitches }
+if (-not $g.enabled) { Show-Log; throw 'Journal des coupures du son non allume' }
+if ((wevtutil gl Microsoft-Windows-Audio/GlitchDetection | Select-String 'enabled: true') -eq $null) { throw 'Canal GlitchDetection eteint' }
+Write-Host "Journal des coupures : allume, $($g.total) coupure(s) sur 24 h"
+# test « son qui crepite » : isolement temporaire de la voie Sample, puis retour
+$r = Invoke-RestMethod -Method Post http://127.0.0.1:14565/api/sound-test -Headers @{ 'X-Rustudio' = '1' } -Body '{"seconds":30}' -ContentType 'application/json'
+if (-not $r.ok -or -not (Invoke-RestMethod http://127.0.0.1:14565/api/live).sound_test) { throw 'Test du son : isolement de Sample refuse' }
+Invoke-RestMethod -Method Post http://127.0.0.1:14565/api/sound-test -Headers @{ 'X-Rustudio' = '1' } -Body '{"seconds":0}' -ContentType 'application/json' | Out-Null
+if ((Invoke-RestMethod http://127.0.0.1:14565/api/live).sound_test) { throw 'Test du son : Sample pas rendu' }
 
 # moteur tue : le superviseur le relance
 $eng = Get-CimInstance Win32_Process -Filter "Name='rustudio-engine.exe'" | Where-Object { $_.CommandLine -match '--child' }
