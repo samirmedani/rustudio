@@ -106,7 +106,7 @@ async fn sound_check(seconds: f64) -> Value {
 /// Test en boucle : son discret joue sur Sample (isole par le moteur), reecoute par le Stream Mix.
 #[tauri::command]
 async fn sound_loop_test(seconds: f64) -> Value {
-    tauri::async_runtime::spawn_blocking(move || soundcheck::loop_test(seconds)).await.unwrap_or_else(|e| json!({"status": "error", "error": e.to_string()}))
+    tauri::async_runtime::spawn_blocking(move || soundcheck::loop_test(seconds, false)).await.unwrap_or_else(|e| json!({"status": "error", "error": e.to_string()}))
 }
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
@@ -432,7 +432,8 @@ fn main() {
     // diagnostic sans fenetre : Rustudio.exe --sound-check|--loop-test <secondes> <fichier.json>
     if let Some(i) = args.iter().position(|a| a == "--sound-check" || a == "--loop-test") {
         let secs = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(30.0);
-        let out = if args[i] == "--loop-test" { soundcheck::loop_test(secs) } else { soundcheck::run(secs) }.to_string();
+        let exclusive = args.iter().any(|a| a == "--exclusive");
+        let out = if args[i] == "--loop-test" { soundcheck::loop_test(secs, exclusive) } else { soundcheck::run(secs) }.to_string();
         match args.get(i + 2) {
             Some(f) => {
                 let _ = std::fs::write(f, out);

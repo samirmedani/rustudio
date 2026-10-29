@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Faux GitHub local pour les tests de mise a jour sur Windows (scripts/migration-test.ps1, scripts/update-test.ps1).
+"""Faux GitHub local pour les tests de mise a jour sur Windows (scripts/migration-test.ps1, scripts/update-test.ps1,
+scripts/release-update-test.ps1).
 
     python scripts/fake_github.py <dossier> <version> <port> [fichier...]
 

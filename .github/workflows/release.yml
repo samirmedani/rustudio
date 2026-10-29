@@ -35,6 +35,11 @@ jobs:
       - name: Installation complète sur la machine de test
         shell: pwsh
         run: ./scripts/smoke-test.ps1
+      - name: Mise à jour depuis la dernière release publiée (son propre updater, faux GitHub)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/release-update-test.ps1
       - name: Notes de version
         run: python scripts/release_notes.py "${{ github.ref_name }}" --out dist/notes.md
       - name: Release GitHub
@@ -42,3 +47,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${{ github.ref_name }}" dist/Rustudio-Setup.exe dist/Rustudio.zip dist/Rustudio.sha256 dist/GoXLR-Mini.zip dist/GoXLR-Mini.sha256 --title "Rustudio ${{ github.ref_name }}" --notes-file dist/notes.md
+
+  after:
+    name: Après publication
+    needs: release
+    uses: ./.github/workflows/after-release.yml
+    with:
+      tag: ${{ github.ref_name }}
+    permissions:
+      contents: write

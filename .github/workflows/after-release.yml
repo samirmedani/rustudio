@@ -1,0 +1,45 @@
+name: Après publication
+
+# Le chemin exact des utilisateurs, sur le vrai GitHub : la release précédente est installée avec son installeur,
+# puis son propre updater installe la nouvelle. Si ça échoue, la nouvelle release repasse en pré-version : elle
+# n'est plus proposée par « Mise à jour proposée » tant que le problème n'est pas réglé.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Release de départ (vide : celle d'avant la dernière)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  real-update:
+    name: Mise à jour réelle depuis la release précédente
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Release précédente -> dernière release, comme un utilisateur
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM: ${{ inputs.from }}
+        run: |
+          ./scripts/release-update-test.ps1 -Real -From "$env:FROM"
+          if ($LASTEXITCODE -eq 3) { exit 0 }
+      - name: En cas d'échec, ne plus proposer la release
+        if: failure() && inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ inputs.tag }}" --prerelease -R "${{ github.repository }}"
+          echo "La mise à jour vers ${{ inputs.tag }} a échoué depuis la release précédente : release repassée en pré-version, plus proposée." >> "$GITHUB_STEP_SUMMARY"
+        shell: bash

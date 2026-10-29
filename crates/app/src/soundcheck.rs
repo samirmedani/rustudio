@@ -253,9 +253,30 @@ mod win {
         e.GetDevice(PCWSTR(w.as_ptr())).map_err(|e| e.to_string())
     }
 
-    /// Ouvre la voie en mode partagé (200 ms de tampon) dans son format de mixage.
+    /// Ouvre la voie en mode partagé (200 ms de tampon) dans son format de mixage ; en mode exclusif (diagnostic :
+    /// sans le mixeur ni les effets de Windows), en 48 kHz, 24 bits dans 32, stéréo, le format des voies GoXLR.
     unsafe fn open(dev: &IMMDevice, flags: u32) -> Result<(IAudioClient, Fmt), String> {
+        open_mode(dev, flags, false)
+    }
+    unsafe fn open_mode(dev: &IMMDevice, flags: u32, exclusive: bool) -> Result<(IAudioClient, Fmt), String> {
         let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
+        if exclusive {
+            let mut ext = [0u8; 40];
+            ext[0..2].copy_from_slice(&0xFFFEu16.to_le_bytes());
+            ext[2..4].copy_from_slice(&2u16.to_le_bytes());
+            ext[4..8].copy_from_slice(&48_000u32.to_le_bytes());
+            ext[8..12].copy_from_slice(&384_000u32.to_le_bytes());
+            ext[12..14].copy_from_slice(&8u16.to_le_bytes());
+            ext[14..16].copy_from_slice(&32u16.to_le_bytes());
+            ext[16..18].copy_from_slice(&22u16.to_le_bytes());
+            ext[18..20].copy_from_slice(&24u16.to_le_bytes());
+            ext[20..24].copy_from_slice(&3u32.to_le_bytes());
+            ext[24..40].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]);
+            client
+                .Initialize(windows::Win32::Media::Audio::AUDCLNT_SHAREMODE_EXCLUSIVE, flags, 2_000_000, 0, ext.as_ptr() as *const WAVEFORMATEX, None)
+                .map_err(|e| format!("mode exclusif : {e}"))?;
+            return Ok((client, Fmt { float: false, rate: 48_000, block: 8, channels: 2, block_bits: 32 }));
+        }
         let fmt = client.GetMixFormat().map_err(|e| e.to_string())?;
         let wf: WAVEFORMATEX = std::ptr::read_unaligned(fmt);
         let (tag, rate, block, channels) = (wf.wFormatTag, wf.nSamplesPerSec, wf.nBlockAlign, wf.nChannels);
@@ -313,9 +334,9 @@ mod win {
     }
 
     /// Joue le son de test sur une voie jusqu'à \`stop\` ; renvoie le nombre de fois où notre propre tampon s'est vidé.
-    unsafe fn play_tone(id: &str, stop: &AtomicBool) -> Result<u32, String> {
+    unsafe fn play_tone(id: &str, stop: &AtomicBool, exclusive: bool) -> Result<u32, String> {
         let dev = device(id)?;
-        let (client, f) = open(&dev, 0)?;
+        let (client, f) = open_mode(&dev, 0, exclusive)?;
         let render: IAudioRenderClient = client.GetService().map_err(|e| e.to_string())?;
         let size = client.GetBufferSize().map_err(|e| e.to_string())?;
         let step = 2.0 * std::f64::consts::PI * LOOP_FREQ / f.rate as f64;
@@ -395,7 +416,7 @@ mod win {
         json!({"type": "sound-check", "seconds": secs, "channels": channels})
     }
 
-    pub fn loop_test(secs: f64) -> Value {
+    pub fn loop_test(secs: f64, exclusive: bool) -> Value {
         let (Some(out), Some(inp)) = (goxlr(false, "Sample"), goxlr(true, "Broadcast Stream Mix")) else {
             return json!({"status": "unavailable", "error": "voies Sample ou Broadcast Stream Mix introuvables"});
         };
@@ -412,7 +433,7 @@ mod win {
             (r.map(|s| verdict(&inp.name, false, secs, &s)), blocks.map(|b| b.blocks).unwrap_or_default())
         });
         std::thread::sleep(Duration::from_millis(150));
-        let play = com(move || unsafe { play_tone(&out.id, &s2) });
+        let play = com(move || unsafe { play_tone(&out.id, &s2, exclusive) });
         let (cap, blocks) = rec.join().unwrap_or((Err("écoute interrompue".into()), vec![]));
         stop.store(true, Ordering::SeqCst);
         let played = play.join().unwrap_or(Err("lecture interrompue".into()));
@@ -436,14 +457,16 @@ pub fn run(secs: f64) -> Value {
 }
 
 /// Test en boucle (le moteur doit avoir isolé la voie Sample : action « sound-test »).
-pub fn loop_test(secs: f64) -> Value {
+/// \`exclusive\` (diagnostic) : le son de test va droit au pilote, sans le mixeur ni les effets de Windows.
+pub fn loop_test(secs: f64, exclusive: bool) -> Value {
     let secs = secs.clamp(3.0, 900.0);
     #[cfg(windows)]
     {
-        win::loop_test(secs)
+        win::loop_test(secs, exclusive)
     }
     #[cfg(not(windows))]
     {
+        let _ = exclusive;
         json!({"status": "unavailable", "seconds": secs, "unsupported": true})
     }
 }

@@ -48,6 +48,11 @@ jobs:
       - name: Installation, service, appli et désinstallation
         shell: pwsh
         run: ./scripts/smoke-test.ps1
+      - name: Mise à jour depuis la dernière release publiée (son propre updater, faux GitHub)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/release-update-test.ps1
 
   leaks:
     name: Données personnelles et secrets
