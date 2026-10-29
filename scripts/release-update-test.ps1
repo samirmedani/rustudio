@@ -112,11 +112,14 @@ try {
     if ($t.Elapsed.TotalSeconds -gt 90) { Fail "Rustudio $fromV ne propose pas la $target (statut $($u.status), resultat $($u.result), vue $($u.latest.version), installable $($u.installable) $($u.why_not))" }
   }
   Write-Host ("Rustudio {0} propose la {1} ({2:N0} s)" -f $fromV, $target, $t.Elapsed.TotalSeconds)
+  # le journal garde les tests precedents de la machine : seules comptent les lignes ecrites apres le clic
+  $logf = Join-Path $data 'rustudio.log'
+  $logStart = @(Get-Content $logf -ErrorAction SilentlyContinue).Count
+  function New-Log([string]$text) { @(Get-Content $logf -ErrorAction SilentlyContinue | Select-Object -Skip $logStart | Where-Object { $_.Contains($text) }).Count -gt 0 }
   Post 'update-install' | Out-Null
   Wait-Until { (Health).version -eq $target } 300 "Rustudio $target en marche"
-  $logf = Join-Path $data 'rustudio.log'
-  Wait-Until { Select-String -Path $logf -SimpleMatch "Version $target installée" -Quiet } 60 'Installation terminee'
-  if (Select-String -Path $logf -SimpleMatch "Échec, retour à $fromV" -Quiet) { Fail 'Retour arriere pendant la mise a jour' }
+  Wait-Until { New-Log "Version $target installée" } 120 'Installation terminee'
+  if (New-Log "Échec, retour à $fromV") { Fail 'Retour arriere pendant la mise a jour' }
 
   # 5. fichiers, version affichee, sauvegarde de la version de depart, reglages, menage
   if ((Get-Content (Join-Path $dir 'manifest.json') -Raw | ConvertFrom-Json).version -ne $target) { Fail 'Manifeste installe pas a jour' }
