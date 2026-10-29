@@ -82,10 +82,10 @@ pub fn run_engine(cfg: config::Config) -> i32 {
         spawn("glitches", Box::new(|| {
             glitches::ensure_enabled();
         }));
-        // programmes lances au moment des coupures comptees par le pilote
-        let c = ctl.clone();
-        spawn("drops", Box::new(move || c.drops_watch_loop()));
     }
+    // Persistance aussi en simulation, pour verifier le meme chemin sans appareil.
+    let c = ctl.clone();
+    spawn("drops", Box::new(move || c.drops_watch_loop()));
     logf!("Interface et API sur http://127.0.0.1:{}/", cfg.port);
     http::serve(ctl.clone(), server, 8);
     ctl.save_if_dirty();

@@ -25,7 +25,7 @@ RULES = [
 ]
 FORBIDDEN = re.compile(r"\.(?:wav|mp3|m4a|flac|db|sqlite|pem|key|p12|pfx|zip|exe|dll|msi)$|(^|/)(?:review|INTERNE)\.md$|(^|/)\.env|(^|/)state\.json$", re.I)
 SKIP_DIRS = {".git", "private", "dist", "bin", "obj", "__pycache__", "node_modules", "target", "gen"}
-TEXT_EXT = {".py", ".md", ".html", ".rs", ".toml", ".lock", ".rc", ".manifest", ".ps1", ".cmd", ".sh", ".yml", ".yaml", ".json", ".txt", ".svg", ".gitignore", ""}
+TEXT_EXT = {".py", ".md", ".html", ".js", ".mjs", ".cjs", ".rs", ".toml", ".lock", ".rc", ".manifest", ".ps1", ".cmd", ".sh", ".yml", ".yaml", ".json", ".txt", ".svg", ".gitignore", ""}
 
 
 def files_from_git(staged):

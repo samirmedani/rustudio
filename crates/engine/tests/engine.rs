@@ -675,9 +675,11 @@ fn coupures_usb_comptees_par_le_pilote() {
     assert!(wait_for(5.0, || b.ctl.drops.lock().unwrap().total == 1), "coupure vue");
     let j = b.ctl.health()["usb_drops"].clone();
     assert_eq!(j["count"], 1);
-    // l'historique est sur le disque : il survit a un redemarrage du moteur
+    // La boucle USB ne fait aucune sauvegarde : seul le fil de diagnostic ecrit le fichier.
     let f = b.tmp.join("usb-drops.json");
-    assert!(wait_for(5.0, || f.exists()), "historique non ecrit dans {}", f.display());
+    assert!(!f.exists(), "la boucle USB ne doit pas toucher au disque pour l'historique");
+    b.ctl.save_drops();
+    assert!(f.exists(), "historique non ecrit dans {}", f.display());
     let disque: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
     assert_eq!(disque["events"].as_array().unwrap().len(), 1);
     assert_eq!(disque["events"][0]["out_ms"], 2.0);

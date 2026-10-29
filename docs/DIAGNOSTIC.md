@@ -41,10 +41,15 @@ Mesures du 29 octobre 2026, GoXLR Mini, pilote 5.57 :
 
 La sonde `crates/goxlr/examples/usbstats.rs` reproduit ces mesures hors du moteur :
 
+**Arrêter le service Rustudio avant d'utiliser la sonde.** Elle énumère les appareils du pilote, ce qui invalide
+ses handles ouverts. Elle réserve le port local du moteur avant de charger le pilote et le garde pendant toute
+la mesure : si Rustudio est déjà lancé, elle refuse de démarrer. Pour un moteur sur un port personnalisé, définir
+le même `RUSTUDIO_PORT` pour la sonde. Ne jamais la lancer périodiquement en parallèle du service.
+
 ```powershell
 cargo xwin build -p rustudio-goxlr --example usbstats --target x86_64-pc-windows-msvc --release
 usbstats.exe check           # le chemin exact du moteur, trois lectures
-usbstats.exe 60 100          # six minutes de veille, champs qui changent rarement
+usbstats.exe 60 100          # une minute de veille, champs qui changent rarement
 ```
 
 ## Ce que ce compteur ne couvre pas
@@ -54,6 +59,17 @@ usbstats.exe 60 100          # six minutes de veille, champs qui changent rareme
   muette au lieu d'afficher des valeurs fausses.
 - Une coupure peut aussi venir d'un programme qui n'a pas fourni le son à temps : le journal Windows
   `Microsoft-Windows-Audio/GlitchDetection` la compte séparément, et Rustudio le résume à côté.
+- Sans lecture ni enregistrement, les compteurs restent figés : aucune coupure enregistrée au repos ne prouve
+  pas que le son est stable en utilisation. Les programmes apparus autour d'une coupure sont des corrélations,
+  pas une preuve de causalité.
+
+## Garder la surveillance légère
+
+Le fil USB ne fait que mettre à jour les compteurs en mémoire. Le fil de diagnostic prend une copie de
+l'historique, relâche le verrou, puis écrit le fichier temporaire et remplace l'ancien fichier. Un numéro de
+révision distingue cette copie des coupures reçues pendant l'écriture : elles seront sauvegardées au passage
+suivant. Une écriture échouée reste en attente. Ce fil écrit aussi les messages de coupure dans le journal et
+retire les événements de plus de 24 heures, même si le son ne coupe plus.
 
 ## Ajouter un appareil
 

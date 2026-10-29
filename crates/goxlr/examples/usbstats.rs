@@ -6,6 +6,26 @@
 //!
 //! Affiche l'heure (secondes Unix) et les champs u32 qui changent rarement : un compteur d'erreurs de flux saute
 //! au moment d'une coupure du son, alors que les compteurs de paquets changent a chaque lecture.
+//! Arreter le moteur avant de lancer cette sonde : son enumeration invalide les handles du pilote.
+
+#[cfg(any(windows, test))]
+fn reserve_port(port: u16) -> std::io::Result<std::net::TcpListener> {
+    std::net::TcpListener::bind(("127.0.0.1", port))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn moteur_et_sonde_ne_peuvent_pas_coexister() {
+        let engine = super::reserve_port(0).unwrap();
+        let port = engine.local_addr().unwrap().port();
+        assert!(super::reserve_port(port).is_err(), "refus avant toute ouverture du pilote");
+        drop(engine);
+        let probe = super::reserve_port(port).unwrap();
+        assert!(super::reserve_port(port).is_err(), "le moteur ne peut pas demarrer pendant la sonde");
+        drop(probe);
+    }
+}
 
 #[cfg(not(windows))]
 fn main() {
@@ -100,6 +120,12 @@ mod win {
     }
 
     pub fn main() {
+        let port = std::env::var("RUSTUDIO_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(14565);
+        // Meme verrou que le moteur, garde jusqu'a la fermeture du pilote (pas de course au demarrage).
+        let _port_guard = super::reserve_port(port).unwrap_or_else(|e| {
+            eprintln!("Port {port} indisponible ({e}). Arrete le service Rustudio avant la sonde ; aucun acces au pilote.");
+            std::process::exit(2);
+        });
         let args: Vec<String> = std::env::args().collect();
         if args.get(1).map(String::as_str) == Some("check") {
             return check();

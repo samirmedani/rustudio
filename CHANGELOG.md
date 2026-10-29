@@ -1,5 +1,17 @@
 # Nouveautés
 
+## 5.2.2
+
+**Corrigé**
+- La surveillance des crépitements écrit son historique et son journal depuis un fil séparé, sans garder le
+  verrou des compteurs USB. Un disque lent ne retarde plus les commandes de la GoXLR à cause de ces écritures.
+  Une coupure arrivée pendant une sauvegarde reste bien enregistrée à la suivante ; une écriture ratée est réessayée.
+- « Son qui crépite ? » distingue l'absence de flux audio et une mesure devenue indisponible d'une absence de
+  coupure relevée. Les pertes vers le casque et vers le PC (micro, stream) sont affichées séparément.
+- Les programmes lancés au moment d'une coupure sont présentés comme des pistes à vérifier, sans leur attribuer
+  automatiquement la panne.
+- Les coupures de plus de 24 heures sont retirées du fichier d'historique même si aucune nouvelle coupure ne survient.
+
 ## 5.2.1
 
 **Amélioré**

@@ -27,15 +27,40 @@ pub struct UsbDrops {
     /// None : jamais lu ; Some(false) : pilote sans ces compteurs
     pub available: Option<bool>,
     pub since: Option<f64>,
+    pub reading: bool,
     pub streaming: bool,
     pub events: VecDeque<DropEvent>,
     pub total: u64,
     launched: VecDeque<(f64, Vec<String>)>,
     last_log: f64,
     unlogged: u32,
+    pending_logs: VecDeque<DropEvent>,
     /// fichier de l'historique ; None : rien sur le disque (tests)
     path: Option<PathBuf>,
-    dirty: bool,
+    revision: u64,
+    saved_revision: u64,
+}
+
+/// Copie a ecrire par le fil de diagnostic, sans garder le verrou des compteurs USB.
+pub struct HistoryWrite {
+    path: PathBuf,
+    revision: u64,
+    since: Option<f64>,
+    total: u64,
+    events: VecDeque<DropEvent>,
+}
+
+impl HistoryWrite {
+    pub fn write(&self) -> std::io::Result<()> {
+        let events: Vec<Value> = self.events.iter().map(|e| json!({
+            "t": e.t, "out_ms": e.out_ms, "in_ms": e.in_ms,
+            "hint": e.hint.as_ref().map(|h| h.iter().map(|(n, c)| json!({"name": n, "n": c})).collect::<Vec<_>>()),
+        })).collect();
+        let v = json!({"since": self.since, "total": self.total, "events": events});
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, v.to_string())?;
+        std::fs::rename(&tmp, &self.path)
+    }
 }
 
 fn lost(a: &StreamCounters, b: &StreamCounters) -> u32 {
@@ -48,7 +73,6 @@ fn lost(a: &StreamCounters, b: &StreamCounters) -> u32 {
 }
 
 impl UsbDrops {
-    /// Nouveau releve (None : compteurs illisibles). Renvoie la coupure survenue depuis le releve precedent.
     /// Historique enregistre (fichier absent ou illisible : on repart de zero).
     pub fn load(path: PathBuf, now: f64) -> UsbDrops {
         let mut d = UsbDrops { path: Some(path.clone()), ..Default::default() };
@@ -60,6 +84,7 @@ impl UsbDrops {
         for e in v["events"].as_array().into_iter().flatten() {
             let t = e["t"].as_f64().unwrap_or(0.0);
             if t < now - DAY {
+                d.revision += 1;
                 continue;
             }
             let hint = e["hint"].as_array().map(|a| {
@@ -71,41 +96,33 @@ impl UsbDrops {
         }
         while d.events.len() > KEEP {
             d.events.pop_front();
+            d.revision += 1;
         }
         d
     }
 
-    /// Ecrit l'historique s'il a change (fichier remplace d'un coup : jamais de moitie ecrite).
-    pub fn flush(&mut self) {
-        if !self.dirty {
-            return;
+    /// Prepare une sauvegarde, sans acces disque. Un seul fil doit ecrire ces copies, dans l'ordre.
+    pub fn pending_history(&mut self, now: f64) -> Option<HistoryWrite> {
+        self.prune(now);
+        if self.revision == self.saved_revision {
+            return None;
         }
-        let Some(path) = self.path.clone() else {
-            self.dirty = false;
-            return;
-        };
-        let events: Vec<Value> = self
-            .events
-            .iter()
-            .map(|e| json!({
-                "t": e.t, "out_ms": e.out_ms, "in_ms": e.in_ms,
-                "hint": e.hint.as_ref().map(|h| h.iter().map(|(n, c)| json!({"name": n, "n": c})).collect::<Vec<_>>()),
-            }))
-            .collect();
-        let v = json!({"since": self.since, "total": self.total, "events": events});
-        let tmp = path.with_extension("json.tmp");
-        match std::fs::write(&tmp, v.to_string()).and_then(|_| std::fs::rename(&tmp, &path)) {
-            Ok(()) => self.dirty = false,
-            Err(e) => crate::logf!("Historique des coupures non enregistre dans {} : {e}", path.display()),
-        }
+        Some(HistoryWrite { path: self.path.clone()?, revision: self.revision, since: self.since, total: self.total, events: self.events.clone() })
+    }
+
+    /// A appeler seulement apres une ecriture reussie. Une coupure arrivee entretemps reste a sauvegarder.
+    pub fn history_saved(&mut self, saved: &HistoryWrite) {
+        self.saved_revision = saved.revision;
     }
 
     fn prune(&mut self, now: f64) {
         while self.events.front().map(|e| e.t < now - DAY).unwrap_or(false) {
             self.events.pop_front();
+            self.revision += 1;
         }
     }
 
+    /// Nouveau releve (None : compteurs illisibles). Renvoie la coupure depuis le releve precedent.
     pub fn update(&mut self, s: Option<StreamStats>, now: f64) -> Option<DropEvent> {
         let Some(s) = s else {
             if self.available.is_none() {
@@ -115,7 +132,11 @@ impl UsbDrops {
             return None;
         };
         self.available = Some(true);
-        self.since.get_or_insert(now);
+        self.reading = true;
+        if self.since.is_none() {
+            self.since = Some(now);
+            self.revision += 1;
+        }
         self.streaming = s.active();
         let prev = self.prev.replace(s)?;
         let (o, i) = (lost(&prev.output, &s.output), lost(&prev.input, &s.input));
@@ -129,13 +150,18 @@ impl UsbDrops {
         }
         self.prune(now);
         self.events.push_back(ev.clone());
-        self.dirty = true;
+        if self.pending_logs.len() >= KEEP {
+            self.pending_logs.pop_front();
+        }
+        self.pending_logs.push_back(ev.clone());
+        self.revision += 1;
         Some(ev)
     }
 
     /// GoXLR deconnectee : les compteurs repartent de zero a la reconnexion.
     pub fn reset(&mut self) {
         self.prev = None;
+        self.reading = false;
         self.streaming = false;
     }
 
@@ -152,6 +178,17 @@ impl UsbDrops {
             ev.out_ms, ev.in_ms,
             if more > 0 { format!(" ({more} autre(s) juste avant)") } else { String::new() }
         ))
+    }
+
+    /// Prepare les messages pour le fil de diagnostic : le fil USB n'ecrit pas le journal non plus.
+    pub fn take_log_lines(&mut self) -> Vec<String> {
+        let mut lines = Vec::new();
+        while let Some(ev) = self.pending_logs.pop_front() {
+            if let Some(line) = self.log_line(&ev) {
+                lines.push(line);
+            }
+        }
+        lines
     }
 
     /// Programmes apparus depuis le coup d'oeil precedent ; complete les coupures assez anciennes pour avoir vu
@@ -180,7 +217,7 @@ impl UsbDrops {
             v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             v.truncate(5);
             ev.hint = Some(v);
-            self.dirty = true;
+            self.revision += 1;
         }
     }
 
@@ -198,7 +235,7 @@ impl UsbDrops {
         top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         top.truncate(5);
         json!({
-            "available": self.available, "since": self.since, "streaming": self.streaming, "total": self.total,
+            "available": self.available, "reading": self.reading, "since": self.since, "streaming": self.streaming, "total": self.total,
             "top": top.iter().map(|(n, c)| json!({"name": n, "count": c})).collect::<Vec<_>>(),
             "count": evs.len(), "out_ms": sum(|e| e.out_ms), "in_ms": sum(|e| e.in_ms), "last": evs.last().map(|e| e.t),
             "events": evs.iter().rev().take(20).map(|e| json!({
@@ -212,6 +249,12 @@ impl UsbDrops {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn save(d: &mut UsbDrops, now: f64) {
+        let pending = d.pending_history(now).expect("sauvegarde attendue");
+        pending.write().unwrap();
+        d.history_saved(&pending);
+    }
 
     fn st(active: bool, ms: u32, lost: u32) -> StreamStats {
         let c = StreamCounters { active, ms, microframes: ms * 8, lost };
@@ -247,8 +290,11 @@ mod tests {
         let mut d = UsbDrops::default();
         d.update(None, 1.0);
         assert_eq!(d.available, Some(false));
+        assert!(!d.reading);
         d.update(Some(st(true, 1, 0)), 2.0);
+        assert!(d.reading);
         d.update(None, 3.0);
+        assert!(!d.reading);
         assert_eq!(d.available, Some(true), "une GoXLR debranchee ne rend pas le diagnostic indisponible");
     }
 
@@ -281,7 +327,7 @@ mod tests {
         d.note_launched(999.0, vec!["git.exe".into()]);
         d.note_launched(1002.6, vec![]);
         d.note_launched(1301.6, vec![]);
-        d.flush();
+        save(&mut d, 1302.0);
         let r = UsbDrops::load(path.clone(), 1302.0);
         assert_eq!(r.total, 2);
         assert_eq!(r.events.len(), 2);
@@ -295,9 +341,53 @@ mod tests {
         assert!(vieux.events.is_empty());
         vieux.update(Some(st(true, 10, 1690)), 1302.0 + DAY + 11.0);
         vieux.update(Some(st(true, 1010, 1698)), 1302.0 + DAY + 12.0);
-        vieux.flush();
+        save(&mut vieux, 1302.0 + DAY + 12.0);
         assert_eq!(UsbDrops::load(path.clone(), 1302.0 + DAY + 13.0).events.len(), 1, "les coupures de la veille ont disparu du fichier");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sauvegarde_lente_ne_perd_pas_une_nouvelle_coupure() {
+        let dir = std::env::temp_dir().join(format!("rustudio-drops-concurrent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("usb-drops.json");
+        let mut d = UsbDrops::load(path.clone(), 1000.0);
+        d.update(Some(st(true, 1000, 0)), 1000.0);
+        d.update(Some(st(true, 2000, 8)), 1001.0);
+        let pending = d.pending_history(1001.0).unwrap();
+        // Une deuxieme coupure arrive pendant l'ecriture de la premiere copie, hors du verrou.
+        d.update(Some(st(true, 3000, 16)), 1002.0);
+        pending.write().unwrap();
+        d.history_saved(&pending);
+        save(&mut d, 1002.0);
+        assert_eq!(UsbDrops::load(path.clone(), 1003.0).events.len(), 2);
+        assert!(d.pending_history(1003.0).is_none(), "pas d'ecriture sans changement");
+
+        // Pas besoin d'une nouvelle coupure pour effacer du disque les evenements expires.
+        save(&mut d, 1003.0 + DAY);
+        let stored: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(stored["events"], json!([]));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ecriture_ratee_reessayee_sans_bloquer_les_compteurs() {
+        let dir = std::env::temp_dir().join(format!("rustudio-drops-retry-{}", std::process::id()));
+        let path = dir.join("usb-drops.json");
+        let mut d = UsbDrops::load(path.clone(), 1000.0);
+        d.update(Some(st(true, 1000, 0)), 1000.0);
+        // Le dossier n'existe pas : echec disque. Les releves continuent entre les tentatives.
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(d.pending_history(1000.0).unwrap().write().is_err());
+        d.update(Some(st(true, 2000, 8)), 1001.0);
+        std::fs::create_dir_all(&dir).unwrap();
+        save(&mut d, 1002.0);
+        assert_eq!(UsbDrops::load(path, 1003.0).events.len(), 1);
+        let lines = d.take_log_lines();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("1 ms"));
+        assert!(d.take_log_lines().is_empty(), "pas de doublon dans le journal");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -1167,14 +1167,17 @@ impl Ctl {
             *at = Some(Instant::now());
         }
         let s = dev.stream_stats();
-        let line = {
-            let mut d = self.drops.lock().unwrap_or_else(|e| e.into_inner());
-            let line = d.update(s, now_epoch()).and_then(|ev| d.log_line(&ev));
-            d.flush();
-            line
-        };
-        if let Some(l) = line {
-            log(&l);
+        self.drops.lock().unwrap_or_else(|e| e.into_inner()).update(s, now_epoch());
+    }
+
+    /// Appel par le seul fil de diagnostic : ni disque ni serialisation sous le verrou USB.
+    pub fn save_drops(&self) {
+        let pending = self.drops.lock().unwrap_or_else(|e| e.into_inner()).pending_history(now_epoch());
+        if let Some(pending) = pending {
+            match pending.write() {
+                Ok(()) => self.drops.lock().unwrap_or_else(|e| e.into_inner()).history_saved(&pending),
+                Err(e) => logf!("Historique des coupures non enregistré : {e}"),
+            }
         }
     }
 
@@ -1195,9 +1198,15 @@ impl Ctl {
             } else {
                 prev = None;
             }
-            let mut d = self.drops.lock().unwrap_or_else(|e| e.into_inner());
-            d.note_launched(now_epoch(), names);
-            d.flush();
+            let lines = {
+                let mut d = self.drops.lock().unwrap_or_else(|e| e.into_inner());
+                d.note_launched(now_epoch(), names);
+                d.take_log_lines()
+            };
+            for line in lines {
+                log(&line);
+            }
+            self.save_drops();
         }
     }
 
