@@ -1155,7 +1155,10 @@ impl Ctl {
     /// Compteurs de transport USB du pilote, une fois par \`stats_interval\` : une requete au pilote, rien vers la GoXLR.
     fn stream_tick(&self, dev: &mut GoXlr) {
         {
-            let iv = *self.stats_interval.lock().unwrap_or_else(|e| e.into_inner());
+            let mut iv = *self.stats_interval.lock().unwrap_or_else(|e| e.into_inner());
+            if !self.drops.lock().unwrap_or_else(|e| e.into_inner()).streaming {
+                iv *= 5; // aucun son ne passe : pas de coupure possible, un coup d'oeil toutes les 5 s suffit
+            }
             let mut at = self.stats_at.lock().unwrap_or_else(|e| e.into_inner());
             if matches!(*at, Some(t) if t.elapsed() < iv) {
                 return;
