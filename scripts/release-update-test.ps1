@@ -50,8 +50,8 @@ function Ver([string]$tag) { [version]($tag.TrimStart('v')) }
 if (Get-Service Rustudio -ErrorAction SilentlyContinue) { throw 'Rustudio deja installe : lancer ce test apres smoke-test.ps1' }
 
 # 1. les releases publiees (publiees, ni brouillon ni pre-version), de la plus recente a la plus ancienne
-$rels = @(Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=30" -Headers $gh |
-  Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
+$all = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=30" -Headers $gh
+$rels = @($all | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
   Sort-Object { Ver $_.tag_name } -Descending)
 if (-not $rels) { throw "Aucune release publiee sur $repo" }
 
