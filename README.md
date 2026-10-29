@@ -86,6 +86,7 @@ code, peut ajouter le sien par une pull request.
   Sans aucun test, Rustudio relit aussi chaque seconde le compteur du pilote qui note chaque milliseconde de son
   perdue sur l'USB : les coupures des dernières 24 heures s'affichent à la seconde près, avec les programmes que
   Windows lançait à ce moment-là.
+  Comment ces chiffres sont lus et vérifiés : [docs/DIAGNOSTIC.md](docs/DIAGNOSTIC.md).
 
 <p align="center">
   <img src="docs/captures/echo.jpg" width="720" alt="Anti-écho : routage de la GoXLR, Windows, Discord et test acoustique">
