@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 pub mod dll;
 pub mod sim;
+pub mod stream;
 
 /// API Thesycon du pilote (goxlr_audioapi_x64.dll), ou son equivalent simule.
 pub trait Tusb: Send {
@@ -26,6 +27,10 @@ pub trait Tusb: Send {
     fn vendor_in(&mut self, h: u32, request: u32, len: usize) -> Result<Vec<u8>, u32>;
     fn close(&mut self, h: u32);
     fn status_text(&self, code: u32) -> String;
+    /// Compteurs de transport USB du pilote (voir stream.rs) : une requete au pilote, rien vers l'appareil.
+    fn stream_stats(&mut self, _h: u32) -> Option<stream::StreamStats> {
+        None
+    }
 }
 
 pub type Loader = Box<dyn Fn() -> Result<Box<dyn Tusb>, String> + Send>;
@@ -189,6 +194,12 @@ impl GoXlr {
         }
         self.stage(None);
         Err(DevError::Device("Aucune GoXLR trouvée par le pilote".into()))
+    }
+
+    /// Coupures du son comptees par le pilote (diagnostic des crepitements) ; ne parle pas a l'appareil.
+    pub fn stream_stats(&mut self) -> Option<stream::StreamStats> {
+        let h = self.h?;
+        self.tusb.as_mut()?.stream_stats(h)
     }
 
     pub fn close(&mut self) {

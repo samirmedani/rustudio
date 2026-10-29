@@ -860,6 +860,10 @@ pub struct Ctl {
     pub poll_interval: Mutex<Duration>,
     last_backup: Mutex<f64>,
     pub loop_running: AtomicBool,
+    /// coupures du son comptees par le pilote, relues toutes les \`stats_interval\` par la boucle USB
+    pub drops: Mutex<crate::drops::UsbDrops>,
+    pub stats_interval: Mutex<Duration>,
+    stats_at: Mutex<Option<Instant>>,
 }
 
 pub const DEFAULT_PROFILE: &str = include_str!("../../../ui/profile.json");
@@ -930,6 +934,9 @@ impl Ctl {
             poll_interval: Mutex::new(Duration::from_millis(15)),
             last_backup: Mutex::new(0.0),
             loop_running: AtomicBool::new(false),
+            drops: Mutex::new(crate::drops::UsbDrops::default()),
+            stats_interval: Mutex::new(Duration::from_secs(1)),
+            stats_at: Mutex::new(None),
         });
         // captures de la documentation : en mode simule seulement, la mise a jour proposee s'affiche installable
         if ctl.simulated() && std::env::var("RUSTUDIO_DEMO_UPDATE").as_deref() == Ok("1") {
@@ -1029,6 +1036,7 @@ impl Ctl {
             was
         };
         dev.close();
+        self.drops.lock().unwrap_or_else(|e| e.into_inner()).reset();
         if was {
             logf!("GoXLR perdue : {msg}");
         }
@@ -1135,12 +1143,54 @@ impl Ctl {
         self.flush(dev)?;
         let lvl = self.want_level(tick);
         self.poll_once(dev, lvl)?;
+        self.stream_tick(dev);
         self.flush(dev)?;
         let mut g = self.lock();
         if g.fail_streak > 0 && matches!(g.conn_mono, Some(t) if t.elapsed() > Duration::from_secs(30)) {
             g.fail_streak = 0;
         }
         Ok(())
+    }
+
+    /// Compteurs de transport USB du pilote, une fois par \`stats_interval\` : une requete au pilote, rien vers la GoXLR.
+    fn stream_tick(&self, dev: &mut GoXlr) {
+        {
+            let iv = *self.stats_interval.lock().unwrap_or_else(|e| e.into_inner());
+            let mut at = self.stats_at.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(*at, Some(t) if t.elapsed() < iv) {
+                return;
+            }
+            *at = Some(Instant::now());
+        }
+        let s = dev.stream_stats();
+        let line = {
+            let mut d = self.drops.lock().unwrap_or_else(|e| e.into_inner());
+            d.update(s, now_epoch()).and_then(|ev| d.log_line(&ev))
+        };
+        if let Some(l) = line {
+            log(&l);
+        }
+    }
+
+    /// Fil « drops » : pendant que le son passe, note chaque seconde les programmes que Windows vient de lancer,
+    /// pour dire ce qui tournait au moment d'une coupure.
+    pub fn drops_watch_loop(&self) {
+        let mut prev: Option<HashMap<u32, String>> = None;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let streaming = self.drops.lock().unwrap_or_else(|e| e.into_inner()).streaming;
+            let mut names = vec![];
+            if streaming {
+                let cur = crate::win::process_ids();
+                if let Some(p) = &prev {
+                    names = cur.iter().filter(|(pid, _)| !p.contains_key(pid)).map(|(_, n)| n.clone()).collect();
+                }
+                prev = Some(cur);
+            } else {
+                prev = None;
+            }
+            self.drops.lock().unwrap_or_else(|e| e.into_inner()).note_launched(now_epoch(), names);
+        }
     }
 
     pub fn device_loop(&self, stop: Option<Arc<AtomicBool>>) {

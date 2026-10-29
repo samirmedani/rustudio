@@ -1891,6 +1891,25 @@ function soundLevel(c) {
   var d = c.peak_db != null ? c.peak_db : c.meter_db;
   return d == null ? "silence" : "max " + (d > -0.05 ? "0" : String(Math.round(d * 10) / 10).replace(".", ",")) + " dB";
 }
+/* coupures comptees par le pilote : heure, son perdu, programmes lances au meme moment */
+function fmtClock(t) {
+  var d = new Date(t * 1000), hm = d.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"});
+  return d.toDateString() === new Date().toDateString() ? hm : d.toLocaleDateString("fr-FR", {day: "numeric", month: "short"}) + " " + hm;
+}
+function fmtLost(ms) { return ms < 1000 ? String(Math.round(ms * 10) / 10).replace(".", ",") + " ms" : String(Math.round(ms / 100) / 10).replace(".", ",") + " s"; }
+function dropHint(e) { return e && e.hint && e.hint.length ? e.hint.map(function (x) { return esc(x.name) + (x.n > 1 ? " \u00d7" + x.n : ""); }).join(", ") : ""; }
+function usbDropsItem(u, st) {
+  if (!u || !u.available) return null;
+  var since = u.since ? " depuis " + fmtClock(u.since) : "";
+  if (!u.count) return echoItem("ok", "Aucune coupure entre le PC et la GoXLR", "Le pilote surveille chaque milliseconde du transport USB" + since + " : rien de perdu.");
+  var last = u.events[0], hint = dropHint(last), burst = last && last.hint && last.hint.length && last.hint[0].n >= 5;
+  var lines = u.events.slice(0, 6).map(function (e) { var hh = dropHint(e); return new Date(e.t * 1000).toLocaleTimeString("fr-FR") + " \u00b7 " + fmtLost(e.out_ms) + (hh ? " \u00b7 " + hh : ""); }).join("<br>");
+  return echoItem("warn", u.count + " coupure" + (u.count > 1 ? "s" : "") + " entre le PC et la GoXLR",
+    "Comptée" + (u.count > 1 ? "s" : "") + " par le pilote" + since + " : " + fmtLost(u.out_ms) + " de son perdu, c\u2019est ce qu\u2019on entend comme des crépitements." +
+    (hint ? " Au moment de la dernière, Windows lançait : " + hint + "." : "") +
+    (burst ? " Une rafale de programmes lancés d\u2019un coup (synchronisation, compilation, mise à jour) suffit à faire sauter le son USB : espace ou décale cette tâche." : "") +
+    (u.count > 1 ? "<br><span class=\"muted-txt\">" + lines + "</span>" : "") + (usbAdvice(st.usb) ? " " + usbAdvice(st.usb) : ""));
+}
 function soundAt(s) { s = Math.round(s); return s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60 ? (s % 60) + " s" : "").trim(); }
 function hpBoost() {
   var eq = S.state.hp_eq, c = hpFilters(eq), mx = 0;
@@ -1933,10 +1952,11 @@ function paintSound() {
   }
   b.appendChild(t);
   if (r && r.loop) paintSoundResult(b, r);
-  var day = st.day;
-  if (day && !day.unsupported) {
+  var day = st.day, drops = day && usbDropsItem(day.usb, st);
+  if (day && (!day.unsupported || drops)) {
     var d = h("div", {"class": "echo-sec"}, "<h4>Ces dernières 24 heures</h4>");
-    d.appendChild(day.total ? echoItem("warn", day.total + " coupure" + (day.total > 1 ? "s" : "") + " notée" + (day.total > 1 ? "s" : "") + " par Windows",
+    if (drops) d.appendChild(drops);
+    if (!day.unsupported) d.appendChild(day.total ? echoItem("warn", day.total + " coupure" + (day.total > 1 ? "s" : "") + " notée" + (day.total > 1 ? "s" : "") + " par Windows",
       (day.kinds.app ? day.kinds.app + " côté programme (un jeu ou une appli n\u2019a pas fourni le son à temps). " : "") + (day.kinds.driver ? day.kinds.driver + " côté pilote ou GoXLR. " : "") + (day.last ? "Dernière : " + new Date(day.last).toLocaleString("fr-FR") + "." : ""))
       : echoItem("ok", "Aucune coupure notée par Windows", day.was_enabled === false ? "Le journal vient d\u2019être allumé : il notera les prochaines." : "Le son de Windows n\u2019a pas sauté."));
     b.appendChild(d);
@@ -1959,6 +1979,10 @@ function paintSoundResult(b, r) {
   else if (lp.status === "no-signal") s.appendChild(echoItem("tip", "Le son de test n\u2019est pas revenu", "La voie Sample est peut-être coupée, ou la GoXLR débranchée."));
   else if (lp.status === "test-late") s.appendChild(echoItem("tip", "Test perturbé", "Le PC était trop chargé pour jouer le son de test à temps : refais-le."));
   else s.appendChild(echoItem("tip", "Aller-retour impossible", esc(lp.error || "voies GoXLR absentes")));
+  var wu = win && win.usb;
+  if (wu && wu.available) s.appendChild(wu.count ? echoItem("warn", "Le pilote confirme " + wu.count + " coupure" + (wu.count > 1 ? "s" : "") + " pendant le test",
+      fmtLost(wu.out_ms) + " de son perdu vers la GoXLR." + (dropHint(wu.events[0]) ? " Windows lançait alors : " + dropHint(wu.events[0]) + "." : ""))
+    : echoItem("ok", "Le pilote n\u2019a perdu aucune milliseconde", "Ses compteurs du transport USB n\u2019ont pas bougé pendant le test."));
   if (lp.status !== "glitches" && st.usb && st.usb.found) {
     var adv = usbAdvice(st.usb);
     s.appendChild(adv ? echoItem("tip", "Port USB", adv.replace("Branche-la", "Si ça crépite un jour, branche-la").replace(", puis refais le test", "")) : echoItem("ok", "Port USB", "Relié directement au processeur, sans hub : le meilleur choix."));
@@ -2254,7 +2278,7 @@ function simTools() {
   b("Bouton micro", "press", {button: "MicrophoneMute", ms: 150}); b("Bleep", "press", {button: "Bleep", ms: 600});
   b("Parler", "talk", {on: true}); b("Silence", "talk", {on: false});
   b("Micro statique", "mic-input", {input: "condenser"}); b("Micro dynamique", "mic-input", {input: "dynamic"});
-  b("Débrancher", "unplug"); b("Rebrancher", "plug"); b("Bloquer l’USB 20 s", "hang", {seconds: 20});
+  b("Coupure USB", "usb-drop", {ms: 1}); b("Débrancher", "unplug"); b("Rebrancher", "plug"); b("Bloquer l’USB 20 s", "hang", {seconds: 20});
   return box;
 }
 function openOverlaySheet() {

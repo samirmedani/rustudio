@@ -24,6 +24,18 @@ const FIRST_CHECK: f64 = 5.0;
 const EVERY: f64 = 6.0 * 3600.0;
 const OFFLINE_RETRY: f64 = 30.0 * 60.0;
 
+/// Notes de la derniere version, suivies de celles des versions sautees (de la plus recente a la plus ancienne) :
+/// qui passe de la 5.0 a la 5.2 lit aussi ce que la 5.1 apportait.
+pub fn compose_notes(latest: &str, older: &[(String, String)]) -> String {
+    let mut s = latest.trim_end().to_string();
+    for (v, n) in older {
+        if !n.trim().is_empty() {
+            s.push_str(&format!("\n\n#### Aussi dans la {v}\n\n{}", n.trim()));
+        }
+    }
+    s.chars().take(60_000).collect()
+}
+
 pub fn sha256_hex(data: &[u8]) -> String {
     let d = Sha256::digest(data);
     d.iter().map(|b| format!("{b:02x}")).collect()
@@ -241,7 +253,12 @@ impl Updater {
             std::mem::replace(&mut s.status, "checking".into())
         };
         self.bump();
-        let r = self.fetch();
+        let mut r = self.fetch();
+        if let Fetch::Release(info) = &mut r {
+            if semver::lt(&self.current(), &info.version) {
+                info.notes = self.notes_since(info);
+            }
+        }
         let now = now_epoch();
         let keep = |b: &str, fallback: &str| if b != "idle" && b != "checking" { b.to_string() } else { fallback.to_string() };
         let mut found = None;
@@ -310,6 +327,30 @@ impl Updater {
             }
             Err(_) => Fetch::Offline,
         }
+    }
+
+    /// Notes des releases publiees entre la version installee et la derniere (une requete de plus, seulement quand
+    /// une mise a jour est proposee) ; en cas d'echec, les notes de la derniere seule.
+    fn notes_since(&self, latest: &Release) -> String {
+        let cur = self.current();
+        let c = self.ucfg.lock().unwrap().clone();
+        let url = format!("{}/repos/{}/releases?per_page=30", c.api, c.repo);
+        let Ok(resp) = self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() else {
+            return latest.notes.clone();
+        };
+        let mut rd = resp.into_reader();
+        let Ok(body) = read_limited(&mut rd, 8_000_000) else { return latest.notes.clone() };
+        let Ok(Value::Array(list)) = serde_json::from_slice::<Value>(&body) else { return latest.notes.clone() };
+        let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
+        let mut older: Vec<Release> = list
+            .iter()
+            .filter_map(|d| parse_release(d, &names))
+            .filter(|r| semver::lt(&cur, &r.version) && semver::lt(&r.version, &latest.version))
+            .collect();
+        older.sort_by(|a, b| if semver::lt(&a.version, &b.version) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less });
+        older.dedup_by(|a, b| a.version == b.version);
+        let older: Vec<(String, String)> = older.into_iter().map(|r| (r.version, r.notes)).collect();
+        compose_notes(&latest.notes, &older)
     }
 
     pub fn start_install(&self, ctl: Arc<Ctl>) -> Result<(), String> {
@@ -681,4 +722,14 @@ pub fn cleanup_legacy_update(work: &Path) -> bool {
         log("Passage depuis GoXLR Mini terminé : sa tâche de mise à jour et ses fichiers temporaires sont retirés");
     }
     !work.exists()
+}
+
+#[cfg(test)]
+mod notes_tests {
+    #[test]
+    fn notes_des_versions_sautees() {
+        let n = super::compose_notes("**Nouveau**\n- b\n", &[("5.1.0".into(), "**Nouveau**\n- a".into()), ("5.0.1".into(), "  ".into())]);
+        assert_eq!(n, "**Nouveau**\n- b\n\n#### Aussi dans la 5.1.0\n\n**Nouveau**\n- a");
+        assert_eq!(super::compose_notes("x", &[]), "x");
+    }
 }

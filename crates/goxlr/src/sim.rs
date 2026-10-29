@@ -306,6 +306,8 @@ pub struct SimInner {
     pub enumerate_violations: u64,
     pub unplugged_usb: String,
     pub apps: HashSet<String>,
+    /// compteurs de transport USB du pilote (None : pilote sans statistiques)
+    pub stream: Option<crate::stream::StreamStats>,
     rng: Rng,
 }
 
@@ -329,6 +331,10 @@ impl Sim {
             enumerate_violations: 0,
             unplugged_usb: "none".into(),
             apps: HashSet::new(),
+            stream: Some(crate::stream::StreamStats {
+                input: crate::stream::StreamCounters { active: true, ..Default::default() },
+                output: crate::stream::StreamCounters { active: true, ..Default::default() },
+            }),
             rng: Rng::new(7),
         })))
     }
@@ -353,6 +359,13 @@ impl Sim {
     }
     pub fn plug(&self) {
         self.lock().plugged = true;
+    }
+    /// Coupure du transport USB : le pilote perd \`ms\` trames d'1 ms dans les deux sens.
+    pub fn stream_drop(&self, ms: u32) {
+        if let Some(s) = self.lock().stream.as_mut() {
+            s.input.lost += 8 * ms;
+            s.output.lost += 8 * ms;
+        }
     }
     pub fn hang(&self, seconds: f64) {
         self.lock().hang = Duration::from_secs_f64(seconds.max(0.0));
@@ -494,6 +507,20 @@ impl Tusb for SimTusb {
     }
     fn close(&mut self, h: u32) {
         self.0.lock().handles.remove(&h);
+    }
+    fn stream_stats(&mut self, h: u32) -> Option<crate::stream::StreamStats> {
+        let mut s = self.0.lock();
+        if !s.handles.get(&h).copied().unwrap_or(false) {
+            return None;
+        }
+        let st = s.stream.as_mut()?;
+        for c in [&mut st.input, &mut st.output] {
+            if c.active {
+                c.ms += 50;
+                c.microframes += 400;
+            }
+        }
+        Some(*st)
     }
     fn status_text(&self, code: u32) -> String {
         match code {

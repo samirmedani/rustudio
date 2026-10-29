@@ -1,5 +1,26 @@
 # Nouveautés
 
+## 5.2.0
+
+**Nouveau**
+- Rustudio compte les crépitements tout seul. Le pilote de la GoXLR note chaque milliseconde de son qu'il n'a pas
+  pu faire passer par l'USB ; Rustudio relit ce compteur chaque seconde, sans son de test et sans rien envoyer à la
+  GoXLR. « Son qui crépite ? » affiche les coupures des dernières 24 heures, à la seconde près, avec le son perdu.
+- À chaque coupure, Rustudio note aussi les programmes que Windows venait de lancer. Une rafale de lancements
+  (synchronisation, compilation, mise à jour) suffit à faire sauter le son USB : tu vois laquelle décaler.
+- Le test « Son qui crépite ? » est confirmé par ce compteur : le pilote dit lui-même s'il a perdu du son pendant
+  le test.
+
+**Amélioré**
+- Mise à jour proposée : si tu as sauté des versions, tu lis aussi leurs nouveautés, à la suite.
+- Chaque version est testée en se mettant à jour depuis la précédente, avec l'updater de celle-ci, avant et après
+  sa publication. Si la mise à jour réelle échoue, la version n'est plus proposée.
+
+**À savoir**
+- Tu viens de la 5.0 ? La 5.1 a ajouté « Son qui crépite ? » (test de 30 secondes ou 5 minutes, port USB
+  conseillé, journal Windows des coupures), l'alerte de l'égaliseur au-delà de +12 dB de basses, et une interface
+  qui s'endort quand sa fenêtre est cachée.
+
 ## 5.1.0
 
 **Nouveau**

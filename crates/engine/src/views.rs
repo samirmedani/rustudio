@@ -61,6 +61,7 @@ impl Ctl {
             "stats": info.stats, "pending": g.dirty.len(), "last_error": g.last_error,
             "errors": g.errors.iter().map(|(t, m)| json!({"t": t, "msg": m})).collect::<Vec<_>>(),
             "auto_scene": g.auto_note, "log": crate::log::recent(30),
+            "usb_drops": self.drops.lock().unwrap_or_else(|e| e.into_inner()).json(now_epoch() - 86400.0),
         })
     }
 

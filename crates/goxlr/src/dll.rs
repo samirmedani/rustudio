@@ -10,9 +10,13 @@ type FnInst = unsafe extern "system" fn(u32, *mut u16, u32) -> u32;
 type FnVendor = unsafe extern "system" fn(u32, u32, u32, u32, u32, u16, u16, *mut u8, *mut u8, u32) -> u32;
 type FnClose = unsafe extern "system" fn(u32) -> u32;
 type FnStatus = unsafe extern "system" fn(u32) -> *const c_char;
+type FnDrvStats = unsafe extern "system" fn(u32, *mut u8, u32) -> u32;
 
 pub struct Dll {
     lib: Library,
+    /// statistiques du pilote (2,7 Mo), allouees a la premiere lecture
+    stats: Vec<u8>,
+    has_stats: bool,
 }
 
 pub fn default_path() -> String {
@@ -27,7 +31,9 @@ impl Dll {
     pub fn load(path: &str) -> Result<Dll, String> {
         // SAFETY : DLL du pilote officiel, chargee depuis son dossier d'installation.
         let lib = unsafe { Library::new(path) }.map_err(|e| format!("{path} : {e}"))?;
-        let d = Dll { lib };
+        // SAFETY : on verifie seulement la presence du symbole (absent des pilotes plus anciens : diagnostic eteint).
+        let has_stats = unsafe { lib.get::<FnDrvStats>(b"TUSBAUDIO_QueryDriverStatistics") }.is_ok();
+        let d = Dll { lib, stats: Vec::new(), has_stats };
         for name in [
             "TUSBAUDIO_EnumerateDevices", "TUSBAUDIO_GetDeviceCount", "TUSBAUDIO_OpenDeviceByIndex",
             "TUSBAUDIO_GetDeviceInstanceIdString", "TUSBAUDIO_ClassVendorRequestOut", "TUSBAUDIO_ClassVendorRequestIn",
@@ -98,5 +104,20 @@ impl Tusb for Dll {
             return code.to_string();
         }
         unsafe { CStr::from_ptr(p) }.to_string_lossy().to_string()
+    }
+    fn stream_stats(&mut self, h: u32) -> Option<crate::stream::StreamStats> {
+        if !self.has_stats {
+            return None;
+        }
+        if self.stats.len() != crate::stream::DRIVER_STATS_SIZE {
+            self.stats = vec![0u8; crate::stream::DRIVER_STATS_SIZE];
+        }
+        let buf = self.stats.as_mut_ptr();
+        // SAFETY : tampon de la taille exacte attendue par le pilote 5.57 (verifiee par la DLL elle-meme).
+        let code = unsafe { self.sym::<FnDrvStats>("TUSBAUDIO_QueryDriverStatistics")(h, buf, crate::stream::DRIVER_STATS_SIZE as u32) };
+        if code != 0 {
+            return None;
+        }
+        crate::stream::parse(&self.stats)
     }
 }

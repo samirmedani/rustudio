@@ -663,3 +663,27 @@ fn test_du_son_route_sample_vers_le_stream_seulement() {
     assert!(wait_for(3.0, || b.sim.lock().dev.route_on("Samples", "Headphones")), "routage remis à la fin du test");
     assert_eq!(c.lock().effective_routing("Samples"), before);
 }
+
+// ---------- coupures du son comptees par le pilote ----------
+#[test]
+fn coupures_usb_comptees_par_le_pilote() {
+    let b = Bench::new();
+    *b.ctl.stats_interval.lock().unwrap() = Duration::from_millis(5);
+    assert!(wait_for(5.0, || b.ctl.drops.lock().unwrap().available == Some(true)), "compteurs du pilote lus");
+    assert_eq!(b.ctl.drops.lock().unwrap().total, 0, "rien de perdu tant que la GoXLR suit");
+    b.sim.stream_drop(2);
+    assert!(wait_for(5.0, || b.ctl.drops.lock().unwrap().total == 1), "coupure vue");
+    let j = b.ctl.health()["usb_drops"].clone();
+    assert_eq!(j["count"], 1);
+    assert_eq!(j["out_ms"], 2.0);
+    assert_eq!(j["in_ms"], 2.0);
+    assert_eq!(j["streaming"], true);
+    // debranchee puis rebranchee : les compteurs repartent sans fausse coupure
+    b.sim.unplug();
+    assert!(wait_for(5.0, || !b.ctl.lock().connected));
+    b.sim.lock().stream = Some(Default::default());
+    b.sim.plug();
+    b.settle();
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(b.ctl.drops.lock().unwrap().total, 1);
+}

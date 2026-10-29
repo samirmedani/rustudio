@@ -83,6 +83,9 @@ code, peut ajouter le sien par une pull request.
   l'entendes, et écoute chaque voie : coupures USB, coupures notées par Windows (journal allumé par Rustudio),
   saturation de l'égaliseur ou du micro. Verdict en clair, à lancer pendant que tu joues, avec le port USB à
   préférer (relié au processeur, sans hub) quand le son coupe.
+  Sans aucun test, Rustudio relit aussi chaque seconde le compteur du pilote qui note chaque milliseconde de son
+  perdue sur l'USB : les coupures des dernières 24 heures s'affichent à la seconde près, avec les programmes que
+  Windows lançait à ce moment-là.
 
 <p align="center">
   <img src="docs/captures/echo.jpg" width="720" alt="Anti-écho : routage de la GoXLR, Windows, Discord et test acoustique">

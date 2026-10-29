@@ -69,6 +69,31 @@ pub fn processes() -> HashSet<String> {
     }
 }
 
+/// PID -> nom d'exe (en minuscules) de tous les processus.
+pub fn process_ids() -> std::collections::HashMap<u32, String> {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut out = std::collections::HashMap::new();
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE || snap.is_null() {
+            return out;
+        }
+        let mut e: PROCESSENTRY32W = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snap, &mut e);
+        while ok != 0 {
+            let end = e.szExeFile.iter().position(|c| *c == 0).unwrap_or(e.szExeFile.len());
+            out.insert(e.th32ProcessID, String::from_utf16_lossy(&e.szExeFile[..end]).to_lowercase());
+            ok = Process32NextW(snap, &mut e);
+        }
+        CloseHandle(snap);
+    }
+    out
+}
+
 #[cfg(windows)]
 fn win_processes() -> HashSet<String> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};

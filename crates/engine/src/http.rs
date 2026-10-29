@@ -95,7 +95,9 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                         .find_map(|q| q.strip_prefix("since="))
                         .and_then(|s| s.parse::<f64>().ok())
                         .unwrap_or_else(|| crate::config::now_epoch() - 86400.0);
-                    crate::glitches::query(since)
+                    let mut v = crate::glitches::query(since);
+                    v["usb"] = ctl.drops.lock().unwrap_or_else(|e| e.into_inner()).json(since);
+                    v
                 }
                 "/api/processes" => ctl.user_apps(),
                 "/api/library" => crate::library::snapshot(),
@@ -169,6 +171,7 @@ fn sim_act(ctl: &Arc<Ctl>, name: &str, p: &Value) -> Result<Value, ApiError> {
         "up" => sim.button_up(&s("button")?),
         "fader" => sim.move_fader(num(get(p, "index")).unwrap_or(0.0) as usize % 4, num(get(p, "value")).unwrap_or(0.0) as i32),
         "unplug" => sim.unplug(),
+        "usb-drop" => sim.stream_drop(num(get(p, "ms")).unwrap_or(1.0).max(1.0) as u32),
         "plug" => sim.plug(),
         "hang" => sim.hang(num(get(p, "seconds")).unwrap_or(20.0)),
         "talk" => {
