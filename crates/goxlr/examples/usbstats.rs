@@ -2,6 +2,7 @@
 //! (TUSBAUDIO_QueryDeviceStatistics et TUSBAUDIO_QueryDriverStatistics), lus sans rien envoyer a l'appareil.
 //!
 //!     usbstats <secondes> [periode_ms]
+//!     usbstats check          (chemin du moteur : Dll + Tusb::stream_stats)
 //!
 //! Affiche l'heure (secondes Unix) et les champs u32 qui changent rarement : un compteur d'erreurs de flux saute
 //! au moment d'une coupure du son, alors que les compteurs de paquets changent a chaque lecture.
@@ -81,8 +82,28 @@ mod win {
         }
     }
 
+    /// \`usbstats check\` : le chemin exact du moteur (Dll + Tusb::stream_stats), trois lectures a une seconde.
+    fn check() {
+        use rustudio_goxlr::Tusb;
+        let mut d = match rustudio_goxlr::dll::Dll::load(&rustudio_goxlr::dll::default_path()) {
+            Ok(d) => d,
+            Err(e) => return println!("DLL : {e}"),
+        };
+        println!("enumerate=0x{:x} appareils={}", d.enumerate(), d.device_count());
+        let Ok(h) = d.open_by_index(0) else { return println!("ouverture impossible") };
+        println!("instance={:?}", d.instance_id(h));
+        for _ in 0..3 {
+            println!("{:.3} {:?}", now(), d.stream_stats(h));
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        d.close(h);
+    }
+
     pub fn main() {
         let args: Vec<String> = std::env::args().collect();
+        if args.get(1).map(String::as_str) == Some("check") {
+            return check();
+        }
         let secs: f64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(60.0);
         let period: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100);
         let path = rustudio_goxlr::dll::default_path();

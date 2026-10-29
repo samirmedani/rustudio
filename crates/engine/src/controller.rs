@@ -905,6 +905,7 @@ impl Ctl {
         let mut dev = GoXlr::new(loader);
         dev.log = Box::new(|m| log(m));
         let dev_info = dev.info.clone();
+        let drops_path = cfg.data_dir.join("usb-drops.json");
         let inner = Inner {
             state: st, connected: false, present: None, last_error: None, connected_since: None, conn_mono: None,
             live: Live::default(), version: 1, job: None, fast_level: false, level_until: None, dirty: HashSet::new(),
@@ -934,7 +935,7 @@ impl Ctl {
             poll_interval: Mutex::new(Duration::from_millis(15)),
             last_backup: Mutex::new(0.0),
             loop_running: AtomicBool::new(false),
-            drops: Mutex::new(crate::drops::UsbDrops::default()),
+            drops: Mutex::new(crate::drops::UsbDrops::load(drops_path, now_epoch())),
             stats_interval: Mutex::new(Duration::from_secs(1)),
             stats_at: Mutex::new(None),
         });
@@ -1168,7 +1169,9 @@ impl Ctl {
         let s = dev.stream_stats();
         let line = {
             let mut d = self.drops.lock().unwrap_or_else(|e| e.into_inner());
-            d.update(s, now_epoch()).and_then(|ev| d.log_line(&ev))
+            let line = d.update(s, now_epoch()).and_then(|ev| d.log_line(&ev));
+            d.flush();
+            line
         };
         if let Some(l) = line {
             log(&l);
@@ -1192,7 +1195,9 @@ impl Ctl {
             } else {
                 prev = None;
             }
-            self.drops.lock().unwrap_or_else(|e| e.into_inner()).note_launched(now_epoch(), names);
+            let mut d = self.drops.lock().unwrap_or_else(|e| e.into_inner());
+            d.note_launched(now_epoch(), names);
+            d.flush();
         }
     }
 

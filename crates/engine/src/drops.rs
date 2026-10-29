@@ -5,8 +5,11 @@
 use rustudio_goxlr::stream::{StreamCounters, StreamStats};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
+use std::path::PathBuf;
 
+/// Coupures gardees (l'historique survit aux redemarrages du moteur et du PC) et duree presentee.
 const KEEP: usize = 300;
+const DAY: f64 = 86_400.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropEvent {
@@ -30,6 +33,9 @@ pub struct UsbDrops {
     launched: VecDeque<(f64, Vec<String>)>,
     last_log: f64,
     unlogged: u32,
+    /// fichier de l'historique ; None : rien sur le disque (tests)
+    path: Option<PathBuf>,
+    dirty: bool,
 }
 
 fn lost(a: &StreamCounters, b: &StreamCounters) -> u32 {
@@ -43,6 +49,63 @@ fn lost(a: &StreamCounters, b: &StreamCounters) -> u32 {
 
 impl UsbDrops {
     /// Nouveau releve (None : compteurs illisibles). Renvoie la coupure survenue depuis le releve precedent.
+    /// Historique enregistre (fichier absent ou illisible : on repart de zero).
+    pub fn load(path: PathBuf, now: f64) -> UsbDrops {
+        let mut d = UsbDrops { path: Some(path.clone()), ..Default::default() };
+        let Ok(v) = std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string())) else {
+            return d;
+        };
+        d.since = v["since"].as_f64();
+        d.total = v["total"].as_u64().unwrap_or(0);
+        for e in v["events"].as_array().into_iter().flatten() {
+            let t = e["t"].as_f64().unwrap_or(0.0);
+            if t < now - DAY {
+                continue;
+            }
+            let hint = e["hint"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|h| Some((h["name"].as_str()?.to_string(), u32::try_from(h["n"].as_u64()?).ok()?)))
+                    .collect::<Vec<_>>()
+            });
+            d.events.push_back(DropEvent { t, out_ms: e["out_ms"].as_f64().unwrap_or(0.0), in_ms: e["in_ms"].as_f64().unwrap_or(0.0), hint });
+        }
+        while d.events.len() > KEEP {
+            d.events.pop_front();
+        }
+        d
+    }
+
+    /// Ecrit l'historique s'il a change (fichier remplace d'un coup : jamais de moitie ecrite).
+    pub fn flush(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        let Some(path) = self.path.clone() else {
+            self.dirty = false;
+            return;
+        };
+        let events: Vec<Value> = self
+            .events
+            .iter()
+            .map(|e| json!({
+                "t": e.t, "out_ms": e.out_ms, "in_ms": e.in_ms,
+                "hint": e.hint.as_ref().map(|h| h.iter().map(|(n, c)| json!({"name": n, "n": c})).collect::<Vec<_>>()),
+            }))
+            .collect();
+        let v = json!({"since": self.since, "total": self.total, "events": events});
+        let tmp = path.with_extension("json.tmp");
+        match std::fs::write(&tmp, v.to_string()).and_then(|_| std::fs::rename(&tmp, &path)) {
+            Ok(()) => self.dirty = false,
+            Err(e) => crate::logf!("Historique des coupures non enregistre dans {} : {e}", path.display()),
+        }
+    }
+
+    fn prune(&mut self, now: f64) {
+        while self.events.front().map(|e| e.t < now - DAY).unwrap_or(false) {
+            self.events.pop_front();
+        }
+    }
+
     pub fn update(&mut self, s: Option<StreamStats>, now: f64) -> Option<DropEvent> {
         let Some(s) = s else {
             if self.available.is_none() {
@@ -64,7 +127,9 @@ impl UsbDrops {
         if self.events.len() >= KEEP {
             self.events.pop_front();
         }
+        self.prune(now);
         self.events.push_back(ev.clone());
+        self.dirty = true;
         Some(ev)
     }
 
@@ -115,14 +180,26 @@ impl UsbDrops {
             v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             v.truncate(5);
             ev.hint = Some(v);
+            self.dirty = true;
         }
     }
 
     pub fn json(&self, since: f64) -> Value {
         let evs: Vec<&DropEvent> = self.events.iter().filter(|e| e.t >= since).collect();
         let sum = |f: fn(&DropEvent) -> f64| (evs.iter().map(|e| f(e)).sum::<f64>() * 1000.0).round() / 1000.0 + 0.0; // + 0.0 : pas de -0
+        // programmes revenus le plus souvent au moment des coupures (une fois par coupure)
+        let mut top: BTreeMap<&str, u32> = BTreeMap::new();
+        for e in &evs {
+            for (n, _) in e.hint.iter().flatten() {
+                *top.entry(n.as_str()).or_default() += 1;
+            }
+        }
+        let mut top: Vec<(String, u32)> = top.into_iter().map(|(k, c)| (k.to_string(), c)).collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        top.truncate(5);
         json!({
             "available": self.available, "since": self.since, "streaming": self.streaming, "total": self.total,
+            "top": top.iter().map(|(n, c)| json!({"name": n, "count": c})).collect::<Vec<_>>(),
             "count": evs.len(), "out_ms": sum(|e| e.out_ms), "in_ms": sum(|e| e.in_ms), "last": evs.last().map(|e| e.t),
             "events": evs.iter().rev().take(20).map(|e| json!({
                 "t": e.t, "out_ms": e.out_ms, "in_ms": e.in_ms,
@@ -189,6 +266,38 @@ mod tests {
         assert_eq!(h[1], ("conhost.exe".to_string(), 1));
         d.note_launched(130.0, vec![]);
         assert!(d.launched.is_empty(), "les vieux lancements sont oublies");
+    }
+
+    #[test]
+    fn historique_qui_survit_au_redemarrage() {
+        let dir = std::env::temp_dir().join(format!("rustudio-drops-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("usb-drops.json");
+        let mut d = UsbDrops::load(path.clone(), 1000.0);
+        d.update(Some(st(true, 1000, 0)), 1000.0);
+        d.update(Some(st(true, 2000, 8)), 1001.0);
+        d.update(Some(st(true, 3000, 16)), 1300.0);
+        d.note_launched(999.0, vec!["git.exe".into()]);
+        d.note_launched(1002.6, vec![]);
+        d.note_launched(1301.6, vec![]);
+        d.flush();
+        let r = UsbDrops::load(path.clone(), 1302.0);
+        assert_eq!(r.total, 2);
+        assert_eq!(r.events.len(), 2);
+        assert_eq!(r.events[0].hint.as_ref().unwrap()[0].0, "git.exe", "les programmes restent attaches");
+        let j = r.json(0.0);
+        assert_eq!(j["count"], 2);
+        assert_eq!(j["top"][0]["name"], "git.exe");
+        assert_eq!(j["top"][0]["count"], 1, "une fois par coupure, meme si lance 1 fois");
+        // plus de 24 h : oublie, et le fichier est reecrit sans ces coupures
+        let mut vieux = UsbDrops::load(path.clone(), 1302.0 + DAY + 10.0);
+        assert!(vieux.events.is_empty());
+        vieux.update(Some(st(true, 10, 1690)), 1302.0 + DAY + 11.0);
+        vieux.update(Some(st(true, 1010, 1698)), 1302.0 + DAY + 12.0);
+        vieux.flush();
+        assert_eq!(UsbDrops::load(path.clone(), 1302.0 + DAY + 13.0).events.len(), 1, "les coupures de la veille ont disparu du fichier");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

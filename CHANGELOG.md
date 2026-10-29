@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 5.2.1
+
+**Amélioré**
+- L'historique des coupures du son survit aux redémarrages du PC et aux mises à jour : « Ces dernières 24 heures »
+  reste complet. C'est précieux quand un crépitement n'arrive qu'une fois par jour.
+- La fenêtre « Son qui crépite ? » nomme le programme revenu le plus souvent au moment des coupures. Une tâche
+  qui tourne toutes les 30 minutes se repère ainsi d'un coup d'œil.
+- « Mise à jour proposée » : les nouveautés des versions que tu as sautées sont séparées par un trait et un petit
+  titre, au lieu d'être à la suite du reste.
+
 ## 5.2.0
 
 **Nouveau**
