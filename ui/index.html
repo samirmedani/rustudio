@@ -72,7 +72,8 @@ nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;backgr
 .device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
 .device-selectable{cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
 .device-selectable:hover,.device-selectable:focus-visible{transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,113,227,.16);border-color:#0071e3;outline:2px solid rgba(0,113,227,.3);outline-offset:3px}
-.device-remove{position:absolute;right:12px;top:12px;width:32px;height:32px;border:0;border-radius:50%;background:rgba(120,120,128,.1);color:inherit;font-size:24px;cursor:pointer}
+.device-remove{position:absolute;right:12px;top:12px;width:32px;height:32px;display:grid;place-items:center;padding:0;line-height:1;border:0;border-radius:50%;background:rgba(120,120,128,.1);color:inherit;cursor:pointer}
+.device-remove svg{width:16px;height:16px;pointer-events:none}
 .device-remove:hover,.device-remove:focus-visible{background:#ffe5e5;color:#b42318;outline:2px solid currentColor}
 .device-card{position:relative;display:flex;flex-direction:column;gap:14px;padding:24px}
 .device-card .lib-head{margin:0}
@@ -580,6 +581,7 @@ var ICONS = { /* icones Lucide (ISC), https://lucide.dev */
   scenes: '<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/> <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/> <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>',
   more: '<circle cx="12" cy="12" r="1"/> <circle cx="19" cy="12" r="1"/> <circle cx="5" cy="12" r="1"/>',
   chev: '<path d="m6 9 6 6 6-6"/>',
+  deviceClose: '<path d="m6 6 12 12M18 6 6 18"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   speaker: '<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/> <path d="M16 9a5 5 0 0 1 0 6"/> <path d="M19.364 18.364a9 9 0 0 0 0-12.728"/>',
   speakerOff: '<path d="M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298z"/> <path d="m16.5 14.5 5-5"/> <path d="m16.5 9.5 5 5"/>',
@@ -2449,7 +2451,7 @@ function deviceCard(m, overview) {
   if (d.firmware) card.appendChild(h("small", {"class": "muted-txt"}, "Firmware " + esc(d.firmware)));
   var actions = h("div", {"class": "lib-act"});
   if (!overview) actions.appendChild(h("button", {"class": "pill primary", onclick: function () { openDevice(m.id); }}, "Ouvrir" + svg("chev")));
-  card.appendChild(h("button", {"class": "device-remove", "aria-label": "Retirer " + m.name + " de mon espace", title: "Retirer de mon espace", onclick: function (e) { e.stopPropagation(); confirmRemoveDevice(m.id); }}, "×"));
+  card.appendChild(h("button", {"class": "device-remove", "aria-label": "Retirer " + m.name + " de mon espace", title: "Retirer de mon espace", onclick: function (e) { e.stopPropagation(); confirmRemoveDevice(m.id); }}, svg("deviceClose")));
   card.appendChild(actions);
   return card;
 }

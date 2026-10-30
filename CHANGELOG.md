@@ -1,5 +1,10 @@
 # Nouveautés
 
+## 5.4.2
+
+- La croix de retrait des appareils est centrée dans son bouton, avec une icône indépendante de la police système.
+
+
 ## 5.4.1
 
 - Les cartes de Mes appareils s’animent au survol et s’ouvrent au clic, avec accès au clavier.
