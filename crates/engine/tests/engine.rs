@@ -347,6 +347,27 @@ fn faders_physiques() {
 }
 
 #[test]
+fn deux_trois_et_quatre_faders_simultanes_sans_blocage_ni_echo() {
+    let mut b = Bench::new();
+    b.manual();
+    let channels: Vec<String> = ["A", "B", "C", "D"].iter().map(|f| b.ctl.lock().state.faders[*f].clone()).collect();
+    // Les quatre valeurs appartiennent au meme rapport USB, y compris quand les
+    // trajectoires se croisent ou que seuls deux/trois faders continuent a bouger.
+    for target in [[50u8, 70, 90, 110], [220, 30, 90, 110], [0, 255, 200, 110], [255, 0, 0, 255], [80, 80, 80, 80]] {
+        for (i, value) in target.iter().enumerate() { b.sim.move_fader(i, *value as i32); }
+        for _ in 0..2 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
+        {
+            let g = b.ctl.lock();
+            assert_eq!(g.live.fader_positions, target.map(Some), "aucun fader ne reste sur une ancienne lecture");
+            for (i, channel) in channels.iter().enumerate() {
+                assert_eq!(g.state.volume(channel), target[i] as i32, "niveau de {channel}");
+            }
+        }
+        assert_eq!(b.ctl.with_dev(|d| b.ctl.flush(d).unwrap()), Some(0), "aucun echo, meme en mouvement simultane");
+    }
+}
+
+#[test]
 fn fader_physique_met_a_jour_etat_sans_retransmettre_le_volume() {
     let mut b = Bench::new();
     b.stop_loop();

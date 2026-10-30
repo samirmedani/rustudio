@@ -214,18 +214,72 @@ for (const failure of ["HTTP", "réseau"]) {
 }
 
 {
-  const h = harness(), writes = [], slider = h.context.Slider({label:"Volume", min:0, max:255, step:1, value:72, settleMs:120, onInput:v=>writes.push(v)});
+  const h = harness(), writes = [], slider = h.context.Slider({label:"Volume", min:0, max:255, step:1, value:72, settleMs:120, smoothRemote:true, onInput:v=>writes.push(v)});
   slider.el.fire("keydown", {key:"ArrowUp"});
   slider.set(180); slider.set(255);
   assert.equal(slider.value, 73, "la valeur locale reste pendant le court delai de confirmation");
   h.advance(121);
   assert.equal(slider.value, 255, "la derniere lecture se rejoue sans nouveau changement API : pas de curseur fige");
+  assert.ok(slider.el.classList.contains("following"), "le suivi distant utilise le lissage court");
   assert.equal(slider.busy(), false);
   assert.deepEqual(writes, [73], "appliquer un etat recu ne renvoie aucune commande de volume");
-  slider.el.fire("keydown", {key:"Home"}); slider.set(200);
+  slider.el.fire("keydown", {key:"Home"});
+  assert.ok(!slider.el.classList.contains("following"), "le geste local reprend sans animation de retard");
+  slider.set(200);
   slider.el.fire("keydown", {key:"ArrowUp"}); h.advance(121);
   assert.equal(slider.value, 1, "une nouvelle action locale invalide une ancienne lecture differee");
   slider.set(255); assert.equal(slider.value, 255, "les mouvements physiques suivants sont immediats hors interaction locale");
+}
+
+{
+  const h = harness(), writes = [];
+  const sliders = [0,1,2,3].map(i=>h.context.Slider({label:"Volume "+i,min:0,max:255,step:1,value:128,settleMs:120,smoothRemote:true,onInput:v=>writes.push([i,v])}));
+  sliders[0].el.fire("keydown",{key:"Home"});
+  sliders.forEach((s,i)=>s.set([240,10,210,30][i]));
+  assert.deepEqual(sliders.map(s=>s.value),[0,10,210,30],"une interaction locale ne retarde pas les trois autres faders");
+  h.advance(121);
+  assert.deepEqual(sliders.map(s=>s.value),[240,10,210,30],"les quatre lectures simultanees sont appliquees sans en perdre une");
+  assert.deepEqual(writes,[[0,0]],"les mouvements physiques simultanes ne produisent aucun echo de commandes");
+}
+
+for (const [page,hidden,module,meter,expected] of [
+  ["mixer",false,"goxlr-mini",false,"/api/live"],
+  ["light",false,"goxlr-mini",false,"/api/live"],
+  ["mic",false,"goxlr-mini",false,"/api/live?level=1"],
+  ["mixer",false,"goxlr-mini",true,"/api/live?level=1"],
+  ["mic",true,"goxlr-mini",true,"/api/live"],
+  ["mouse",false,"attack-shark-r5-ultra",false,"/api/live"],
+]) {
+  const h=harness(),c=h.context,paths=[];
+  Object.assign(c,{page,activeModule:module,bootId:null,liveKey:"",liveChanged:false});
+  c.document.hidden=hidden;
+  if(meter) h.ids.set("sheet-meter",c.h("div"));
+  c.api=async path=>{paths.push(path);return {v:c.V,live:{fader_positions:[0,0,0,0],pressed:[],mic_db:null}};};
+  runInNewContext(section("function liveLoop()", "/* ---------- curseur generique"),c);
+  await c.liveLoop();
+  assert.deepEqual(paths,[expected],"la mesure USB du micro est demandee seulement pour un vumetre visible");
+}
+
+{
+  const h = harness(), c = h.context;
+  let rebuilds = 0, transforms = 0;
+  const nodes = [0,1,2,3].map(i=>({style:{set transform(v) { this.value=v;transforms++; },get transform() { return this.value; }},getAttribute:()=>String(i)}));
+  c.lt = {previewKey:null,dev:{set innerHTML(value) { rebuilds++; },querySelectorAll:()=>nodes}};
+  c.S = {meta:{faders:["A","B","C","D"]},state:{colours:{},mutes:{},faders:{A:"Mic",B:"Chat",C:"Music",D:"Game"},volumes:{Mic:72,Chat:100,Music:200,Game:255}}};
+  c.L = {live:{fader_positions:[0,128,255,null],pressed:[]}};
+  c.deviceSvg = ()=>"<svg/>";
+  runInNewContext(section("function paintDevicePreview()", "function deviceSvg()"),c);
+  c.paintDevicePreview();
+  assert.equal(rebuilds,1);
+  assert.equal(nodes[0].style.transform,"translateY(176px)");
+  c.L.live.fader_positions[0]=255;
+  for(let i=0;i<20;i++) c.paintDevicePreview();
+  assert.equal(rebuilds,1,"le mouvement conserve le meme arbre SVG pour permettre les transitions fluides");
+  assert.equal(nodes[0].style.transform,"translateY(64px)");
+  assert.equal(transforms,5,"aucune reecriture de transformation pour les poignees immobiles");
+  c.S.state.colours={Accent:["FFFFFF","000000"]};c.paintDevicePreview();
+  assert.equal(rebuilds,2,"une vraie modification des couleurs reconstruit l'apercu");
+  c.L.live.pressed=["Bleep"];c.paintDevicePreview();assert.equal(rebuilds,3,"l'etat du bouton physique reste actualise");
 }
 
 {

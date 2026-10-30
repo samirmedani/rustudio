@@ -193,6 +193,11 @@ header p{color:var(--text2);font-size:15px;margin-top:6px}
 .sl.h .sl-fill{top:0;height:100%;border-radius:3px}
 .sl.h .sl-knob{position:absolute;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.06),0 4px 10px rgba(0,0,0,.08);transition:left .14s var(--ease),transform .15s var(--ease)}
 .sl.h:hover .sl-knob,.sl.h.active .sl-knob{transform:scale(1.08)}
+/* Volumes : geste local direct, suivi distant court et lineaire. */
+.sl.smooth-live .sl-fill,.sl.smooth-live .sl-knob{transition:none}
+.sl.smooth-live.following:not(.active) .sl-fill{transition:height .04s linear,width .04s linear}
+.sl.h.smooth-live.following:not(.active) .sl-knob{transition:left .04s linear,transform .15s var(--ease)}
+.preview-fader{transition:transform .04s linear}
 
 /* mixeur */
 .strips{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:2px 0 6px}
@@ -825,7 +830,9 @@ var liveChanged = true, liveKey = "", bootId = null;
 document.addEventListener("visibilitychange", function () { document.documentElement.classList.toggle("asleep", document.hidden); });
 document.documentElement.classList.toggle("asleep", document.hidden);
 function liveLoop() {
-  api(document.hidden || activeModule !== "goxlr-mini" ? "/api/live" : "/api/live?level=1").then(function (l) {
+  // Le vumetre micro necessite un echange USB supplementaire : uniquement s'il est visible.
+  var level = !document.hidden && activeModule === "goxlr-mini" && (page === "mic" || !!$("sheet-meter"));
+  return api(level ? "/api/live?level=1" : "/api/live").then(function (l) {
     if (bootId && l.boot && l.boot !== bootId) { location.reload(); return; }
     bootId = l.boot || bootId;
     L = l; setOnline(true, l.connected, l.health, l.usb);
@@ -833,7 +840,7 @@ function liveLoop() {
     if (k !== liveKey) { liveKey = k; liveChanged = true; }
     if (l.v !== V && !pending) return refresh();
   }).catch(function () { setOnline(false, false); })
-    .finally(function () { setTimeout(liveLoop, document.hidden ? 2000 : activeModule === "goxlr-mini" ? 50 : 250); });
+    .finally(function () { setTimeout(liveLoop, document.hidden ? 2000 : activeModule === "goxlr-mini" ? (page === "mixer" || page === "light" ? 20 : 50) : 250); });
 }
 
 /* ---------- curseur generique ---------- */
@@ -849,7 +856,7 @@ function Slider(o) {
     var wait = lockUntil - performance.now();
     if (wait > 0) { unlockTimer = setTimeout(applyDeferred, Math.ceil(wait)); return; }
     var v = deferred; deferred = null;
-    if (v !== value) { value = v; paint(); }
+    if (v !== value) { if (o.smoothRemote) el.classList.add("following"); value = v; paint(); }
   }
   function frac(v) { return (v - o.min) / (o.max - o.min); }
   function paint() {
@@ -866,6 +873,7 @@ function Slider(o) {
     return clamp(Math.round((o.min + f * (o.max - o.min)) / o.step) * o.step, o.min, o.max);
   }
   function setLocal(v, commit) {
+    el.classList.remove("following");
     v = clamp(v, o.min, o.max);
     if (unlockTimer !== null) { clearTimeout(unlockTimer); unlockTimer = null; }
     deferred = null;
@@ -894,6 +902,7 @@ function Slider(o) {
     if (document.activeElement !== el || e.ctrlKey || e.deltaY === 0) return;
     e.preventDefault(); setLocal(value + (e.deltaY < 0 ? 1 : -1) * (o.wheel || o.step), true);
   }, {passive: false});
+  if (o.smoothRemote) el.classList.add("smooth-live");
   if (o.colour) el.style.setProperty("--c", o.colour);
   paint();
   return {
@@ -1142,7 +1151,7 @@ function buildMixer() {
     var st = h("div", {"class": "strip"});
     st.innerHTML = '<span class="fnum">FADER ' + (i + 1) + '</span>';
     var head = h("button", {"class": "strip-head", title: "Changer la voie de ce fader"});
-    var sl = Slider({label: "Volume du fader " + (i + 1), format: function (v) { return pct(v) + " %"; }, vertical: true, min: 0, max: 255, step: 1, wheel: 5, settleMs: 120,
+    var sl = Slider({label: "Volume du fader " + (i + 1), format: function (v) { return pct(v) + " %"; }, vertical: true, min: 0, max: 255, step: 1, wheel: 5, settleMs: 120, smoothRemote: true,
       onInput: function (v) { var ch = S.state.faders[f]; S.state.volumes[ch] = v; volumeSender(ch)(v); paintStripVal(f); },
       onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: S.state.faders[f], value: v}); }});
     var ghost = h("div", {"class": "ghost"}); sl.track.appendChild(ghost);
@@ -1235,7 +1244,7 @@ function renderOthers() {
     list.forEach(function (ch) {
       var row = h("div", {"class": "orow"});
       row.innerHTML = chipIco(ch, col(ch)) + '<span class="nm">' + LABELS[ch] + '</span>';
-      var sl = Slider({label: "Volume " + LABELS[ch], format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, wheel: 5, settleMs: 120, colour: col(ch),
+      var sl = Slider({label: "Volume " + LABELS[ch], format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, wheel: 5, settleMs: 120, smoothRemote: true, colour: col(ch),
         onInput: function (v) { S.state.volumes[ch] = v; volumeSender(ch)(v); p.textContent = pct(v) + " %"; },
         onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: ch, value: v}); }});
       var p = h("span", {"class": "pct"});
@@ -1847,7 +1856,7 @@ function buildLight() {
   var root = $("p-light"); root.innerHTML = "";
   var grid = h("div", {"class": "light-grid"});
   var left = h("div", {style: "display:flex;flex-direction:column;gap:16px"});
-  var dev = h("div", {"class": "card device"}); lt.dev = dev; left.appendChild(dev);
+  var dev = h("div", {"class": "card device"}); lt.dev = dev; lt.previewKey = null; left.appendChild(dev);
   var styleCard = h("div", {"class": "card"}, "<h3>Barres des faders</h3>");
   lt.styles = h("div", {"class": "seg"});
   S.meta.fader_styles.forEach(function (k) {
@@ -1896,7 +1905,7 @@ function colourPop(anchor, current, onPick) {
 function renderLight() {
   if (!built.light) buildLight();
   var st = S.state, li = st.lighting, c = st.colours;
-  lt.dev.innerHTML = deviceSvg();
+  paintDevicePreview();
   lt.styles.querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.k === li.fader_style.A); });
   lt.anims.querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.k === li.animation); });
   lt.mod1.set(li.mod1); lt.mod2.set(li.mod2);
@@ -1943,6 +1952,23 @@ function customRow(label, colours, toTargets) {
   });
   row.appendChild(sws); lt.custom.appendChild(row);
 }
+function paintDevicePreview() {
+  var st = S.state, pos = L ? L.live.fader_positions : [null, null, null, null];
+  var bleep = !!L && L.live.pressed.indexOf("Bleep") >= 0;
+  var key = JSON.stringify([st.colours, st.faders, st.mutes, bleep]);
+  if (lt.previewKey !== key) {
+    lt.dev.innerHTML = deviceSvg(); lt.previewKey = key;
+    lt.previewFaders = lt.dev.querySelectorAll("[data-preview-fader]"); lt.previewValues = [];
+  }
+  lt.previewFaders.forEach(function (node) {
+    var i = Number(node.getAttribute("data-preview-fader")), ch = st.faders[S.meta.faders[i]];
+    var value = pos[i] == null ? st.volumes[ch] : pos[i];
+    if (lt.previewValues[i] !== value) {
+      lt.previewValues[i] = value;
+      node.style.transform = "translateY(" + (176 - value / 255 * 112) + "px)";
+    }
+  });
+}
 function deviceSvg() {
   var st = S.state, c = st.colours, pos = L ? L.live.fader_positions : [null, null, null, null];
   var o = '<svg viewBox="0 0 440 300"><defs><filter id="bl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6"/></filter>' +
@@ -1961,7 +1987,7 @@ function deviceSvg() {
     o += '<rect x="' + (x + 12) + '" y="58" width="6" height="134" rx="3" fill="#050506"/>';
     var p = pos[i] == null ? st.volumes[ch] : pos[i];
     var ky = 176 - p / 255 * 112;
-    o += '<rect x="' + (x - 2) + '" y="' + ky + '" width="34" height="22" rx="5" fill="#3a3a40" stroke="rgba(255,255,255,.18)"/><rect x="' + (x + 2) + '" y="' + (ky + 10) + '" width="26" height="2" rx="1" fill="rgba(255,255,255,.55)"/>';
+    o += '<g class="preview-fader" data-preview-fader="' + i + '" style="transform:translateY(' + ky + 'px)"><rect x="' + (x - 2) + '" y="0" width="34" height="22" rx="5" fill="#3a3a40" stroke="rgba(255,255,255,.18)"/><rect x="' + (x + 2) + '" y="10" width="26" height="2" rx="1" fill="rgba(255,255,255,.55)"/></g>';
     o += '<rect x="' + (x - 2) + '" y="214" width="48" height="26" rx="8" fill="#' + mb + '" opacity="' + (muted ? 1 : .22) + '"/>';
     if (muted) o += '<rect x="' + (x - 2) + '" y="214" width="48" height="26" rx="8" fill="#' + mb + '" opacity=".6" filter="url(#bl)"/>';
     o += '<text x="' + (x + 22) + '" y="258" fill="rgba(255,255,255,.45)" font-size="10" text-anchor="middle" font-family="Segoe UI, sans-serif">' + LABELS[ch] + '</text>';
@@ -3476,7 +3502,7 @@ function frame(t) {
     if (page === "mic" || sheetState) liveListen();
     if (liveChanged) {
       if (page === "mixer") liveMixer();
-      if (page === "light" && built.light && t - lastDev > 100) { lt.dev.innerHTML = deviceSvg(); lastDev = t; liveChanged = false; }
+      if (page === "light" && built.light && t - lastDev > 33) { paintDevicePreview(); lastDev = t; liveChanged = false; }
       if (page !== "light") liveChanged = false;
     }
     liveJob();

@@ -1,5 +1,12 @@
 # Nouveautés
 
+## 5.6.4
+
+- **GoXLR Mini : affichage plus fluide.** Les volumes reçus du matériel suivent des transitions courtes et linéaires ; les gestes à la souris, au clavier et à la molette restent directs. La réduction des animations du système reste respectée.
+- Le Mixeur et l’Éclairage visibles consultent l’état en cache toutes les 20 ms au lieu de 50 ms, sans accélérer les échanges USB. Les pages en arrière-plan conservent leur cadence réduite.
+- Les pages Mixeur et Éclairage ne demandent plus de mesure micro inutile : cela évite un échange USB supplémentaire qui ralentissait la lecture des faders. Les mouvements simultanés de deux, trois et quatre faders sont couverts par les tests.
+- L’aperçu Éclairage conserve son dessin et anime uniquement les poignées lors des mouvements. Les couleurs et les boutons physiques restent actualisés.
+
 ## 5.6.3
 
 - **GoXLR Mini : synchronisation des faders corrigée.** Le moteur ne renvoie plus au matériel les niveaux déjà appliqués par les faders, ce qui pouvait écraser un mouvement récent et laisser un niveau bloqué.
