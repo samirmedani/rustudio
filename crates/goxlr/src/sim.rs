@@ -227,9 +227,8 @@ impl FakeDevice {
             0x800 => {
                 let mut out = self.mask().to_le_bytes().to_vec();
                 out.extend_from_slice(&[0; 4]);
-                // La Mini expose les niveaux courants des voies affectees aux faders,
-                // y compris apres SetChannelVolume ; pas la position absolue des poignees.
-                out.extend(self.faders.iter().map(|channel| self.volumes[*channel as usize]));
+                // Une commande logicielle change le volume, pas la poignee non motorisee.
+                out.extend_from_slice(&self.fader_pos);
                 out.extend_from_slice(&[0; 4]);
                 return out;
             }

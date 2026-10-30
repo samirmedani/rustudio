@@ -1068,14 +1068,17 @@ impl Ctl {
         };
         let n = ops.len();
         for op in ops {
-            let volume = match &op { Op::Volume(c, v) => Some((*c, *v as u8)), _ => None };
+            let volume_channel = match &op { Op::Volume(c, _) => Some(*c), _ => None };
             exec(dev, op)?;
-            if let Some((channel, value)) = volume {
+            if let Some(channel) = volume_channel {
                 let mut g = self.lock();
                 for (i, fader) in FADERS.iter().enumerate() {
                     if ch(g.state.fader_channel(fader)) == channel {
-                        g.pos_history[i] = [value; 2];
-                        if let Some(ref mut prev) = g.prev_pos { prev[i] = value; }
+                        // La commande ne deplace pas la poignee : repartir de la derniere
+                        // lecture physique, jamais du volume logique demande.
+                        let physical = g.pos_history[i][1];
+                        g.pos_history[i] = [physical; 2];
+                        if let Some(ref mut prev) = g.prev_pos { prev[i] = physical; }
                     }
                 }
             }

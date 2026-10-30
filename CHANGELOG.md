@@ -1,6 +1,6 @@
 # Nouveautés
 
-## 5.6.2
+## 5.6.3
 
 - **GoXLR Mini : synchronisation des faders corrigée.** Le moteur ne renvoie plus au matériel les niveaux déjà appliqués par les faders, ce qui pouvait écraser un mouvement récent et laisser un niveau bloqué.
 - Les mouvements continus sont suivis sans attendre l’immobilisation, avec filtrage des pics isolés et butées exactes à 0 et 100 %.

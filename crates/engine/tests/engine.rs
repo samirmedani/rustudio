@@ -390,15 +390,22 @@ fn souris_puis_fader_physique_derniere_action_prioritaire() {
     let mut b = Bench::new();
     b.manual();
     let channel = b.ctl.lock().state.faders["A"].clone();
-    let knob = b.sim.lock().dev.fader_pos[0];
     b.act("volume", json!({"channel":channel,"value":72}));
+    b.sim.move_fader(0, 200);
+    let knob = b.sim.lock().dev.fader_pos[0];
+    let mut report = b.sim.lock().dev.fader_pos;
+    report[0] = knob;
     // Une lecture precedant l'ecriture ne doit pas annuler la demande logicielle.
-    { let mut g = b.ctl.lock(); for _ in 0..3 { g.handle_inputs(0, [200;4], Instant::now()); } }
+    { let mut g = b.ctl.lock(); for _ in 0..3 { g.handle_inputs(0, report, Instant::now()); } }
     assert_eq!(b.ctl.lock().state.volume(&channel), 72);
     b.ctl.with_dev(|d| b.ctl.flush(d).unwrap());
     for _ in 0..3 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
     assert_eq!(b.ctl.lock().state.volume(&channel), 72);
     assert_eq!(b.sim.lock().dev.fader_pos[0], knob, "un volume logiciel ne deplace pas la poignee");
+    assert_eq!(b.ctl.lock().live.fader_positions[0], Some(knob), "le niveau logiciel ne falsifie pas la position lue");
+    for _ in 0..10 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
+    assert_eq!(b.ctl.lock().state.volume(&channel), 72, "une poignee immobile ne reprend jamais la main");
+    assert_eq!(b.sim.lock().dev.volumes[rustudio_engine::controller::ch(&channel)], 72);
     b.sim.move_fader(0, 255);
     for _ in 0..2 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
     assert_eq!(b.ctl.lock().state.volume(&channel), 255);
