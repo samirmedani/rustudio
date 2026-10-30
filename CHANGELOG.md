@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 5.2.4
+
+**Corrigé**
+- Le fader physique pilotait le volume et l'éclairage une fois sur deux : la position du potentiomètre oscille de
+  quelques unités, et Rustudio exigeait trois lectures strictement identiques. Une position intermédiaire
+  n'était donc presque jamais retenue, la barre restait figée et le volume ne bougeait pas. La comparaison
+  tolère maintenant ce bruit, tout en ignorant un pic isolé.
+- Quand un fader bouge, Rustudio renvoie la nouvelle position au mixeur de la GoXLR, comme le fait le logiciel de
+  référence. Avant, la position était enregistrée dans l'appli mais l'appareil gardait son ancien volume.
+
 ## 5.2.3
 
 **Corrigé**

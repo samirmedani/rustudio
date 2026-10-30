@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-app"
-version = "5.2.3"
+version = "5.2.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3011,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-core"
-version = "5.2.3"
+version = "5.2.4"
 dependencies = [
  "indexmap 2.14.2",
  "serde",
@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-engine"
-version = "5.2.3"
+version = "5.2.4"
 dependencies = [
  "chrono",
  "indexmap 2.14.2",
@@ -3040,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-goxlr"
-version = "5.2.3"
+version = "5.2.4"
 dependencies = [
  "indexmap 2.14.2",
  "libloading 0.9.0",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-setup"
-version = "5.2.3"
+version = "5.2.4"
 dependencies = [
  "embed-resource",
  "serde_json",

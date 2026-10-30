@@ -338,6 +338,23 @@ fn faders_physiques() {
     }
 }
 
+#[test]
+fn fader_physique_applique_le_volume_au_mixeur() {
+    let mut b = Bench::new();
+    b.stop_loop();
+    let c = b.ctl.lock().state.faders["A"].clone();
+    b.ctl.lock().dirty.clear();
+    {
+        let mut g = b.ctl.lock();
+        for v in [90u8, 91, 90, 91, 90] {
+            g.handle_inputs(0, [v, 128, 128, 128], Instant::now());
+        }
+        assert_eq!(g.state.volume(&c), 90 as i32, "le fader bouge, le volume suit");
+        assert!(g.dirty.contains(&rustudio_engine::controller::Key::Volume(rustudio_engine::controller::ch(&c))),
+            "le nouveau volume doit partir vers la GoXLR : {:?}", g.dirty);
+    }
+}
+
 // ---------- routage ----------
 #[test]
 fn vod_sans_musique() {
