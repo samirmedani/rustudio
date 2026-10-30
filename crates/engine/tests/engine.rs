@@ -567,6 +567,46 @@ fn etat_sauve_et_relu() {
     assert_eq!(st.mic_button.mode, "hold");
 }
 
+#[test]
+fn sauvegarde_reessaie_apres_echec_ecriture() {
+    let mut b = Bench::new();
+    b.stop_loop();
+    b.ctl.save_if_dirty();
+    let path = b.tmp.join("state.json");
+    let before = std::fs::read_to_string(&path).unwrap();
+    let blocked = b.tmp.join("state.json.tmp");
+    std::fs::create_dir(&blocked).unwrap();
+    b.act("volume", json!({"channel": "Chat", "value": 33}));
+
+    b.ctl.save_if_dirty();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before, "l'ancien état doit rester intact");
+    assert!(b.ctl.lock().save_dirty, "une sauvegarde ratée doit rester à réessayer");
+
+    std::fs::remove_dir(&blocked).unwrap();
+    b.ctl.save_if_dirty(); // sans nouvelle action : le prochain passage suffit
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(rustudio_core::state::normalize_state(&v).volume("Chat"), 33);
+    assert!(!b.ctl.lock().save_dirty);
+}
+
+#[test]
+fn sauvegarde_reessaie_apres_dossier_indisponible() {
+    let mut b = Bench::new();
+    b.stop_loop();
+    std::fs::remove_dir_all(&b.tmp).unwrap();
+    std::fs::write(&b.tmp, "dossier temporairement indisponible").unwrap();
+    b.act("volume", json!({"channel": "Chat", "value": 47}));
+
+    b.ctl.save_if_dirty();
+    assert!(b.ctl.lock().save_dirty, "l'échec de création du dossier doit aussi être réessayé");
+
+    std::fs::remove_file(&b.tmp).unwrap();
+    b.ctl.save_if_dirty();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(b.tmp.join("state.json")).unwrap()).unwrap();
+    assert_eq!(rustudio_core::state::normalize_state(&v).volume("Chat"), 47);
+    assert!(!b.ctl.lock().save_dirty);
+}
+
 // ---------- egaliseur du casque (simule) ----------
 #[test]
 fn egaliseur_installation_simulee_puis_live() {

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon.svg" width="96" alt="">
+  <img src="docs/icon.png" width="96" alt="">
 </p>
 
 <h1 align="center">Rustudio</h1>

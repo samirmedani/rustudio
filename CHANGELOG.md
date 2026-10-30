@@ -1,5 +1,23 @@
 # Nouveautés
 
+## 5.3.0
+
+**Nouveau**
+- Nouvelle icône Rustudio : les faders et le signal audio se rejoignent dans un « R ». La même identité accompagne
+  l’application, son installeur et la barre latérale.
+
+**Amélioré**
+- Les curseurs se règlent aussi au clavier : flèches pour ajuster, Début et Fin pour les extrêmes. Leur nom et leur
+  valeur sont annoncés aux lecteurs d’écran. La molette ne change plus le son au simple passage de la souris.
+- Les fenêtres de dialogue gardent le focus au clavier, puis le rendent au contrôle qui les a ouvertes.
+  Le réglage Windows qui réduit les animations est respecté.
+
+**Corrigé**
+- Une sauvegarde refusée par le moteur ou interrompue par une coupure de connexion n’annonce plus de faux succès.
+  Le nom saisi pour une scène ou un profil reste disponible pour réessayer.
+- Si le disque ou le dossier des réglages est temporairement indisponible, Rustudio réessaie de sauvegarder
+  automatiquement. Les derniers réglages ne sont plus oubliés faute d’une nouvelle action.
+
 ## 5.2.4
 
 **Corrigé**

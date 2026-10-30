@@ -24,6 +24,7 @@ jobs:
       - run: cargo test --locked
       - run: cargo test --locked -p rustudio-goxlr --example usbstats
       - run: node scripts/diagnostic-ui-test.mjs
+      - run: node scripts/ui-interactions-test.mjs
 
   windows:
     name: Windows (tests, paquet, installation complète)
@@ -40,6 +41,7 @@ jobs:
       - run: cargo test --locked -p rustudio-app
       - run: cargo test --locked -p rustudio-goxlr --example usbstats
       - run: node scripts/diagnostic-ui-test.mjs
+      - run: node scripts/ui-interactions-test.mjs
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1

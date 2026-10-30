@@ -17,6 +17,7 @@ pub const ACTIONS: [&str; 38] = [
 
 pub const UI_HTML: &str = include_str!("../../../ui/index.html");
 pub const OVERLAY_HTML: &str = include_str!("../../../ui/overlay.html");
+pub const ICON_PNG: &[u8] = include_bytes!("../../../docs/icon.png");
 
 fn ui_file(name: &str, embedded: &'static str) -> String {
     if let Ok(dir) = std::env::var("RUSTUDIO_UI_DIR") {
@@ -31,8 +32,8 @@ fn header(k: &str, v: &str) -> Header {
     Header::from_bytes(k.as_bytes(), v.as_bytes()).unwrap()
 }
 
-fn respond(req: Request, body: String, ctype: &str, code: u16) {
-    let resp = Response::from_string(body)
+fn respond(req: Request, body: impl Into<Vec<u8>>, ctype: &str, code: u16) {
+    let resp = Response::from_data(body)
         .with_status_code(code)
         .with_header(header("Content-Type", ctype))
         .with_header(header("Cache-Control", "no-store"))
@@ -84,6 +85,7 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
             let v = match path.as_str() {
                 "/" | "/index.html" => return respond(req, ui_file("index.html", UI_HTML), "text/html; charset=utf-8", 200),
                 "/overlay" | "/overlay.html" => return respond(req, ui_file("overlay.html", OVERLAY_HTML), "text/html; charset=utf-8", 200),
+                "/icon.png" => return respond(req, ICON_PNG, "image/png", 200),
                 "/api/live" => ctl.live_snapshot(query.split('&').any(|q| q == "level=1")),
                 "/api/state" | "/status" => ctl.snapshot(),
                 "/api/health" => ctl.health(),

@@ -1412,19 +1412,22 @@ impl Ctl {
             serde_json::to_string_pretty(&g.state).unwrap_or_default()
         };
         let sp = self.cfg.state_path();
-        if std::fs::create_dir_all(&self.cfg.data_dir).is_err() {
-            return;
-        }
-        {
-            let mut lb = self.last_backup.lock().unwrap();
-            if sp.exists() && now_epoch() - *lb > 600.0 && std::fs::copy(&sp, format!("{}.bak", sp.display())).is_ok() {
-                *lb = now_epoch();
+        let saved = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&self.cfg.data_dir)?;
+            {
+                let mut lb = self.last_backup.lock().unwrap();
+                if sp.exists() && now_epoch() - *lb > 600.0 && std::fs::copy(&sp, format!("{}.bak", sp.display())).is_ok() {
+                    *lb = now_epoch();
+                }
             }
-        }
-        let tmp = format!("{}.tmp", sp.display());
-        match std::fs::write(&tmp, data).and_then(|_| std::fs::rename(&tmp, &sp)) {
-            Ok(()) => {}
-            Err(e) => logf!("Sauvegarde de l'état impossible : {e}"),
+            let tmp = format!("{}.tmp", sp.display());
+            std::fs::write(&tmp, data)?;
+            std::fs::rename(&tmp, &sp)
+        })();
+        if let Err(e) = saved {
+            // Le fil de sauvegarde reessaiera, meme si aucun autre reglage ne change entre-temps.
+            self.lock().save_dirty = true;
+            logf!("Sauvegarde de l'état impossible : {e}");
         }
     }
 
