@@ -1,5 +1,12 @@
 # Nouveautés
 
+## 5.4.1
+
+- Les cartes de Mes appareils s’animent au survol et s’ouvrent au clic, avec accès au clavier.
+- Une croix discrète remplace le bouton de retrait ; une confirmation protège contre les clics accidentels.
+- La confirmation explique la conservation des réglages et propose leur export ou import pour la GoXLR Mini.
+
+
 ## 5.4.0
 
 **Nouveau**

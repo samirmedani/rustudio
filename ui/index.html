@@ -70,7 +70,11 @@ nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;backgr
 .workspace-top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
 .workspace-top p{max-width:560px;color:var(--text2);font-size:14px}
 .device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
-.device-card{display:flex;flex-direction:column;gap:14px;padding:24px}
+.device-selectable{cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.device-selectable:hover,.device-selectable:focus-visible{transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,113,227,.16);border-color:#0071e3;outline:2px solid rgba(0,113,227,.3);outline-offset:3px}
+.device-remove{position:absolute;right:12px;top:12px;width:32px;height:32px;border:0;border-radius:50%;background:rgba(120,120,128,.1);color:inherit;font-size:24px;cursor:pointer}
+.device-remove:hover,.device-remove:focus-visible{background:#ffe5e5;color:#b42318;outline:2px solid currentColor}
+.device-card{position:relative;display:flex;flex-direction:column;gap:14px;padding:24px}
 .device-card .lib-head{margin:0}
 .device-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text2)}
 .device-status i{width:7px;height:7px;border-radius:50%;background:var(--text3)}
@@ -896,6 +900,23 @@ function addDevice(id, repaint) {
   saveWorkspace();
   if (repaint !== false) { renderDevices(); if (page === "modules") paintLibrary(); }
   return true;
+}
+function confirmRemoveDevice(id) {
+  var m = installedModule(id); if (!m) return;
+  var actions = [["Annuler", null]];
+  if (id === "goxlr-mini") {
+    actions.push(["Exporter la configuration", function () {
+      api("/api/modules/goxlr-mini/state").then(function (data) {
+        var url = URL.createObjectURL(new Blob([JSON.stringify(data.state, null, 2)], {type: "application/json"}));
+        h("a", {href: url, download: "rustudio-config.json"}).click();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+        confirmRemoveDevice(id);
+      }).catch(function () { toast("Export impossible. L’appareil est conservé."); });
+    }]);
+    actions.push(["Importer une configuration", function () { openDevice(id); $("import-file").click(); }]);
+  }
+  actions.push(["Retirer de mon espace", function () { removeDevice(id); }, "danger"]);
+  sheet({icon: "usb", title: "Retirer " + esc(m.name) + " ?", text: "Ce retrait masque uniquement l’appareil : ses réglages restent conservés. Tu pourras le réajouter depuis Modules. Exporte une sauvegarde avant toute réinitialisation ou désinstallation : ces opérations peuvent supprimer ta configuration. Importer une configuration remplace les réglages actuels.", actions: actions});
 }
 function removeDevice(id) {
   var m = installedModule(id); if (!m) return;
@@ -2412,7 +2433,13 @@ function moduleFeatures(m) {
 }
 function deviceCard(m, overview) {
   var status = moduleStatus(m.id), d = moduleRuntime(m.id);
-  var card = h("div", {"class": "card device-card", "data-device": m.id});
+  var card = h("div", {"class": "card device-card" + (!overview ? " device-selectable" : ""), "data-device": m.id});
+  if (!overview) {
+    card.tabIndex = 0;
+    card.setAttribute("aria-label", "Ouvrir " + m.name);
+    card.addEventListener("click", function (e) { if (!e.target.closest("button, a")) openDevice(m.id); });
+    card.addEventListener("keydown", function (e) { if (e.target === card && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDevice(m.id); } });
+  }
   card.innerHTML = '<div class="lib-head">' + chipIco(LIB_KIND[m.kind] || "usb", "#0071E3") + "<div><b>" + esc(m.name) + "</b><small>" + esc(m.vendor || "") + "</small></div></div>";
   card.appendChild(h("div", {"class": "device-status " + status.status, role: "status"}, "<i></i>" + esc(status.label) + (d.simulated ? " · Appareil simulé" : "")));
   if (status.detail) card.appendChild(h("p", {"class": "device-detail"}, esc(status.detail)));
@@ -2422,7 +2449,7 @@ function deviceCard(m, overview) {
   if (d.firmware) card.appendChild(h("small", {"class": "muted-txt"}, "Firmware " + esc(d.firmware)));
   var actions = h("div", {"class": "lib-act"});
   if (!overview) actions.appendChild(h("button", {"class": "pill primary", onclick: function () { openDevice(m.id); }}, "Ouvrir" + svg("chev")));
-  actions.appendChild(h("button", {"class": "pill", onclick: function () { removeDevice(m.id); }}, "Retirer de mon espace"));
+  card.appendChild(h("button", {"class": "device-remove", "aria-label": "Retirer " + m.name + " de mon espace", title: "Retirer de mon espace", onclick: function (e) { e.stopPropagation(); confirmRemoveDevice(m.id); }}, "×"));
   card.appendChild(actions);
   return card;
 }
