@@ -1,5 +1,12 @@
 # Nouveautés
 
+## 5.6.9
+
+- **Souris en veille reconnue.** Quand la R5 Ultra s’endort, Rustudio affiche « En veille » au lieu de « Déconnecté », avec la marche à suivre pour la réveiller. Ses réglages reviennent tout seuls dès qu’elle bouge.
+- La page de la souris n’affiche plus de réglages par défaut tant qu’aucune lecture n’a abouti. Pendant la veille, les dernières valeurs lues restent visibles, atténuées et non modifiables.
+- Les messages de la souris ne montrent plus de codes techniques.
+- **Diagnostic du son :** l’application signale au moteur l’extinction et le rallumage des écrans. Une coupure survenue à ce moment-là est indiquée dans « Son qui crépite ? », pour vérifier le lien avec la veille des écrans.
+
 ## 5.6.8
 
 - **Sous le capot : interface rangée par appareil.** Le code de l’interface est réparti par rôle, avec un dossier par appareil (GoXLR Mini, R5 Ultra). Ajouter un nouveau module devient plus simple et plus sûr. L’affichage et les réglages restent identiques.
