@@ -1917,6 +1917,55 @@ function usbDropsItem(u, st) {
     (hint || top ? " Ces lancements sont des pistes à vérifier, pas une cause prouvée." : "") +
     (u.count > 1 ? "<br><span class=\"muted-txt\">" + lines + "</span>" : "") + (usbAdvice(st.usb) ? " " + usbAdvice(st.usb) : ""));
 }
+function windowsGlitchItem(w, during) {
+  if (!w || w.unsupported) return null;
+  if (w.enabled !== true || w.readable === false || w.total == null) return echoItem("info", "Journal Windows indisponible", esc(w.error || "La lecture du journal n\u2019a pas abouti : aucune conclusion sur les coupures."));
+  var kinds = w.kinds || {};
+  if (w.total) return echoItem("warn", w.total + " événement(s) de coupure enregistré(s) par Windows" + (during ? " pendant le test" : ""),
+    "Ce journal concerne l\u2019ensemble des périphériques audio Windows. " + (kinds.app ? kinds.app + " côté logiciel. " : "") + (kinds.driver ? kinds.driver + " côté pilote ou périphérique. " : "") +
+    (w.last ? "Dernière : " + new Date(w.last).toLocaleString("fr-FR") + "." : ""));
+  if (w.was_enabled === false) return echoItem("info", "Journal Windows activé", "Il vient d\u2019être allumé. Les périodes où il était désactivé n\u2019ont pas été mesurées.");
+  return echoItem("ok", "Aucune coupure enregistrée par Windows" + (during ? " pendant le test" : ""), "Aucun événement retrouvé dans ce journal sur la période demandée.");
+}
+function measurementFailureItem(c) {
+  return echoItem("info", esc(c.name) + " : mesure indisponible", c.status === "silent" || c.frames === 0 && !c.error
+    ? "Aucun échantillon reçu : cette voie n\u2019a pas pu être analysée."
+    : esc(c.error || "Aucun résultat exploitable pour cette voie."));
+}
+function timestampItem(c) {
+  return echoItem("info", esc(c.name) + " : horodatage incertain", "Windows a livré les échantillons avec des positions invalides. Les trous dans les données ne peuvent pas être vérifiés sur ces paquets.");
+}
+function inputLossItems(ins) {
+  if (!ins.length) return [echoItem("info", "Aucune entrée audio mesurée", "Le test n\u2019a pas trouvé d\u2019entrée GoXLR exploitable.")];
+  var items = [], good = [];
+  ins.forEach(function (c) {
+    if (c.timestamp_errors > 0) items.push(timestampItem(c));
+    if (!(c.frames > 0) || ["ok", "clipping", "dropouts"].indexOf(c.status) < 0) items.push(measurementFailureItem(c));
+    else if (c.status === "dropouts") items.push(echoItem("warn", esc(c.name) + " : données perdues", "Des pertes ont été relevées sur cette entrée" + (c.gap_ms > 0 ? " (" + fmtLost(c.gap_ms) + " manquantes)" : "") + "."));
+    else if (!c.timestamp_errors) good.push(esc(c.name));
+  });
+  if (good.length) items.push(echoItem("ok", "Entrées mesurées : aucune perte relevée", good.join(", ") + " : aucune perte de données signalée pendant la mesure."));
+  return items;
+}
+function outputLevelItems(outs) {
+  if (!outs.length) return [echoItem("info", "Aucune sortie audio mesurée", "Le test n\u2019a pas trouvé de sortie GoXLR exploitable.")];
+  var items = [], playing = [];
+  outs.forEach(function (c) {
+    if (c.timestamp_errors > 0) items.push(timestampItem(c));
+    if (c.status === "silent" && !c.frames) return;
+    if (!(c.frames > 0) || ["ok", "clipping", "dropouts"].indexOf(c.status) < 0) items.push(measurementFailureItem(c));
+    else if (c.active_s > 0 || c.meter_db != null) playing.push(c);
+  });
+  if (!playing.length) items.push(echoItem("info", "Aucun son analysé en sortie", "Aucune sortie n\u2019a fourni de son exploitable. Lance une lecture et refais le test pour vérifier ses niveaux."));
+  playing.forEach(function (c) {
+    var lab = esc(HP_CH_LABELS[c.name] || c.name);
+    if (c.status === "dropouts") items.push(echoItem("warn", lab + " : interruptions relevées", "Le test a détecté des interruptions sur cette voie de sortie."));
+    var clip = c.status === "clipping" || c.overs > 0 || c.clipped > 2;
+    items.push(clip ? echoItem("warn", lab + " sature", "Des échantillons atteignent ou dépassent 0 dB après l\u2019égaliseur : baisse le style ou le volume de l\u2019appli.")
+      : echoItem("ok", lab + " : " + soundLevel(c), "Aucune saturation relevée pendant la mesure."));
+  });
+  return items;
+}
 function soundAt(s) { s = Math.round(s); return s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60 ? (s % 60) + " s" : "").trim(); }
 function hpBoost() {
   var eq = S.state.hp_eq, c = hpFilters(eq), mx = 0;
@@ -1963,9 +2012,8 @@ function paintSound() {
   if (day && (!day.unsupported || drops)) {
     var d = h("div", {"class": "echo-sec"}, "<h4>Ces dernières 24 heures</h4>");
     if (drops) d.appendChild(drops);
-    if (!day.unsupported) d.appendChild(day.total ? echoItem("warn", day.total + " coupure" + (day.total > 1 ? "s" : "") + " notée" + (day.total > 1 ? "s" : "") + " par Windows",
-      (day.kinds.app ? day.kinds.app + " côté programme (un jeu ou une appli n\u2019a pas fourni le son à temps). " : "") + (day.kinds.driver ? day.kinds.driver + " côté pilote ou GoXLR. " : "") + (day.last ? "Dernière : " + new Date(day.last).toLocaleString("fr-FR") + "." : ""))
-      : echoItem("ok", "Aucune coupure notée par Windows", day.was_enabled === false ? "Le journal vient d\u2019être allumé : il notera les prochaines." : "Le son de Windows n\u2019a pas sauté."));
+    var wi = windowsGlitchItem(day, false);
+    if (wi) d.appendChild(wi);
     b.appendChild(d);
   }
   var boost = hpBoost();
@@ -1978,7 +2026,6 @@ function paintSound() {
 function paintSoundResult(b, r) {
   var st = sheetState, lp = r.loop, ch = (r.check && r.check.channels) || [], win = r.win;
   var ins = ch.filter(function (c) { return c.kind === "input"; }), outs = ch.filter(function (c) { return c.kind === "output"; });
-  var badIn = ins.filter(function (c) { return c.status === "dropouts"; });
   var s = h("div", {"class": "echo-sec"}, "<h4>Transport du son</h4>");
   if (lp.status === "ok") s.appendChild(echoItem("ok", "PC → GoXLR → PC : aucun trou", "Un son de test a fait l\u2019aller-retour pendant " + fmtDur(Math.round(lp.analysed_s)) + " sans une seule coupure."));
   else if (lp.status === "glitches") s.appendChild(echoItem("warn", (lp.dropouts + lp.jumps) + " coupure" + (lp.dropouts + lp.jumps > 1 ? "s" : "") + " entre le PC et la GoXLR",
@@ -1988,24 +2035,19 @@ function paintSoundResult(b, r) {
   else s.appendChild(echoItem("tip", "Aller-retour impossible", esc(lp.error || "voies GoXLR absentes")));
   var wu = win && win.usb;
   if (wu && wu.available) s.appendChild(wu.count ? echoItem("warn", "Le pilote confirme " + wu.count + " coupure" + (wu.count > 1 ? "s" : "") + " pendant le test",
-      fmtLost(wu.out_ms) + " de son perdu vers la GoXLR." + (dropHint(wu.events[0]) ? " Windows lançait alors : " + dropHint(wu.events[0]) + "." : ""))
-    : echoItem("ok", "Le pilote n\u2019a perdu aucune milliseconde", "Ses compteurs du transport USB n\u2019ont pas bougé pendant le test."));
+      dropLoss(wu) + "." + (dropHint(wu.events[0]) ? " Windows lançait alors : " + dropHint(wu.events[0]) + "." : ""))
+    : wu.reading === false || !wu.streaming ? echoItem("info", "Aucune perte USB enregistrée", "Les compteurs sont actuellement arrêtés ou illisibles. Le résultat de l\u2019aller-retour ci-dessus reste à prendre en compte.")
+    : echoItem("ok", "Aucune perte USB enregistrée pendant le test", "Aucune avance du compteur de pertes n\u2019a été relevée sur cette période."));
   if (lp.status !== "glitches" && st.usb && st.usb.found) {
     var adv = usbAdvice(st.usb);
     s.appendChild(adv ? echoItem("tip", "Port USB", adv.replace("Branche-la", "Si ça crépite un jour, branche-la").replace(", puis refais le test", "")) : echoItem("ok", "Port USB", "Relié directement au processeur, sans hub : le meilleur choix."));
   }
-  if (ins.length) s.appendChild(echoItem(badIn.length ? "warn" : "ok", badIn.length ? "Données perdues à l\u2019entrée" : "Micro, Stream Mix et VOD : rien de perdu",
-    badIn.length ? badIn.map(function (c) { return esc(c.name) + " : " + (c.discontinuities + c.gaps) + " coupure(s), " + c.gap_ms + " ms"; }).join(" · ") : "Windows a reçu chaque échantillon envoyé par la GoXLR."));
-  if (win && !win.unsupported) s.appendChild(echoItem(win.total ? "warn" : "ok", win.total ? win.total + " coupure(s) notée(s) par Windows pendant le test" : "Windows n\u2019a noté aucune coupure",
-    win.total ? (win.kinds.app ? "Côté programme : un jeu ou une appli n\u2019a pas fourni le son à temps (PC très chargé). " : "") + (win.kinds.driver ? "Côté pilote ou GoXLR." : "") : "Ni côté programmes, ni côté pilote."));
+  inputLossItems(ins).forEach(function (it) { s.appendChild(it); });
+  var wi = windowsGlitchItem(win, true);
+  if (wi) s.appendChild(wi);
   b.appendChild(s);
   var n = h("div", {"class": "echo-sec"}, "<h4>Niveaux</h4>");
-  var playing = outs.filter(function (c) { return c.active_s > 0 || c.meter_db != null; });
-  if (!playing.length) n.appendChild(echoItem("tip", "Rien ne jouait sur tes voies", "Lance ta musique ou ton jeu et refais le test : il vérifiera aussi que rien ne sature."));
-  playing.forEach(function (c) {
-    var lab = HP_CH_LABELS[c.name] || c.name;
-    n.appendChild(c.status === "clipping" ? echoItem("warn", esc(lab) + " sature", "Le son dépasse 0 dB après l\u2019égaliseur (" + c.clipped + " échantillons) : baisse le style ou le volume de l\u2019appli.") : echoItem("ok", esc(lab) + " : " + soundLevel(c), "Pas de saturation."));
-  });
+  outputLevelItems(outs).forEach(function (it) { n.appendChild(it); });
   var mic = ins.filter(function (c) { return c.name === "Chat Mic"; })[0];
   if (mic && mic.status === "clipping") n.appendChild(echoItem("warn", "Ton micro sature", "Il atteint 0 dB : baisse le gain dans la page Micro, ou recule un peu.", "Page Micro", function () { closeSheet(); go("mic"); }));
   b.appendChild(n);

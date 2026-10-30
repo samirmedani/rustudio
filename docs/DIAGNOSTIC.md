@@ -59,6 +59,16 @@ usbstats.exe 60 100          # une minute de veille, champs qui changent raremen
   muette au lieu d'afficher des valeurs fausses.
 - Une coupure peut aussi venir d'un programme qui n'a pas fourni le son à temps : le journal Windows
   `Microsoft-Windows-Audio/GlitchDetection` la compte séparément, et Rustudio le résume à côté.
+- Le journal peut être inaccessible, désactivé ou illisible. Le diagnostic vérifie son activation et sa lecture :
+  `/api/glitches` renvoie alors `readable: false`, `total: null` et la cause dans `error`, au lieu de zéro coupure.
+  Un journal vide signifie seulement qu'aucun événement n'y a été retrouvé sur la période, pas que toute la
+  chaîne audio a été mesurée sans perte.
+- Ce journal concerne tous les périphériques audio Windows. Son total compte des événements enregistrés,
+  plusieurs événements pouvant décrire un même incident ; il ne prouve pas leur provenance sur la GoXLR.
+- Chaque voie audio est mesurée séparément. Une voie refusée par le pilote, sans échantillon ou dans un format
+  inconnu reste « indisponible » ; un autre périphérique correctement mesuré ne valide pas les voies manquantes.
+- Les paquets vides ne fournissent pas de position à analyser. Les positions signalées invalides sont exclues
+  du calcul des trous et indiquées dans le résultat, selon le [contrat de GetBuffer](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiocaptureclient-getbuffer).
 - Sans lecture ni enregistrement, les compteurs restent figés : aucune coupure enregistrée au repos ne prouve
   pas que le son est stable en utilisation. Les programmes apparus autour d'une coupure sont des corrélations,
   pas une preuve de causalité.

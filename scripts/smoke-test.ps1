@@ -32,7 +32,9 @@ if (-not (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Unin
 $g = $null
 for ($i = 0; $i -lt 20 -and -not ($g -and $g.enabled); $i++) { Start-Sleep -Milliseconds 500; $g = Invoke-RestMethod http://127.0.0.1:14565/api/glitches }
 if (-not $g.enabled) { Show-Log; throw 'Journal des coupures du son non allume' }
-if ((wevtutil gl Microsoft-Windows-Audio/GlitchDetection | Select-String 'enabled: true') -eq $null) { throw 'Canal GlitchDetection eteint' }
+if (-not $g.readable -or $null -eq $g.total) { Show-Log; throw "Journal des coupures illisible : $($g.error)" }
+[xml]$channelConfig = wevtutil gl Microsoft-Windows-Audio/GlitchDetection /f:xml
+if ($channelConfig.DocumentElement.GetAttribute('enabled') -ne 'true') { throw 'Canal GlitchDetection eteint' }
 Write-Host "Journal des coupures : allume, $($g.total) coupure(s) sur 24 h"
 # test « son qui crepite » : isolement temporaire de la voie Sample, puis retour
 $r = Invoke-RestMethod -Method Post http://127.0.0.1:14565/api/sound-test -Headers @{ 'X-Rustudio' = '1' } -Body '{"seconds":30}' -ContentType 'application/json'

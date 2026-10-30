@@ -1,5 +1,18 @@
 # Nouveautés
 
+## 5.2.3
+
+**Corrigé**
+- Un micro ou une sortie qui refuse le test ne reçoit plus de faux résultat « rien de perdu ». Chaque voie
+  non mesurée est nommée, avec la raison ; seules les voies effectivement analysées sont validées.
+- Si Windows refuse l'accès au journal des coupures ou ne l'active pas, le diagnostic affiche « indisponible ».
+  Une absence d'événement enregistré n'est plus présentée comme la preuve que tout le son est resté intact.
+- Une erreur pendant la lecture des échantillons arrête la mesure et remonte sa cause. Les formats non reconnus
+  sont signalés au lieu d'être interprétés comme du silence ; le son de test fonctionne aussi en PCM 24 bits.
+- Les sorties affichent leurs interruptions et leur saturation ensemble quand les deux sont présentes.
+- Les positions de paquets marquées invalides par Windows ne créent plus de faux trous dans le son : le test
+  signale que leur horodatage est incertain. Les tampons vides ne sont plus comptés comme des paquets reçus.
+
 ## 5.2.2
 
 **Corrigé**

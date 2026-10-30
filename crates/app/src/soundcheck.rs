@@ -17,6 +17,7 @@ pub struct Stats {
     /// trous dans la position du périphérique (entrées seulement)
     pub gaps: u32,
     pub gap_frames: u64,
+    pub timestamp_errors: u32,
     pub peak: f32,
     /// échantillons à pleine échelle (|x| >= 0,9999)
     pub clipped: u64,
@@ -31,10 +32,16 @@ pub struct Stats {
 impl Stats {
     /// Ajoute un paquet de \`frames\` trames ; \`samples\` déjà en flottants (vide si silencieux).
     pub fn add(&mut self, frames: u32, flags: u32, devpos: Option<u64>, expected: Option<u64>, samples: &[f32], track_gaps: bool) {
+        if frames == 0 {
+            return;
+        }
         if self.packets > 0 && flags & 1 != 0 {
             self.discontinuities += 1;
         }
-        if track_gaps {
+        if flags & 4 != 0 {
+            self.timestamp_errors += 1;
+        }
+        if track_gaps && flags & 4 == 0 {
             if let (Some(p), Some(e)) = (devpos, expected) {
                 if p > e {
                     self.gaps += 1;
@@ -82,13 +89,30 @@ pub fn to_f32(raw: &[u8], float: bool, block_bits: u16) -> Vec<f32> {
     }
 }
 
+#[cfg(any(windows, test))]
+fn supported_format(float: bool, bits: u16) -> bool {
+    matches!((float, bits), (true, 32) | (false, 16 | 24 | 32))
+}
+
+#[cfg(any(windows, test))]
+fn write_sample(out: &mut [u8], float: bool, v: f32) -> Result<(), String> {
+    match (float, out.len()) {
+        (true, 4) => out.copy_from_slice(&v.to_le_bytes()),
+        (false, 2) => out.copy_from_slice(&((v * 32767.0) as i16).to_le_bytes()),
+        (false, 3) => out.copy_from_slice(&((v * 8_388_607.0) as i32).to_le_bytes()[..3]),
+        (false, 4) => out.copy_from_slice(&((v as f64 * 2_147_483_647.0) as i32).to_le_bytes()),
+        _ => return Err("Format du son de test non pris en charge".into()),
+    }
+    Ok(())
+}
+
 /// Verdict lisible pour une voie écoutée.
 pub fn verdict(name: &str, loopback: bool, secs: f64, s: &Stats) -> Value {
     let lost = s.discontinuities as u64 + s.gaps as u64;
     let expected = (s.sample_rate as f64 * secs) as u64;
     // une entrée qui livre nettement moins que prévu a perdu des données, même sans les signaler
     let short = !loopback && s.sample_rate > 0 && expected > 0 && s.frames + s.sample_rate as u64 / 5 < expected;
-    let status = if s.packets == 0 && !loopback {
+    let status = if s.frames == 0 {
         "silent"
     } else if lost > 0 || short {
         "dropouts"
@@ -102,6 +126,7 @@ pub fn verdict(name: &str, loopback: bool, secs: f64, s: &Stats) -> Value {
     json!({
         "name": name, "kind": if loopback { "output" } else { "input" }, "status": status,
         "frames": s.frames, "expected_frames": expected, "discontinuities": s.discontinuities, "gaps": s.gaps,
+        "timestamp_errors": s.timestamp_errors,
         "gap_ms": if s.sample_rate > 0 { (s.gap_frames as f64 * 1000.0 / s.sample_rate as f64).round() } else { 0.0 },
         "peak_db": s.peak_db(), "clipped": s.clipped, "overs": s.overs,
         "active_s": if s.sample_rate > 0 { (s.sound_frames as f64 / s.sample_rate as f64 * 10.0).round() / 10.0 } else { 0.0 },
@@ -280,8 +305,16 @@ mod win {
         let fmt = client.GetMixFormat().map_err(|e| e.to_string())?;
         let wf: WAVEFORMATEX = std::ptr::read_unaligned(fmt);
         let (tag, rate, block, channels) = (wf.wFormatTag, wf.nSamplesPerSec, wf.nBlockAlign, wf.nChannels);
-        let float = tag == 3 || (tag == 0xFFFE && wf.cbSize >= 22 && std::slice::from_raw_parts((fmt as *const u8).add(24), 16) == FLOAT_SUBTYPE);
-        let block_bits = if channels > 0 { block / channels * 8 } else { 0 };
+        let sub = if tag == 0xFFFE && wf.cbSize >= 22 { std::slice::from_raw_parts((fmt as *const u8).add(24), 16) } else { &[] };
+        let float = tag == 3 || sub == FLOAT_SUBTYPE;
+        let mut pcm_subtype = FLOAT_SUBTYPE;
+        pcm_subtype[0] = 1;
+        let pcm = tag == 1 || sub == pcm_subtype;
+        let block_bits = if channels > 0 { (block / channels).saturating_mul(8) } else { 0 };
+        if !(pcm || float) || !supported_format(float, block_bits) || channels == 0 || rate == 0 || block % channels != 0 {
+            CoTaskMemFree(Some(fmt as *const core::ffi::c_void));
+            return Err(format!("Format audio non pris en charge pour la mesure (type {tag}, {block_bits} bits, {channels} canaux)"));
+        }
         let init = client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, fmt, None);
         CoTaskMemFree(Some(fmt as *const core::ffi::c_void));
         init.map_err(|e| e.to_string())?;
@@ -315,8 +348,18 @@ mod win {
                     break;
                 }
                 let (mut data, mut frames, mut flags, mut pos, mut qpc) = (std::ptr::null_mut(), 0u32, 0u32, 0u64, 0u64);
-                if cap.GetBuffer(&mut data, &mut frames, &mut flags, Some(&mut pos), Some(&mut qpc)).is_err() {
+                if let Err(e) = cap.GetBuffer(&mut data, &mut frames, &mut flags, Some(&mut pos), Some(&mut qpc)) {
+                    let _ = client.Stop();
+                    return Err(format!("Lecture des échantillons interrompue : {e}"));
+                }
+                // AUDCLNT_S_BUFFER_EMPTY : pas de paquet ni de position a analyser (GetBuffer, Microsoft Learn).
+                if frames == 0 {
                     break;
+                }
+                if data.is_null() && flags & 2 == 0 && frames > 0 {
+                    let _ = cap.ReleaseBuffer(frames);
+                    let _ = client.Stop();
+                    return Err("Paquet audio sans données : mesure interrompue".into());
                 }
                 let samples = if flags & 2 != 0 || data.is_null() {
                     vec![0.0; frames as usize * f.channels as usize]
@@ -325,8 +368,11 @@ mod win {
                 };
                 st.add(frames, flags, Some(pos), next, if flags & 2 != 0 { &[] } else { &samples }, !loopback);
                 sink(&samples, f.channels);
-                next = Some(pos + frames as u64);
-                let _ = cap.ReleaseBuffer(frames);
+                next = if flags & 4 == 0 { pos.checked_add(frames as u64) } else { None };
+                if let Err(e) = cap.ReleaseBuffer(frames) {
+                    let _ = client.Stop();
+                    return Err(format!("Lecture des échantillons interrompue : {e}"));
+                }
             }
         }
         let _ = client.Stop();
@@ -353,12 +399,7 @@ mod win {
                 *phase = (*phase + step) % (2.0 * std::f64::consts::PI);
                 for c in 0..f.channels as usize {
                     let o = &mut out[(fr * f.channels as usize + c) * bytes..][..bytes];
-                    match (f.float, bytes) {
-                        (true, 4) => o.copy_from_slice(&v.to_le_bytes()),
-                        (false, 2) => o.copy_from_slice(&((v * 32767.0) as i16).to_le_bytes()),
-                        (false, 4) => o.copy_from_slice(&((v as f64 * 2_147_483_647.0) as i32).to_le_bytes()),
-                        _ => o.fill(0),
-                    }
+                    write_sample(o, f.float, v)?;
                 }
             }
             render.ReleaseBuffer(n, 0).map_err(|e| e.to_string())
@@ -563,5 +604,37 @@ mod tests {
         assert_eq!(to_f32(&i16::MIN.to_le_bytes(), false, 16), vec![-1.0]);
         let v = to_f32(&[0, 0, 0x40], false, 24);
         assert!((v[0] - 0.5).abs() < 1e-6);
+        assert!(supported_format(true, 32));
+        assert!(supported_format(false, 24));
+        assert!(!supported_format(true, 64));
+        assert!(!supported_format(false, 8));
+        let mut out = [0; 3];
+        write_sample(&mut out, false, 0.5).unwrap();
+        assert_eq!(out, [0xff, 0xff, 0x3f], "son de test reel en PCM 24 bits, pas du silence");
+        let mut out = [0; 4];
+        write_sample(&mut out, true, 0.5).unwrap();
+        assert_eq!(out, 0.5f32.to_le_bytes());
+        assert!(write_sample(&mut [0; 1], false, 0.5).is_err());
+    }
+
+    #[test]
+    fn aucune_trame_ne_valide_pas_une_mesure() {
+        let s = Stats { sample_rate: 48000, ..Default::default() };
+        assert_eq!(verdict("Chat Mic", false, 10.0, &s)["status"], "silent");
+        assert_eq!(verdict("System", true, 10.0, &s)["status"], "silent");
+    }
+
+    #[test]
+    fn horodatage_invalide_ne_cree_pas_un_faux_trou() {
+        let mut s = Stats { sample_rate: 48000, ..Default::default() };
+        s.add(480, 0, Some(0), None, &[], true);
+        s.add(480, 4, Some(u64::MAX), Some(480), &[], true);
+        assert_eq!(s.gaps, 0);
+        assert_eq!(s.timestamp_errors, 1);
+        assert_eq!(verdict("Chat Mic", false, 0.02, &s)["timestamp_errors"], 1);
+        let packets = s.packets;
+        s.add(0, 5, Some(u64::MAX), Some(0), &[], true);
+        assert_eq!(s.packets, packets, "un tampon vide ne fournit aucune position valide");
+        assert_eq!(s.timestamp_errors, 1);
     }
 }

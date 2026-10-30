@@ -4,13 +4,14 @@ import {readFileSync} from "node:fs";
 import {runInNewContext} from "node:vm";
 
 const html = readFileSync(new URL("../ui/index.html", import.meta.url), "utf8");
-const start = html.indexOf("function fmtClock(");
+const start = html.indexOf("function soundLevel(");
 const end = html.indexOf("function soundAt(", start);
 assert.ok(start >= 0 && end > start, "fonctions du diagnostic presentes");
 const context = {
   esc: s => String(s).replaceAll("<", "&lt;"),
   echoItem: (status, title, detail) => ({status, title, detail}),
   usbAdvice: () => null,
+  HP_CH_LABELS: {},
 };
 runInNewContext(html.slice(start, end), context);
 const base = {available: true, reading: true, streaming: true, count: 0, out_ms: 0, in_ms: 0, events: [], top: []};
@@ -25,4 +26,34 @@ assert.equal(mic.status, "warn");
 assert.match(mic.detail, /2 ms vers le PC/, "une coupure micro seule garde sa duree");
 assert.match(mic.detail, /pas une cause prouvée/, "coincidence de lancement : pas une accusation");
 assert.ok(!mic.detail.includes("<programme>"), "le nom d'un programme n'est jamais du HTML");
-console.log("Diagnostic UI : repos, lecture, pilote absent, coupure micro et pistes verifies.");
+
+const win = {enabled: true, readable: true, total: 0, was_enabled: true};
+assert.equal(context.windowsGlitchItem(win, false).status, "ok");
+assert.equal(context.windowsGlitchItem({...win, enabled: false}, false).status, "info");
+assert.equal(context.windowsGlitchItem({...win, readable: false, error: "<refus>"}, true).status, "info");
+assert.equal(context.windowsGlitchItem({...win, total: null}, true).status, "info");
+assert.equal(context.windowsGlitchItem({...win, was_enabled: false}, false).status, "info");
+assert.equal(context.windowsGlitchItem({...win, total: 2, kinds: {driver: 2}}, true).status, "warn");
+assert.ok(!context.windowsGlitchItem({...win, readable: false, error: "<refus>"}, false).detail.includes("<refus>"));
+
+const failed = {name: "Chat Mic", status: "error", error: "<lecture refusée>"};
+const good = {name: "VOD", status: "ok", frames: 48000};
+const loss = {name: "Broadcast Stream Mix", status: "dropouts", frames: 47000, gap_ms: 20};
+assert.ok(context.inputLossItems([failed]).every(i => i.status !== "ok"), "entree refusee : aucun feu vert");
+assert.ok(context.inputLossItems([{name: "Chat Mic", frames: 0, status: "silent"}]).every(i => i.status !== "ok"));
+assert.ok(context.inputLossItems([]).every(i => i.status !== "ok"));
+assert.ok(context.inputLossItems([{...good, timestamp_errors: 1}]).every(i => i.status !== "ok"), "positions invalides : pas de validation des trous");
+const partial = context.inputLossItems([failed, good, loss]);
+assert.ok(partial.some(i => i.status === "info" && i.title.includes("Chat Mic")));
+assert.ok(partial.some(i => i.status === "warn" && i.title.includes("Stream Mix")));
+const green = partial.find(i => i.status === "ok");
+assert.match(green.detail, /VOD/);
+assert.ok(!green.detail.includes("Chat Mic") && !green.detail.includes("Stream Mix"), "seules les entrees effectivement mesurees sont validees");
+assert.ok(!partial.some(i => i.detail.includes("<lecture refusée>")), "erreurs echappees");
+
+assert.ok(context.outputLevelItems([{...failed, name: "Game", meter_db: -1}]).every(i => i.status !== "ok"), "un vumetre ne remplace pas une capture echouee");
+assert.ok(context.outputLevelItems([{name: "System", status: "silent", frames: 0}]).every(i => i.status !== "ok"));
+const both = context.outputLevelItems([{...loss, name: "Music", active_s: 1, peak_db: 1, clipped: 10, overs: 5}]);
+assert.ok(both.some(i => i.title.includes("interruptions")) && both.some(i => i.title.includes("sature")), "pertes et saturation restent toutes deux visibles");
+assert.ok(both.every(i => i.status === "warn"));
+console.log("Diagnostic UI : repos, pertes, mesures echouees ou partielles, journal inaccessible, saturation et echappement verifies.");
