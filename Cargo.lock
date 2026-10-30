@@ -1496,6 +1496,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hidapi"
+version = "2.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "818c0e1d27887aaf76fe737042e27a66b796a7b099e6d2e1a72d106c2dff3fa6"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "pkg-config",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2995,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-app"
-version = "5.4.2"
+version = "5.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3010,8 +3023,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustudio-attack-shark"
+version = "5.5.0"
+dependencies = [
+ "hidapi",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rustudio-core"
-version = "5.4.2"
+version = "5.5.0"
 dependencies = [
  "indexmap 2.14.2",
  "serde",
@@ -3020,11 +3042,12 @@ dependencies = [
 
 [[package]]
 name = "rustudio-engine"
-version = "5.4.2"
+version = "5.5.0"
 dependencies = [
  "chrono",
  "indexmap 2.14.2",
  "native-tls",
+ "rustudio-attack-shark",
  "rustudio-core",
  "rustudio-goxlr",
  "serde",
@@ -3040,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-goxlr"
-version = "5.4.2"
+version = "5.5.0"
 dependencies = [
  "indexmap 2.14.2",
  "libloading 0.9.0",
@@ -3051,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-setup"
-version = "5.4.2"
+version = "5.5.0"
 dependencies = [
  "embed-resource",
  "serde_json",

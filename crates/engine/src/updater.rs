@@ -21,6 +21,7 @@ pub const UPDATE_TASK: &str = "Rustudio Update";
 pub const REQUIRED_PAYLOAD: [&str; 3] = ["rustudio-engine.exe", "Rustudio.exe", "manifest.json"];
 pub const MAX_ZIP: u64 = 400 * 1024 * 1024;
 const FIRST_CHECK: f64 = 5.0;
+const MANUAL_CHECK_INTERVAL: f64 = 5.0;
 const EVERY: f64 = 6.0 * 3600.0;
 const OFFLINE_RETRY: f64 = 30.0 * 60.0;
 
@@ -229,7 +230,7 @@ impl Updater {
                "latest": s.latest, "checked_at": s.checked_at, "phase": s.phase, "progress": s.progress, "error": s.error,
                "installable": ok, "why_not": why, "repo": repo, "repo_url": format!("https://github.com/{repo}"),
                "release_page": page, "installed": s.installed,
-               "check_wait": (s.manual_at + 60.0 - now_epoch()).max(0.0).round(), "reminded": reminded})
+               "check_wait": (s.manual_at + MANUAL_CHECK_INTERVAL - now_epoch()).max(0.0).ceil(), "reminded": reminded})
     }
 
     pub fn brief(&self) -> Value {
@@ -244,9 +245,9 @@ impl Updater {
                 return Ok(());
             }
             if manual {
-                let wait = s.manual_at + 60.0 - now_epoch();
+                let wait = s.manual_at + MANUAL_CHECK_INTERVAL - now_epoch();
                 if wait > 0.0 {
-                    return Err(format!("Une recherche par minute au plus : réessaie dans {} s.", wait as i64 + 1));
+                    return Err(format!("Recherche trop rapprochée : réessaie dans {} s.", wait.ceil() as i64));
                 }
                 s.manual_at = now_epoch();
             }

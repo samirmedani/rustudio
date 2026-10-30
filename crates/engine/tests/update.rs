@@ -170,13 +170,19 @@ fn installation_qui_ne_demarre_pas() {
 }
 
 #[test]
-fn a_jour_et_une_recherche_par_minute() {
+fn recherche_manuelle_reessaie_apres_cinq_secondes_sans_installer() {
     let u = U::new();
     u.gh.publish("4.9.0", make_zip("4.9.0", None, vec![]), true);
     u.ctl.updater.check(true).unwrap();
     assert_eq!(u.ctl.updater.peek().status, "up-to-date");
     assert!(u.install().is_err());
-    assert!(u.ctl.updater.check(true).is_err(), "une recherche manuelle par minute");
+    assert!(u.ctl.updater.check(true).is_err(), "les doubles clics restent limités");
+    let wait = u.ctl.updater.snapshot(None)["check_wait"].as_f64().unwrap();
+    assert!(wait > 0.0 && wait <= 5.0, "attente annoncée de cinq secondes au maximum : {wait}");
+    std::thread::sleep(Duration::from_millis(5100));
+    assert_eq!(u.ctl.updater.snapshot(None)["check_wait"], 0.0);
+    u.ctl.updater.check(true).unwrap();
+    assert!(u.applied.lock().unwrap().is_empty(), "rechercher ne lance aucune installation");
 }
 
 #[test]

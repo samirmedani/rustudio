@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-28",
+  "updated": "2026-10-30",
   "modules": [
     {
       "id": "goxlr-mini",
@@ -51,16 +51,27 @@
       "name": "R5 Ultra",
       "vendor": "Attack Shark",
       "kind": "mouse",
-      "status": "wanted",
-      "usb": [],
-      "source": "",
-      "summary": "Souris gaming : DPI, taux de rafraîchissement, boutons, éclairage. Demandée : à contribuer (protocole HID à documenter).",
+      "status": "official",
+      "usb": [
+        {
+          "vid": "373E",
+          "pid": "0046"
+        },
+        {
+          "vid": "373E",
+          "pid": "0047"
+        }
+      ],
+      "source": "crates/attack-shark",
+      "summary": "Paliers DPI X/Y, fréquence, batterie, veille et réglages du capteur. Vérifié sur R5 Ultra en 2,4 GHz. Sans Bluetooth, macros ni remappage des boutons.",
       "features": [
         "DPI",
-        "Polling rate",
-        "Boutons",
-        "Éclairage"
-      ]
+        "Fréquence",
+        "Batterie",
+        "Capteur",
+        "Veille"
+      ],
+      "builtin": true
     },
     {
       "id": "ddc-monitor",

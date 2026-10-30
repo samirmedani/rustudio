@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod library;
 pub mod log;
 pub mod modules;
+pub mod mouse;
 pub mod net;
 #[cfg(windows)]
 pub mod service;
@@ -67,6 +68,7 @@ pub fn run_engine(cfg: config::Config) -> i32 {
     let spawn = |name: &str, f: Box<dyn FnOnce() + Send>| {
         std::thread::Builder::new().name(name.into()).spawn(f).expect("fil");
     };
+    ctl.mouse.start();
     let c = ctl.clone();
     spawn("usb", Box::new(move || c.device_loop(None)));
     let c = ctl.clone();

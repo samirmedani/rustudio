@@ -5,6 +5,7 @@ Rustudio est distribué sous licence MIT (voir [LICENSE](LICENSE)). Il s'appuie 
 | Composant | Utilisation | Licence |
 | --- | --- | --- |
 | [goxlr-utility](https://github.com/GoXLR-on-Linux/goxlr-utility) | Identifiants et formats des commandes USB de la GoXLR, repris comme référence (aucun code copié tel quel) | MIT |
+| [hidapi-rs](https://github.com/ruabmbua/hidapi-rs) | Interface HID vendor de la R5 Ultra (backend natif Windows) | MIT |
 | [Tauri](https://tauri.app), [wry](https://github.com/tauri-apps/wry), [tao](https://github.com/tauri-apps/tao) | Appli Windows et fenêtre de l'installeur | MIT ou Apache-2.0 |
 | [windows-rs](https://github.com/microsoft/windows-rs), [webview2-com](https://github.com/wravery/webview2-rs) | Accès aux API Windows (audio, fenêtres, WebView2) | MIT ou Apache-2.0 |
 | [serde](https://serde.rs), [serde_json](https://github.com/serde-rs/json), [indexmap](https://github.com/indexmap-rs/indexmap) | Réglages et API JSON | MIT ou Apache-2.0 |
@@ -37,3 +38,50 @@ TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
 Police de l'interface, intégrée à `ui/index.html` (sous-ensemble latin, @fontsource-variable/inter 5.3.0),
 https://rsms.me/inter — Copyright (c) 2016 The Inter Project Authors, SIL Open Font License 1.1
 (https://openfontlicense.org).
+
+
+## Documentation du protocole R5 Ultra — miyoi
+
+Source : https://github.com/ellerotta/miyoi
+
+MIT License
+
+Copyright (c) 2026 miyoi contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+## hidapi-rs (backend HID natif Windows)
+
+Copyright 2017 The hidapi-rs Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

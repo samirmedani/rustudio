@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Ton matériel, dans un même espace.</b><br>
-  Logiciel libre pour Windows, écrit en Rust, organisé en modules. Premier appareil pris en charge : la GoXLR Mini.
+  Logiciel libre pour Windows, écrit en Rust, organisé en modules. Modules GoXLR Mini et Attack Shark R5 Ultra.
 </p>
 
 <p align="center">
@@ -23,10 +23,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/captures/devices.jpg" width="880" alt="Accueil Mes appareils de Rustudio : un espace propre à chaque appareil">
+  <img src="docs/captures/devices-modules.png" width="880" alt="Accueil Mes appareils de Rustudio : un espace propre à chaque appareil">
 </p>
 
-*Open-source controller for your desk gear on Windows, written in Rust. First device: the TC-Helicon GoXLR Mini,
+*Open-source controller for your desk gear on Windows, written in Rust. Devices: the Attack Shark R5 Ultra and TC-Helicon GoXLR Mini,
 with the official driver only (mixer, natural voice with optional processing, routing, lighting, scenes,
 headphone EQ, echo check, OBS overlay, opt-in updates). Anyone can add a device module. French interface.*
 
@@ -36,8 +36,9 @@ Rustudio réunit les réglages de ton matériel dans une seule application. **Me
 vois les appareils pris en charge par les modules livrés, leur état et l'accès à leurs réglages. **Modules** présente
 le catalogue et les appareils pour lesquels tu peux contribuer.
 
-La version actuelle livre un seul module fonctionnel : **GoXLR Mini**. Souris, claviers, écrans et GoXLR complète
-sont des pistes de contribution ; leur présence au catalogue ne signifie pas qu'ils sont pilotés par Rustudio.
+La version actuelle livre deux modules : **GoXLR Mini** et **Attack Shark R5 Ultra**. Les autres souris, claviers, écrans et la GoXLR complète restent des pistes de contribution ; leur présence au catalogue ne signifie pas qu’ils sont pilotés par Rustudio.
+Le module [R5 Ultra](docs/R5-ULTRA.md) règle les paliers DPI X/Y, leur sélection, la fréquence, la veille et le capteur, et affiche la batterie. Les DPI, la fréquence et le délai anti-double clic sont vérifiés sur la vraie souris en 2,4 GHz. Le transport USB est implémenté et testé en simulation ; Bluetooth, macros et remappage des boutons ne sont pas pris en charge.
+
 Les modules sont compilés dans l'application : aucun code du catalogue n'est téléchargé ou installé à la volée.
 
 Le moteur tourne en service Windows dès le démarrage et se relance s'il a un souci. Le module GoXLR Mini parle
@@ -47,7 +48,7 @@ au pilote officiel de TC-Helicon et reprend l'appareil quand il est rebranché.
 
 1. Ouvre **Mes appareils** : les appareils déjà détectés ou ajoutés gardent leur carte après un débranchement.
    Pour ajouter un appareil hors ligne, passe par **Modules**.
-2. Choisis **GoXLR Mini** pour ouvrir son espace : Mixeur, Micro, Casque, Routage, Éclairage et Scènes.
+2. Clique sur la carte de ton appareil : **GoXLR Mini** ouvre ses pages audio ; **R5 Ultra** ouvre **Ma souris**.
 3. Ouvre **Modules** pour consulter les appareils disponibles ou à contribuer. Seul un module livré et son
    adaptateur matériel permettent de piloter un appareil.
 
@@ -57,6 +58,17 @@ dans son propre sous-menu quand elle est connectée.
 <p align="center">
   <img src="docs/captures/modules.jpg" width="880" alt="Catalogue Modules : les modules livrés sont distingués des appareils à contribuer">
 </p>
+
+## Ce que le module R5 Ultra sait faire
+
+- Jusqu’à six paliers DPI, axes X/Y séparés, et choix du palier actif.
+- Fréquence, batterie, hauteur de décrochage, délai anti-double clic, veille et options du capteur.
+- Relecture des réglages après application ; aucune écriture à la connexion.
+- Un fil HID indépendant de l’audio, avec reprise des lectures perdues sur la liaison 2,4 GHz.
+
+<p align="center"><img src="docs/captures/mouse.png" width="880" alt="Page Ma souris du module R5 Ultra, en simulation"></p>
+
+Voir [les fonctions et limites du module](docs/R5-ULTRA.md).
 
 ## Ce que le module GoXLR Mini sait faire
 
@@ -167,6 +179,7 @@ flowchart LR
   C --- R["Registre local<br/>modules et capacités"]
   C -- "adaptateur GoXLR Mini<br/>un seul fil USB" --> M["Module GoXLR Mini"]
   M -- "pilote officiel<br/>(API Thesycon)" --> D["GoXLR Mini"]
+  C -- "adaptateur R5 Ultra<br/>un fil HID indépendant" --> H["R5 Ultra<br/>USB / récepteur 2,4 GHz"]
   C --- E["Réglages<br/>ProgramData"]
   C -. "mises à jour, catalogue" .-> G["Releases GitHub"]
 ```
@@ -177,6 +190,7 @@ flowchart LR
 | `rustudio-goxlr` | Protocole USB de la GoXLR Mini (pilote officiel chargé à l'exécution) et fausse GoXLR pour les tests |
 | `rustudio-engine` | Service Windows, API locale, états des modules et mises à jour ; adaptateur GoXLR Mini, boucle USB et Equalizer APO |
 | `rustudio-app` | Appli Tauri 2 : fenêtre WebView2, icône d'état, bulle, micro et sortie par défaut de Windows |
+| `rustudio-attack-shark` | Protocole HID R5 Ultra, transport Windows et simulateur |
 | `rustudio-setup` | Installeur en un seul fichier, et passage depuis GoXLR Mini avec retour arrière |
 
 - Dans le module GoXLR Mini, un seul fil parle à l'appareil ; l'API ne l'attend jamais. Toute erreur USB ferme
@@ -211,7 +225,7 @@ les règles qu'il doit suivre sont dans [AGENTS.md](AGENTS.md).
 ## Compatibilité
 
 - **Seul module matériel livré : GoXLR Mini** (firmware 1.2.x testé ; 1.3 pris en charge avec Stream Mix 2).
-  La GoXLR complète, les souris, claviers et écrans du catalogue restent à contribuer.
+  La GoXLR complète, les autres souris, les claviers et écrans du catalogue restent à contribuer.
 - Windows 10 ou 11, 64 bits, pilote officiel GoXLR, Microsoft Edge WebView2 (présent sur Windows 11).
 - Captures faites avec l'appareil simulé.
 

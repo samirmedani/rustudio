@@ -39,7 +39,7 @@ fn request(ctl: &Arc<Ctl>, path: &str, body: Option<Value>, authorized: bool, ho
 fn adaptateur_suit_connexion_erreur_et_simulation() {
     let ctl = controller(true);
     let installed = ctl.modules_snapshot()["installed"].clone();
-    assert_eq!(installed.as_array().unwrap().len(), 1);
+    assert_eq!(installed.as_array().unwrap().len(), 2);
     assert_eq!(installed[0]["id"], "goxlr-mini");
     let devices = || ctl.modules_snapshot()["devices"].clone();
     assert_eq!(devices()[0]["status"], "starting");
@@ -146,7 +146,7 @@ fn module_inconnu_actions_globales_et_requetes_non_autorisees_sont_refusees() {
     let ctl = controller(true);
     let before = ctl.lock().state.to_value();
     let version = ctl.version();
-    for id in ["inconnu", "attack-shark-r5-ultra"] {
+    for id in ["inconnu", "souris-non-supportee"] {
         let path = format!("/api/modules/{id}/volume");
         assert_eq!(request(&ctl, &path, Some(json!({"channel": "Game", "value": 1})), true, None).0, 404);
     }
@@ -178,4 +178,27 @@ fn etat_par_module_contient_seulement_les_donnees_de_son_adaptateur() {
     assert_eq!(state["live"], ctl.live_snapshot(false)["live"]);
     assert_eq!(request(&ctl, "/api/modules/inconnu/state", None, false, None).0, 404);
     assert_eq!(ctl.lock().state.to_value(), before);
+}
+
+#[test]
+fn souris_independante_du_moteur_audio_et_commandes_confirmees() {
+    let ctl = controller(true);
+    ctl.mouse.start();
+    let original_audio = ctl.snapshot()["state"].clone();
+    let (code, initial) = request(&ctl, "/api/modules/attack-shark-r5-ultra/state", None, false, None);
+    assert_eq!(code, 200);
+    assert_eq!(initial["device"]["connected"], true);
+    assert!(initial["state"].get("volumes").is_none());
+    let (code, changed) = request(&ctl, "/api/modules/attack-shark-r5-ultra/setting", Some(json!({"name":"debounce_ms","value":7})), true, None);
+    assert_eq!(code, 200);
+    assert_eq!(changed["state"]["debounce_ms"], 7);
+    assert_eq!(ctl.snapshot()["state"], original_audio);
+    let (code, _) = request(&ctl, "/api/modules/attack-shark-r5-ultra/volume", Some(json!({"channel":"Music","value":10})), true, None);
+    assert_eq!(code, 404);
+    let (code, _) = request(&ctl, "/api/modules/attack-shark-r5-ultra/setting", Some(json!({"name":"firmware","value":1})), true, None);
+    assert_eq!(code, 400);
+    assert_eq!(ctl.modules_snapshot()["devices"][1]["connected"], true);
+    assert_eq!(ctl.module_state_snapshot("attack-shark-r5-ultra").unwrap()["state"]["debounce_ms"], 7);
+    let (code, _) = request(&ctl, "/api/modules/attack-shark-r5-ultra/setting", Some(json!({"name":"debounce_ms","value":4})), false, None);
+    assert_eq!(code, 403);
 }

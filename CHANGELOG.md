@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 5.5.0
+
+- Nouveau module **Attack Shark R5 Ultra** : batterie, DPI X/Y par palier, fréquence, veille et réglages du capteur dans un espace dédié. DPI, fréquence et délai anti-double clic vérifiés sur la vraie souris en 2,4 GHz, puis restaurés.
+- Les lectures HID perdues sont réessayées sans renvoyer les écritures. Les réglages sont relus avant d’annoncer leur application ; une saisie DPI reste disponible en cas d’erreur.
+- Les paliers existants, y compris celui à 42 000 DPI, sont préservés. Les interfaces souris/clavier et les modes de mise à jour de firmware ne sont pas ouverts.
+- Bluetooth, macros et remappage des boutons ne font pas partie de ce premier module.
+
+- Le délai entre deux recherches manuelles de mise à jour passe de 60 à 5 secondes. Les recherches ne déclenchent aucune installation.
+
+
 ## 5.4.2
 
 - La croix de retrait des appareils est centrée dans son bouton, avec une icône indépendante de la police système.

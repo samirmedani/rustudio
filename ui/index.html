@@ -77,6 +77,21 @@ nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;backgr
 .device-remove:hover,.device-remove:focus-visible{background:#ffe5e5;color:#b42318;outline:2px solid currentColor}
 .device-card{position:relative;display:flex;flex-direction:column;gap:14px;padding:24px}
 .device-card .lib-head{margin:0}
+.mouse-hero{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:24px}
+.mouse-hero h2,.mouse-panel h2{font-size:20px;margin:0 0 8px}
+.mouse-hero p,.mouse-panel>p{color:var(--text2);font-size:14px;margin:0 0 16px}
+.mouse-hero>div:not(.mouse-summary){flex:1;min-width:200px}
+.mouse-summary{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
+.mouse-status{font-size:13px;color:var(--text2)}
+.mouse-panel{padding:24px;margin-top:20px}
+.mouse-field{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:16px;font-size:14px}
+.mouse-field select{width:180px}
+.mouse-dpi{display:grid;gap:12px;margin-top:16px}
+.mouse-dpi-row{display:flex;align-items:flex-end;gap:14px;padding-top:12px;border-top:1px solid var(--stroke)}
+.mouse-dpi-row label{flex:1;min-width:0;font-size:12px;color:var(--text2)}
+.mouse-dpi-row input{display:block;width:100%;margin-top:5px}
+.mouse-dpi-row b{width:20px;color:var(--text2);padding-bottom:10px}
+.mouse-dpi-row .pill{height:38px;flex:none}
 .device-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text2)}
 .device-status i{width:7px;height:7px;border-radius:50%;background:var(--text3)}
 .device-status.ready{color:#24813a}.device-status.ready i{background:var(--green)}
@@ -541,6 +556,7 @@ select.inp option{background:#fff;color:var(--text)}
     <section class="page on" id="p-devices"></section>
     <section class="page" id="p-modules"></section>
     <section class="page" id="p-device"></section>
+    <section class="page" id="p-mouse"></section>
     <section class="page" id="p-mixer"></section>
     <section class="page" id="p-mic"></section>
     <section class="page" id="p-hp"></section>
@@ -853,8 +869,8 @@ function withUndo(msg, fn) {
 var WORKSPACE_KEY = "rustudio.workspace.v1", workspacePrefs = loadWorkspace();
 var moduleNavKey = "", engineOnline = null, engineDevice = false, engineHealth = null, engineUsb = null;
 var devicesUI = {grid: null, key: ""};
-var MODULE_VIEWS = {"goxlr-mini": ["mixer", "mic", "hp", "routing", "light", "scenes"]};
-var CAP_LABELS = {mixer: "Mixeur", microphone: "Micro", "headphone-eq": "Égaliseur casque", routing: "Routage", lighting: "Éclairage", scenes: "Scènes"};
+var MODULE_VIEWS = {"attack-shark-r5-ultra": ["mouse"], "goxlr-mini": ["mixer", "mic", "hp", "routing", "light", "scenes"]};
+var CAP_LABELS = {dpi:"DPI", polling:"Fréquence", battery:"Batterie", sensor:"Capteur", mixer: "Mixeur", microphone: "Micro", "headphone-eq": "Égaliseur casque", routing: "Routage", lighting: "Éclairage", scenes: "Scènes"};
 function loadWorkspace() {
   var empty = {devices: [], dismissed: []};
   try {
@@ -940,6 +956,7 @@ function workspaceRuntimeChanged() {
   if (page === "device" && activeModule) renderDeviceOverview();
 }
 var PAGES = {
+  mouse: {title:"Ma souris", sub:"Sensibilité, précision et autonomie de ta R5 Ultra."},
   devices: {title: "Mes appareils", sub: "Ton matériel et ses réglages, réunis au même endroit."},
   modules: {title: "Modules", sub: "Choisis les modules qui correspondent à ton matériel."},
   device: {title: "Mon appareil", sub: "L’état de ton appareil et les fonctions de son module."},
@@ -2429,6 +2446,101 @@ function echoTest(onStep) {
   }).catch(function (e) { cleanup(); throw e; });
 }
 
+/* ---------- R5 Ultra : controles propres a la souris ---------- */
+var mouseUI = null, mouseState = null, mouseLoading = false, mouseBusy = false, mouseReadAt = 0;
+function renderMouse() {
+  if (!mouseUI) {
+    var root = $("p-mouse"); root.innerHTML = "";
+    var hero = h("div", {"class":"card mouse-hero"}, chipIco("mouse", "#0071e3") + '<div><h2>R5 Ultra</h2><p>Des réglages enregistrés dans ta souris. Rien ne change sans ton action.</p></div>');
+    var status = h("div", {"class":"mouse-status", role:"status"}); var summary = h("div", {"class":"mouse-summary"}); summary.appendChild(status); hero.appendChild(summary);
+    var refreshBtn = h("button", {"class":"pill", onclick:function () {
+      if (mouseBusy) return;
+      mouseBusy = true; paintMouse();
+      postModule("attack-shark-r5-ultra", "refresh").then(function (r) {
+        if (r) mouseState = r.state;
+      }).finally(function () { mouseBusy = false; mouseReadAt = 0; loadMouse(); });
+    }}, svg("reset") + "Actualiser"); summary.appendChild(refreshBtn); root.appendChild(hero);
+    var dpi = h("div", {"class":"card mouse-panel"}, "<h2>Sensibilité</h2><p>Choisis le palier actif et règle séparément les axes X et Y, par pas de 50 DPI.</p>");
+    var active = h("select", {"class":"inp", "aria-label":"Palier DPI actif"});
+    active.addEventListener("change", function () { mouseApply("active_stage", Number(active.value)); });
+    dpi.appendChild(h("label", {}, "Palier actif")); dpi.appendChild(active);
+    var rows = h("div", {"class":"mouse-dpi"}); dpi.appendChild(rows); root.appendChild(dpi);
+    var settings = h("div", {"class":"card mouse-panel"}, "<h2>Capteur et autonomie</h2><p>La fréquence maximale est de 1 000 Hz en filaire et 8 000 Hz avec le récepteur compatible.</p>");
+    var controls = {};
+    function select(name, label, options) {
+      var wrap = h("label", {"class":"mouse-field"}, "<span>" + label + "</span>");
+      var el = h("select", {"class":"inp", "aria-label":label});
+      options.forEach(function (o) { el.appendChild(h("option", {value:String(o[0])}, o[1])); });
+      el.addEventListener("change", function () { mouseApply(name, el.value === "true" ? true : el.value === "false" ? false : Number(el.value)); });
+      wrap.appendChild(el); settings.appendChild(wrap); controls[name] = el;
+    }
+    select("polling_hz", "Fréquence de la souris", [125,250,500,1000,2000,4000,8000].map(function (n) { return [n,n.toLocaleString("fr-FR") + " Hz"]; }));
+    select("lod_mm", "Hauteur de décrochage", [[0.7,"0,7 mm"],[1,"1 mm"],[2,"2 mm"]]);
+    select("debounce_ms", "Délai anti-double clic", Array.from({length:31}, function (_,i) { return [i,i + " ms"]; }));
+    select("sleep_seconds", "Mise en veille", [[30,"30 secondes"],[60,"1 minute"],[120,"2 minutes"],[300,"5 minutes"],[600,"10 minutes"],[65535,"Désactivée"]]);
+    select("angle_snap", "Correction des lignes", [[false,"Désactivée"],[true,"Activée"]]);
+    select("motion_sync", "Synchronisation du capteur", [[false,"Désactivée"],[true,"Activée"]]);
+    select("ripple_control", "Lissage des mouvements", [[false,"Désactivé"],[true,"Activé"]]);
+    root.appendChild(settings);
+    var note = h("p", {"class":"workspace-note"}, "Branche le câble USB ou le récepteur 2,4 GHz. Le mode Bluetooth, les macros, le remappage des boutons et les mises à jour du firmware ne sont pas pris en charge par ce module."); root.appendChild(note);
+    mouseUI = {status:status, active:active, rows:rows, controls:controls, refresh:refreshBtn, root:root, count:0};
+  }
+  paintMouse(); loadMouse();
+}
+function loadMouse() {
+  if (mouseLoading || mouseBusy || Date.now() - mouseReadAt < 1000) return;
+  mouseLoading = true; mouseReadAt = Date.now();
+  api("/api/modules/attack-shark-r5-ultra/state").then(function (data) {
+    mouseState = data.device.connected ? data.state : null;
+    if (!data.device.connected) mouseUI.status.textContent = data.device.error || "Souris déconnectée";
+    paintMouse();
+  }).catch(function () { mouseUI.status.textContent = "Lecture impossible. Réessaie avec Actualiser."; }).finally(function () { mouseLoading = false; });
+}
+function mouseApply(name, value) {
+  if (mouseBusy || !mouseState) return Promise.resolve(null);
+  mouseBusy = true; paintMouse();
+  return postModule("attack-shark-r5-ultra", "setting", {name:name,value:value}).then(function (r) {
+    if (r) { mouseState = r.state; toast("Réglage confirmé par la souris"); }
+    return r;
+  }).finally(function () { mouseBusy = false; mouseReadAt = 0; loadMouse(); paintMouse(); });
+}
+function paintMouse() {
+  if (!mouseUI) return;
+  var u = mouseUI, s = mouseState;
+  u.refresh.disabled = mouseBusy;
+  u.active.disabled = !s || mouseBusy;
+  Object.keys(u.controls).forEach(function (key) { u.controls[key].disabled = !s || mouseBusy; });
+  u.rows.querySelectorAll("input,button").forEach(function (el) { el.disabled = !s || mouseBusy; });
+  if (!s) { if (!u.status.textContent) u.status.textContent = "Recherche de la souris…"; return; }
+  u.status.textContent = (moduleRuntime("attack-shark-r5-ultra").simulated ? "Simulation · " : "") + (s.wired ? "USB" : "2,4 GHz") + " · Batterie " + s.battery + " %" + (s.charging ? " · En charge" : "") + " · Profil " + s.profile + (mouseBusy ? " · Application…" : "");
+  if (u.count !== s.stages.length) {
+    u.count = s.stages.length; u.active.innerHTML = ""; u.rows.innerHTML = "";
+    s.stages.forEach(function (_, i) {
+      u.active.appendChild(h("option", {value:String(i+1)}, "Palier " + (i+1)));
+      var row = h("div", {"class":"mouse-dpi-row"}, "<b>" + (i+1) + "</b>");
+      ["x","y"].forEach(function (axis) {
+        var label = h("label", {}, "<span>" + axis.toUpperCase() + " · DPI</span>");
+        var input = h("input", {type:"number", "class":"inp", min:"50", max:String(s.dpi_max), step:"50", "aria-label":"DPI " + axis.toUpperCase() + " palier " + (i+1), "data-stage":String(i), "data-axis":axis});
+        input.addEventListener("input", function () { input.dataset.dirty = "1"; }); label.appendChild(input); row.appendChild(label);
+      });
+      row.appendChild(h("button", {"class":"pill", onclick:function () {
+        var values = row.querySelectorAll("input"), x = Number(values[0].value), y = Number(values[1].value);
+        if (![x,y].every(function (n) { return Number.isInteger(n) && n >= 50 && n <= mouseState.dpi_max && n % 50 === 0; })) { toast("Choisis des DPI entre 50 et " + mouseState.dpi_max + ", par pas de 50."); return; }
+        var stages = mouseState.stages.map(function (v) { return {x:v.x,y:v.y}; }); stages[i] = {x:x,y:y};
+        mouseApply("stages", stages).then(function (r) { if (r) values.forEach(function (v) { delete v.dataset.dirty; }); paintMouse(); });
+      }}, "Enregistrer")); u.rows.appendChild(row);
+    });
+  }
+  u.active.value = String(s.active_stage);
+  u.rows.querySelectorAll("input").forEach(function (el) { if (document.activeElement !== el && !el.dataset.dirty) el.value = s.stages[Number(el.dataset.stage)][el.dataset.axis]; el.max = s.dpi_max; });
+  Object.keys(u.controls).forEach(function (key) {
+    var el = u.controls[key], value = String(s[key]);
+    if (!Array.from(el.options).some(function (o) { return o.value === value; })) el.appendChild(h("option", {value:value}, value + (key === "sleep_seconds" ? " secondes" : "")));
+    el.value = value;
+    if (key === "polling_hz") Array.from(el.options).forEach(function (o) { o.disabled = s.wired && Number(o.value) > 1000; });
+  });
+}
+
 /* ---------- espace personnel et modules ---------- */
 function moduleFeatures(m) {
   return m.capabilities ? m.capabilities.map(function (c) { return CAP_LABELS[c] || c; }) : (m.features || []);
@@ -3116,6 +3228,7 @@ function render() {
   $("hdr-mic").hidden = activeModule !== "goxlr-mini";
   if (page === "devices") renderDevices();
   if (page === "modules") renderLibrary();
+  if (page === "mouse") renderMouse();
   if (page === "device") renderDeviceOverview();
   var m = installedModule(activeModule);
   $("h-eye").textContent = m ? m.name : page === "modules" ? "À chaque matériel son module" : "Ton espace personnel";

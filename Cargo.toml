@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/goxlr", "crates/engine", "crates/app", "crates/setup"]
-default-members = ["crates/core", "crates/goxlr", "crates/engine"]
+members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/engine", "crates/app", "crates/setup"]
+default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/engine"]
 
 [workspace.package]
-version = "5.4.2"
+version = "5.5.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/samirmedani/rustudio"
@@ -16,6 +16,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 indexmap = { version = "2", features = ["serde"] }
 rustudio-core = { path = "crates/core" }
 rustudio-goxlr = { path = "crates/goxlr" }
+rustudio-attack-shark = { path = "crates/attack-shark" }
 
 [profile.release]
 opt-level = 3

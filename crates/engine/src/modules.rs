@@ -21,8 +21,8 @@ fn goxlr_runtime(health: &str, connected: bool, simulated: bool, firmware: Optio
 }
 
 impl Ctl {
-    pub(crate) fn module_devices_locked(&self, g: &Inner, firmware: Option<String>) -> [ModuleRuntime; 1] {
-        [goxlr_runtime(self.health_status(g), g.connected, self.simulated(), firmware, g.last_error.clone())]
+    pub(crate) fn module_devices_locked(&self, g: &Inner, firmware: Option<String>) -> [ModuleRuntime; 2] {
+        [goxlr_runtime(self.health_status(g), g.connected, self.simulated(), firmware, g.last_error.clone()), self.mouse.runtime()]
     }
 
     pub fn modules_snapshot(&self) -> Value {
@@ -44,6 +44,10 @@ impl Ctl {
                     "live": {"fader_positions": live.fader_positions, "mic_db": live.mic_db,
                         "pressed": live.pressed, "encoders": live.encoders}, "v": v}))
             }
+            "attack-shark-r5-ultra" => {
+                let data = self.mouse.state();
+                Ok(json!({"module":module,"device":self.mouse.runtime(),"state":data["state"],"v":data["v"],"meta":{},"live":{}}))
+            }
             _ => Err(unknown_module(id)),
         }
     }
@@ -56,6 +60,7 @@ impl Ctl {
         match module.id {
             "goxlr-mini" if action == "echo-check" => Ok(crate::library::echo_check(self)),
             "goxlr-mini" => self.act(action, p),
+            "attack-shark-r5-ultra" => self.mouse.command(action, p).map_err(|msg| ApiError { status: 400, msg }),
             _ => Err(unknown_module(id)),
         }
     }

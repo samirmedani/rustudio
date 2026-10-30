@@ -4,8 +4,10 @@ Rustudio organise le matériel par **modules**. Un module apporte le protocole, 
 propres à une famille d'appareils. L'accueil **Mes appareils** présente l'état des modules livrés ; **Modules**
 présente le catalogue de contributions.
 
-La **GoXLR Mini est le seul module matériel livré et fonctionnel** aujourd'hui. Ajouter une fiche de souris ou
+Les modules **GoXLR Mini** et **R5 Ultra** sont livrés. Ajouter une fiche de souris ou
 d'écran au catalogue ne suffit pas à le piloter. Ce guide décrit le code, les déclarations et les tests nécessaires.
+
+Le module [R5 Ultra](R5-ULTRA.md) fournit un exemple de transport HID indépendant du fil audio. Sa validation physique couvre le mode 2,4 GHz ; la portée des essais doit toujours être précisée.
 
 ## Les statuts du catalogue
 

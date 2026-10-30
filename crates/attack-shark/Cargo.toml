@@ -1,0 +1,13 @@
+[package]
+name = "rustudio-attack-shark"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Protocole HID de la souris Attack Shark R5 Ultra et simulateur"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }

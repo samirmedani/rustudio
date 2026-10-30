@@ -65,7 +65,15 @@ pub const GOXLR_MINI: ModuleDescriptor = ModuleDescriptor {
     ],
 };
 
-const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI];
+pub const R5_ULTRA: ModuleDescriptor = ModuleDescriptor {
+    id: "attack-shark-r5-ultra", name: "R5 Ultra", vendor: "Attack Shark", kind: "mouse",
+    summary: "DPI par palier, fréquence, batterie et réglages du capteur, en USB ou 2,4 GHz.",
+    capabilities: &["dpi", "polling", "battery", "sensor"],
+    pages: &[ModulePage { id: "mouse", label: "Ma souris", icon: "mouse" }],
+    actions: &["setting", "refresh"],
+};
+
+const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA];
 
 pub fn installed() -> &'static [ModuleDescriptor] {
     INSTALLED
