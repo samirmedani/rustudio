@@ -840,7 +840,7 @@ function wakeLive() {
 }
 function liveLoop() {
   if (liveRequest) return liveRequest;
-  liveTimer = null;
+  if (liveTimer !== null) { clearTimeout(liveTimer); liveTimer = null; }
   // Le vumetre micro necessite un echange USB supplementaire : uniquement s'il est visible.
   var level = !document.hidden && activeModule === "goxlr-mini" && (page === "mic" || !!$("sheet-meter"));
   liveRequest = api(level ? "/api/live?level=1" : "/api/live").then(function (l) {

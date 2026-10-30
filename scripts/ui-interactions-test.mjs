@@ -280,6 +280,20 @@ for (const [page,hidden,module,meter,expected] of [
 }
 
 {
+  const h=harness(),c=h.context,paths=[];
+  Object.assign(c,{page:"mixer",activeModule:"goxlr-mini",bootId:null,liveKey:"",liveChanged:false,liveTimer:null,liveRequest:null,liveWake:false});
+  c.document.hidden=false;
+  c.api=async path=>{paths.push(path);return {v:c.V,live:{fader_positions:[0,0,0,0],pressed:[],mic_db:null}};};
+  runInNewContext(section("function wakeLive()", "/* ---------- curseur generique"),c);
+  await c.wakeLive(); // la page devient visible avant la fin du chargement initial
+  h.advance(5);await c.liveLoop(); // le demarrage termine ensuite sa premiere lecture
+  h.advance(15);await c.liveRequest;
+  assert.equal(paths.length,2,"le demarrage invalide le minuteur precedent : aucun second circuit de lectures");
+  h.advance(5);await c.liveRequest;
+  assert.equal(paths.length,3,"une seule relecture suit le demarrage et la notification de visibilite");
+}
+
+{
   const h = harness(), c = h.context;
   let rebuilds = 0, transforms = 0;
   const nodes = [0,1,2,3].map(i=>({style:{set transform(v) { this.value=v;transforms++; },get transform() { return this.value; }},getAttribute:()=>String(i)}));
