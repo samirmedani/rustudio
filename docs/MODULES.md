@@ -9,30 +9,37 @@ d'écran au catalogue ne suffit pas à le piloter. Ce guide décrit le code, les
 
 Le module [R5 Ultra](R5-ULTRA.md) fournit un exemple de transport HID indépendant du fil audio. Sa validation physique couvre le mode 2,4 GHz ; la portée des essais doit toujours être précisée.
 
-## Les statuts du catalogue
+## Origine et validation
+
+Lis d’abord [La communauté Rustudio](COMMUNITY.md) : attribution, analyse et validation du mainteneur.
 
 | Statut | Sens |
 | --- | --- |
-| **Officiel** | Maintenu dans ce dépôt, testé sur le vrai matériel, livré avec Rustudio. |
-| **Communautaire** | Proposé par une pull request, relu et testé par son auteur sur son appareil. |
-| **Générique** | Couvre toute une famille d'appareils (par exemple les écrans DDC/CI). Pour ton modèle précis, adapte-le (fork) ou propose ta version. |
-| **À contribuer** | Demandé, pas encore écrit. C'est par là qu'on commence. |
+| **Officiel** | Créé par le mainteneur, livré avec Rustudio ; la portée des tests physiques est précisée. |
+| **Communautaire** | Créé par la communauté, analysé et validé par le mainteneur via une PR GitHub, puis livré. |
+| **À contribuer** | Prise en charge demandée, pas encore implémentée. |
+
+Un module générique (par exemple DDC/CI) indique sa famille dans `kind` ; il conserve une origine officielle
+ou communautaire et doit préciser quels modèles ont été testés.
 
 ## 1. La fiche
 
-Chaque appareil proposé a une fiche dans [library/index.json](../library/index.json). L'appli consulte ce catalogue
-sur GitHub, avec une copie locale hors ligne. Cette fiche décrit le projet et son statut ; elle ne charge pas de
-code et ne fait pas apparaître un nouvel appareil dans **Mes appareils**.
+Exemple de métadonnées à adapter après ouverture de ta PR (le numéro 42 est fictif).
+Chaque appareil proposé a une fiche dans [library/index.json](../library/index.json). Le catalogue est embarqué dans la version publiée : une fiche distante non publiée ne s’affiche pas.
+Une fiche seule ne charge pas de code et ne fait pas apparaître un appareil dans **Mes appareils**.
 
 ```json
 {
-  "id": "attack-shark-r5-ultra",
-  "name": "R5 Ultra",
-  "vendor": "Attack Shark",
+  "id": "exemple-souris",
+  "name": "Souris exemple",
+  "vendor": "Fabricant",
   "kind": "mouse",
   "status": "community",
+  "author": "contributeur",
+  "review_pr": 42,
+  "builtin": true,
   "usb": [{"vid": "XXXX", "pid": "XXXX"}],
-  "source": "crates/attack-shark",
+  "source": "crates/exemple-souris",
   "summary": "Ce que le module sait régler, en une phrase.",
   "features": ["DPI", "Polling rate", "Boutons", "Éclairage"]
 }
@@ -74,6 +81,7 @@ adaptateur et ses pages fonctionnent.
 | --- | --- |
 | `id` | Identifiant stable du module, identique à la fiche du catalogue. |
 | `name`, `vendor`, `kind`, `summary` | Présentation locale, utilisable sans réseau. |
+| `origin`, `author`, `source`, `review_pr` | Origine typée (`ModuleOrigin`), créateur public, crate et PR validée ; identiques à la fiche. |
 | `capabilities` | Fonctions effectivement implémentées, avec des identifiants stables. |
 | `pages` | Entrées de navigation : `id`, `label` et nom d'icône connu de l'interface. |
 | `actions` | Noms des commandes prises en charge par l'adaptateur de ce module. Les commandes globales de Rustudio restent en dehors de cette liste. |
@@ -140,6 +148,8 @@ composants, ses actions et la gestion de sa route. Les anciens liens audio reste
 3. `scripts/check.sh` doit passer : tests, et aucune donnée personnelle (numéro de série de ton appareil, ton nom,
    tes chemins de machine…).
 4. Ouvre la pull request avec le modèle fourni : ce que tu as testé sur le vrai appareil, et sur quel firmware.
+5. Renseigne son numéro dans la fiche et le registre, puis attends l’analyse et la validation du mainteneur.
+   Rien n’est affiché dans l’application avant fusion et publication d’une version.
 
 ## Pour un agent de code
 

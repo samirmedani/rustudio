@@ -13,6 +13,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  catalog:
+    name: Catalogue des modules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/check-catalog-test.py
+      - name: Attribution et preuves de validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-catalog.py --verify-github --public
+
   linux:
     name: Tests (fausse GoXLR)
     runs-on: ubuntu-24.04

@@ -10,7 +10,7 @@ function section(start, end) {
   assert.ok(a >= 0 && b > a, `section présente : ${start}`);
   return html.slice(a, b);
 }
-const goxlr = {id: "goxlr-mini", name: "GoXLR Mini", vendor: "TC-Helicon", kind: "audio-interface", summary: "Ton interface audio.", capabilities: ["mixer", "microphone", "headphone-eq", "routing", "lighting", "scenes"], pages: [
+const goxlr = {id: "goxlr-mini", name: "GoXLR Mini", origin:"official", author:"samirmedani", source:"crates/goxlr", review_pr:null, vendor: "TC-Helicon", kind: "audio-interface", summary: "Ton interface audio.", capabilities: ["mixer", "microphone", "headphone-eq", "routing", "lighting", "scenes"], pages: [
   {id: "mixer", label: "Mixeur", icon: "mixer"}, {id: "mic", label: "Micro", icon: "Mic"},
   {id: "hp", label: "Casque", icon: "Headphones"}, {id: "routing", label: "Routage", icon: "routing"},
   {id: "light", label: "Éclairage", icon: "light"}, {id: "scenes", label: "Scènes", icon: "scenes"},
@@ -51,6 +51,7 @@ function harness(storage = new Map(), denied = false) {
   const body = new Element("body"), document = {body, createElement: tag => new Element(tag), getElementById: id => ids.get(id), querySelectorAll: selector => body.querySelectorAll(selector)};
   function add(tag, id, parent = body) { const node = new Element(tag); node.setAttribute("id", id); parent.appendChild(node); return node; }
   for (const id of ["module-space", "module-name", "h-title", "h-sub", "hdr-mic", "offline", "offline-txt", "offline-diag", "conn-dot", "conn-txt"]) add("div", id);
+  add("main", "main-content");
   const mainNav = add("nav", "main-nav"); add("nav", "module-nav");
   for (const route of ["devices", "modules"]) { const button = new Element("button"); button.setAttribute("data-p", route); mainNav.appendChild(button); }
   for (const page of ["devices", "modules", "device", "mixer", "mic", "hp", "routing", "light", "scenes"]) add("section", "p-" + page).classList.add("page");
@@ -83,6 +84,9 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(c.resolveRoute("library").path, "modules", "ancien lien Bibliothèque conservé");
   assert.equal(c.resolveRoute("mixer").path, "goxlr-mini/mixer", "ancien lien audio conservé");
   assert.equal(c.resolveRoute("goxlr-mini/mic").page, "mic");
+  h.ids.get("main-content").scrollTop = 180;
+  c.go("goxlr-mini/mic");
+  assert.equal(h.ids.get("main-content").scrollTop, 0, "une nouvelle page retrouve son en-tête");
   for (const route of ["inconnu", "fantome/mixer", "goxlr-mini/inconnu", "goxlr-mini/mixer/autre"]) assert.equal(c.resolveRoute(route).path, "devices", `route inconnue sûre : ${route}`);
   c.setOnline(true, false, "absent", "none"); c.go("devices");
   assert.ok(!h.ids.get("offline").classList.contains("on"), "une GoXLR absente ne bloque pas l'accueil");
@@ -149,11 +153,28 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   const cards = c.lib.grid.children;
   assert.ok(text(cards[0]).includes("GoXLR Mini") && !text(cards[0]).includes("Faux nom distant"), "le registre livré prime sur les déclarations distantes");
   assert.match(text(cards[0]), /Ajouter à Mes appareils/);
-  assert.match(text(cards[1]), /Absent de cette version/);
-  assert.ok(!text(cards[1]).includes("Ajouter à Mes appareils") && !text(cards[1]).includes("Ouvrir"), "builtin distant ne permet aucune action locale");
-  assert.match(text(cards[2]), /À contribuer/); assert.match(text(cards[2]), /Contribuer ce module/);
+  assert.equal(cards.length, 2, "une fiche tierce non livrée ne doit même pas être affichée");
+  assert.ok(!text(c.lib.grid).includes("Module fantôme"));
+  assert.match(text(cards[0]), /Officiel Rustudio/); assert.match(text(cards[0]), /Créé par samirmedani/);
+  assert.match(text(cards[1]), /À contribuer/); assert.match(text(cards[1]), /Contribuer ce module/);
   c.addDevice(goxlr.id); assert.match(text(c.lib.grid.children[0]), /Ouvrir|Ajouter à Mes appareils/);
   c.page = "modules"; c.paintLibrary(); assert.match(text(c.lib.grid.children[0]), /Dans Mes appareils/);
+}
+
+{
+  const h = harness(), c = h.context;
+  c.lib.grid = h.ids.get("p-modules"); c.lib.filter = "community";
+  c.lib.data = {modules:[{id:"imposteur",name:"Fausse validation",status:"community",author:"autre",review_pr:42,builtin:true}]};
+  c.paintLibrary();
+  assert.match(text(c.lib.grid), /Aucun module communautaire n’est encore publié/);
+  assert.ok(!text(c.lib.grid).includes("Fausse validation"));
+  c.S.modules.installed.push({...goxlr,id:"module-test",name:"Module de test",origin:"community",author:"contributeur",review_pr:42});
+  c.paintLibrary();
+  assert.match(text(c.lib.grid), /Communautaire/); assert.match(text(c.lib.grid), /Créé par contributeur/);
+  assert.match(text(c.lib.grid), /PR #42 validée/);
+  assert.ok(!text(c.lib.grid).includes("Officiel Rustudio"));
+  c.lib.filter = "official"; c.paintLibrary(); assert.match(text(c.lib.grid), /GoXLR Mini/);
+  assert.ok(!text(c.lib.grid).includes("Module de test"));
 }
 
 {

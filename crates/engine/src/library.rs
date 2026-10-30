@@ -1,24 +1,12 @@
-//! Bibliotheque d'appareils (liste publiee sur GitHub, copie locale en secours) et verifications anti-echo.
-use crate::config::now_epoch;
+//! Catalogue validé livré avec Rustudio et vérifications anti-écho.
 use crate::controller::Ctl;
+use rustudio_core::modules;
 use serde_json::{json, Value};
-use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
 
 pub const LOCAL_INDEX: &str = include_str!("../../../library/index.json");
-pub const INDEX_URL: &str = "https://raw.githubusercontent.com/samirmedani/rustudio/main/library/index.json";
-pub const CONTRIBUTE_URL: &str = "https://github.com/samirmedani/rustudio/blob/main/docs/MODULES.md";
-const STATUSES: [&str; 4] = ["official", "community", "generic", "wanted"];
-
-struct Cache {
-    remote: Option<Value>,
-    fetched_at: Option<f64>,
-    error: Option<String>,
-}
-fn cache() -> &'static Mutex<Cache> {
-    static C: OnceLock<Mutex<Cache>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(Cache { remote: None, fetched_at: None, error: None }))
-}
+pub const INDEX_URL: &str = "https://github.com/samirmedani/rustudio/blob/main/library/index.json";
+pub const CONTRIBUTE_URL: &str = "https://github.com/samirmedani/rustudio/blob/main/docs/COMMUNITY.md";
+const STATUSES: [&str; 3] = ["official", "community", "wanted"];
 
 /// Garde seulement les fiches valides (une fiche mal formee ne casse pas la liste).
 pub fn clean(index: &Value) -> Vec<Value> {
@@ -31,13 +19,25 @@ pub fn clean(index: &Value) -> Vec<Value> {
                 .filter_map(|m| {
                     let id = s(m, "id", 64).filter(|i| !i.is_empty() && i.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))?;
                     let status = s(m, "status", 16).filter(|st| STATUSES.contains(&st.as_str()))?;
+                    let module = modules::find(&id);
+                    // Un JSON ne peut ni s'attribuer le label officiel, ni valider un module tiers.
+                    if status != "wanted" {
+                        let registered = module?;
+                        if status != registered.origin.as_str() || m["author"] != registered.author
+                            || m["source"] != registered.source
+                            || m["review_pr"] != json!(registered.review_pr) {
+                            return None;
+                        }
+                        if status == "community" && registered.review_pr.unwrap_or(0) == 0 { return None; }
+                    } else if module.is_some() { return None; }
                     Some(json!({
                         "id": id, "name": s(m, "name", 80)?, "vendor": s(m, "vendor", 60).unwrap_or_default(),
                         "kind": s(m, "kind", 40).unwrap_or_else(|| "other".into()), "status": status,
                         "summary": s(m, "summary", 400).unwrap_or_default(),
                         "features": m.get("features").and_then(|f| f.as_array()).map(|f| f.iter().filter_map(|x| x.as_str()).take(12).map(|x| x.chars().take(40).collect::<String>()).collect::<Vec<_>>()).unwrap_or_default(),
                         "usb": m.get("usb").cloned().unwrap_or(json!([])),
-                        "builtin": m.get("builtin").and_then(|b| b.as_bool()).unwrap_or(false),
+                        "builtin": module.is_some(),
+                        "author": module.map(|m| m.author), "review_pr": module.and_then(|m| m.review_pr),
                         "source": s(m, "source", 200).unwrap_or_default(),
                     }))
                 })
@@ -47,37 +47,45 @@ pub fn clean(index: &Value) -> Vec<Value> {
 }
 
 pub fn snapshot() -> Value {
-    let c = cache().lock().unwrap();
     let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap_or(json!({}));
-    let (src, idx) = match &c.remote {
-        Some(r) => ("github", r.clone()),
-        None => ("local", local),
-    };
-    json!({"source": src, "modules": clean(&idx), "fetched_at": c.fetched_at, "error": c.error,
+    json!({"source": "release", "modules": clean(&local), "fetched_at": null, "error": null,
            "contribute_url": CONTRIBUTE_URL, "index_url": INDEX_URL})
 }
 
-pub fn refresh() -> Value {
-    let agent = crate::net::agent(Duration::from_secs(8), 0, &crate::net::ua());
-    let r = agent.get(INDEX_URL).call();
-    {
-        let mut c = cache().lock().unwrap();
-        match r {
-            Ok(resp) => {
-                let mut rd = resp.into_reader();
-                match crate::updater::read_limited(&mut rd, 2_000_000).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
-                    Some(v) if v.get("modules").is_some() => {
-                        c.remote = Some(v);
-                        c.fetched_at = Some(now_epoch());
-                        c.error = None;
-                    }
-                    _ => c.error = Some("Liste illisible".into()),
-                }
-            }
-            Err(_) => c.error = Some("GitHub injoignable : liste locale".into()),
+/// Compatible avec les anciennes interfaces : aucune fiche non publiée n'est téléchargée.
+pub fn refresh() -> Value { snapshot() }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalogue_et_registre_compiles_ont_la_meme_provenance() {
+        let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap();
+        let clean = clean(&local);
+        assert_eq!(clean.len(), local["modules"].as_array().unwrap().len(), "aucune fiche livrée ne doit être rejetée");
+        for module in modules::installed() {
+            let entry = clean.iter().find(|m| m["id"] == module.id).expect("fiche du module livré");
+            assert_eq!(entry["status"], module.origin.as_str());
+            assert_eq!(entry["author"], module.author);
+            assert_eq!(entry["source"], module.source);
+            assert_eq!(entry["review_pr"], json!(module.review_pr));
+            assert_eq!(entry["builtin"], true);
+        }
+        assert_eq!(snapshot()["source"], "release");
+        assert_eq!(refresh()["modules"], snapshot()["modules"]);
+    }
+
+    #[test]
+    fn une_fiche_ne_peut_pas_se_declarer_officielle_ou_validee() {
+        let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap();
+        let original = local["modules"][0].clone();
+        for (field, forged) in [("id", json!("module-inconnu")), ("status", json!("community")),
+            ("author", json!("autre")), ("source", json!("crates/inconnu")), ("review_pr", json!(1))] {
+            let mut entry = original.clone(); entry[field] = forged;
+            assert!(clean(&json!({"modules":[entry]})).is_empty(), "fiche falsifiée : {field}");
         }
     }
-    snapshot()
 }
 
 /// Tout ce qui, dans le routage de la GoXLR, peut faire de l'echo (chez tes amis, dans ton stream ou chez toi).

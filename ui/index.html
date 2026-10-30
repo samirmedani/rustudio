@@ -69,29 +69,70 @@ nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;backgr
 .module-space nav{margin-top:10px}
 .workspace-top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
 .workspace-top p{max-width:560px;color:var(--text2);font-size:14px}
-.device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
+.device-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
 .device-selectable{cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
 .device-selectable:hover,.device-selectable:focus-visible{transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,113,227,.16);border-color:#0071e3;outline:2px solid rgba(0,113,227,.3);outline-offset:3px}
 .device-remove{position:absolute;right:12px;top:12px;width:32px;height:32px;display:grid;place-items:center;padding:0;line-height:1;border:0;border-radius:50%;background:rgba(120,120,128,.1);color:inherit;cursor:pointer}
 .device-remove svg{width:16px;height:16px;pointer-events:none}
 .device-remove:hover,.device-remove:focus-visible{background:#ffe5e5;color:#b42318;outline:2px solid currentColor}
 .device-card{position:relative;display:flex;flex-direction:column;gap:14px;padding:24px}
-.device-card .lib-head{margin:0}
-.mouse-hero{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:24px}
-.mouse-hero h2,.mouse-panel h2{font-size:20px;margin:0 0 8px}
-.mouse-hero p,.mouse-panel>p{color:var(--text2);font-size:14px;margin:0 0 16px}
-.mouse-hero>div:not(.mouse-summary){flex:1;min-width:200px}
-.mouse-summary{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
+.device-card .lib-head{margin:0;padding-right:28px}
+#p-mouse{container-type:inline-size}
+.mouse-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:6px}
+.mouse-toolbar .pill{height:30px;font-size:12px}
 .mouse-status{font-size:13px;color:var(--text2)}
-.mouse-panel{padding:24px;margin-top:20px}
-.mouse-field{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:16px;font-size:14px}
-.mouse-field select{width:180px}
-.mouse-dpi{display:grid;gap:12px;margin-top:16px}
-.mouse-dpi-row{display:flex;align-items:flex-end;gap:14px;padding-top:12px;border-top:1px solid var(--stroke)}
-.mouse-dpi-row label{flex:1;min-width:0;font-size:12px;color:var(--text2)}
-.mouse-dpi-row input{display:block;width:100%;margin-top:5px}
-.mouse-dpi-row b{width:20px;color:var(--text2);padding-bottom:10px}
-.mouse-dpi-row .pill{height:38px;flex:none}
+.mouse-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.mouse-stats .mouse-stat{min-width:0;padding:10px 16px;border-radius:18px}
+.mouse-stat-label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
+.mouse-stat-label svg{width:18px;height:18px;color:var(--accent);flex:none}
+.mouse-stat strong{display:block;font-size:26px;line-height:1.1;letter-spacing:-.035em;font-weight:700;margin:5px 0 3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.mouse-stat.split strong{font-size:20px}
+.mouse-stat small{display:block;font-size:12px;color:var(--text2);line-height:1.45}
+.mouse-battery{display:block;width:100%;height:4px;border:0;border-radius:4px;overflow:hidden;margin:6px 0 0;appearance:none;background:var(--fill)}
+.mouse-battery::-webkit-progress-bar{background:var(--fill);border-radius:4px}
+.mouse-battery::-webkit-progress-value{background:var(--green);border-radius:4px;transition:width .25s ease}
+.mouse-battery::-moz-progress-bar{background:var(--green);border-radius:4px}
+.mouse-stat.low .mouse-battery::-webkit-progress-value{background:var(--orange)}
+.mouse-stat.low .mouse-battery::-moz-progress-bar{background:var(--orange)}
+.mouse-dashboard{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,1fr);gap:16px;align-items:start}
+.mouse-dashboard .mouse-panel{min-width:0;padding:16px}
+.mouse-panel h2{display:flex;align-items:center;gap:9px;font-size:17px;line-height:1.2;margin:0 0 6px}
+.mouse-panel h2 svg{width:19px;height:19px;color:var(--accent);flex:none}
+.mouse-panel>p{color:var(--text2);font-size:12.5px;line-height:1.5;margin:0 0 12px}
+.mouse-active{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:13px;margin-bottom:8px}
+.mouse-active select{min-width:130px;max-width:100%}
+.mouse-dpi{display:grid;gap:2px}
+.mouse-dpi-row,.mouse-dpi-head{display:grid;grid-template-columns:26px minmax(0,1fr) minmax(0,1fr) 36px;align-items:center;gap:8px}
+.mouse-dpi-head{font-size:11px;color:var(--text2);padding:0 6px 5px}
+.mouse-dpi-row{padding:2px 6px;border-radius:12px;border:1px solid transparent;transition:background .16s,border-color .16s}
+.mouse-dpi-row.active{background:rgba(0,113,227,.065);border-color:rgba(0,113,227,.2)}
+.mouse-dpi-row b{font-size:12px;text-align:center;color:var(--text2)}
+.mouse-dpi-row.active b{color:var(--accent)}
+.mouse-dpi-row input{width:100%;height:32px;font-size:13px;font-variant-numeric:tabular-nums;padding:0 9px}
+.mouse-save{width:36px;height:32px;border-radius:10px;display:grid;place-items:center;color:var(--accent);background:rgba(0,113,227,.08)}
+.mouse-save svg{width:18px;height:18px}
+.mouse-dpi-row.dirty{border-color:rgba(255,149,0,.45)}
+.mouse-save:hover:not(:disabled){background:rgba(0,113,227,.16)}
+.mouse-settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px}
+.mouse-field{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:12px;color:var(--text2);line-height:1.4}
+.mouse-field select{width:100%;font-size:13px;color:var(--text)}
+.mouse-toggles{display:grid;margin-top:16px;border-top:1px solid var(--hair)}
+.mouse-toggle{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--hair);font-size:12.5px}
+.mouse-toggle span{display:flex;align-items:center;gap:8px;min-width:0}
+.mouse-toggle span svg{width:17px;height:17px;flex:none;color:var(--text2)}
+.mouse-panel [disabled]{opacity:.5}
+.mouse-panel>.mouse-help{margin:10px 0 0;font-size:11.5px;color:var(--text2);line-height:1.45}
+.mouse-toolbar .working svg{animation:mouse-refresh 1s linear infinite}
+@keyframes mouse-refresh{to{transform:rotate(360deg)}}
+.module-credit{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:11.5px;color:var(--text2);line-height:1.5}
+.module-credit .origin{display:inline-flex;align-items:center;gap:5px;color:var(--accent);font-weight:650}
+.module-credit svg{width:14px;height:14px;flex:none}
+.module-credit button{display:inline-flex;align-items:center;gap:5px;color:var(--accent);font-size:inherit;text-align:left;border-radius:4px;max-width:100%;overflow-wrap:anywhere}
+.module-credit button:hover{text-decoration:underline}
+.module-credit button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+header>div:first-child{min-width:0}
+#h-origin{margin-top:8px}
+#h-origin:empty{display:none}
 .device-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text2)}
 .device-status i{width:7px;height:7px;border-radius:50%;background:var(--text3)}
 .device-status.ready{color:#24813a}.device-status.ready i{background:var(--green)}
@@ -110,8 +151,8 @@ nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;backgr
 .side-foot small{display:block;color:var(--text3);font-size:12px;margin:2px 0 0 19px;line-height:1.5}
 main{position:relative;min-width:0;overflow-y:auto;overflow-x:hidden;padding:22px 40px 28px 16px;scrollbar-gutter:stable}
 header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:4px 0 18px}
-.eyebrow{font-size:12.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--text3)}
-header h1{font-size:42px;line-height:1.06;font-weight:750;letter-spacing:-.032em;margin-top:5px}
+.eyebrow{font-size:12.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);overflow-wrap:anywhere}
+header h1{font-size:42px;line-height:1.06;font-weight:750;letter-spacing:-.032em;margin-top:5px;overflow-wrap:anywhere}
 header p{color:var(--text2);font-size:15px;margin-top:6px}
 .hdr-actions{display:flex;gap:10px;align-items:center;padding-bottom:6px}
 .pill{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:34px;padding:0 14px;border-radius:999px;background:rgba(255,255,255,.82);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.05);font-size:13.5px;font-weight:580;white-space:nowrap;transition:background .2s,box-shadow .2s,transform .15s var(--ease)}
@@ -126,7 +167,7 @@ header p{color:var(--text2);font-size:15px;margin-top:6px}
 #hdr-mic svg{width:18px;height:18px}
 #hdr-mic.danger{background:rgba(255,59,48,.12);color:#d70015;box-shadow:inset 0 0 0 .5px rgba(255,59,48,.25)}
 #hdr-mic.warn{background:rgba(255,149,0,.14);color:var(--orange-text);box-shadow:inset 0 0 0 .5px rgba(255,149,0,.28)}
-.page{display:none}
+.page{display:none;container-type:inline-size}
 .page.on{display:block;animation:pagein .35s var(--ease)}
 @keyframes pagein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .card{border-radius:var(--r);padding:20px}
@@ -187,7 +228,7 @@ header p{color:var(--text2);font-size:15px;margin-top:6px}
 .orow .chip-ico{width:28px;height:28px;background:none}
 .orow .chip-ico svg{width:20px;height:20px}
 .orow .nm{font-weight:550;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.orow .pct{color:var(--text2);text-align:right;font-variant-numeric:tabular-nums;font-size:13.5px}
+.orow .pct{color:var(--text2);text-align:right;font-variant-numeric:tabular-nums;font-size:13.5px;white-space:nowrap}
 .ibtn{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;color:var(--text2);transition:background .2s,color .2s}
 .ibtn svg{width:18px;height:18px}
 .ibtn:hover{background:rgba(118,118,128,.12);color:var(--text)}
@@ -467,15 +508,19 @@ select.inp option{background:#fff;color:var(--text)}
 .upd-confirm{display:flex;gap:10px;align-items:flex-start;margin:14px 0 0;padding:10px 12px;border-radius:12px;background:var(--accent-soft);color:#0b4f9c;font-size:12.5px;line-height:1.45}
 .upd-confirm svg{width:16px;height:16px;flex:none;margin-top:1px}
 /* bibliotheque et anti-echo */
-.lib-top{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+.lib-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.lib-top input{min-width:210px}
+.lib-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.lib-filters button{font-size:12.5px;padding:8px 13px;border-radius:999px;background:var(--fill);color:var(--text2)}
+.lib-filters button.on{background:var(--accent);color:white}
 .lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
 .lib-card{display:flex;flex-direction:column;gap:10px}
-.lib-head{display:flex;align-items:center;gap:12px}.lib-head > div{flex:1;min-width:0}
-.lib-head b{display:block;font-size:15px}.lib-head small{color:var(--text2);font-size:12px}
+.lib-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.lib-head > div{flex:1;min-width:100px}
+.lib-head b{display:block;font-size:15px;overflow-wrap:anywhere}.lib-head small{color:var(--text2);font-size:12px;overflow-wrap:anywhere}
 .lib-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);white-space:nowrap}
 .lib-card p{margin:0;color:var(--text2);font-size:13px;line-height:1.45;flex:1}
 .lib-feat span{font-size:11.5px;padding:3px 9px;border-radius:999px;background:rgba(118,118,128,.1);color:var(--text2)}
-.lib-act{display:flex;justify-content:flex-end}
+.lib-act{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-top:auto}
 .lib-on{display:inline-flex;align-items:center;gap:6px;color:#1e7e34;font-size:12.5px;font-weight:600}.lib-on svg{width:15px;height:15px}
 .lib-foot{margin-top:18px;font-size:12.5px;line-height:1.5;max-width:760px}
 .echo-sec{margin-top:16px}.echo-sec h4{margin:0 0 8px;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)}
@@ -509,6 +554,28 @@ select.inp option{background:#fff;color:var(--text)}
   .mic-grid,.light-grid{grid-template-columns:minmax(0,1fr)}
   main{padding:22px 28px 90px 8px}
   header h1{font-size:38px}
+}
+@container (max-width:700px){
+  .mouse-dashboard{grid-template-columns:minmax(0,1fr)}
+  .mouse-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (max-width:800px){
+  .mouse-stat.split strong{font-size:18px}
+}
+/* Se baser sur la place utile, y compris lorsque la barre latérale est repliée. */
+@container (min-width:740px) and (max-width:850px){
+  .mic-grid,.light-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (min-width:870px) and (max-width:930px){
+  .route-grid,.scene-grid{grid-template-columns:minmax(0,1fr) 340px}
+}
+@container (min-width:700px) and (max-width:930px){
+  .others{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px;padding:2px 16px}
+  .orow{grid-template-columns:24px minmax(76px,96px) minmax(60px,1fr) 48px 28px;gap:8px}
+  .orow:nth-last-child(2){border-bottom:0}
+  .seg,.tabs{flex-wrap:wrap;row-gap:2px}
+  .seg button,.tabs button{flex:1 0 auto}
+  .presets{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
 }
 @media (max-width:920px){
   :root{--side:60px}
@@ -547,9 +614,9 @@ select.inp option{background:#fff;color:var(--text)}
     <div class="module-space" id="module-space" hidden><small>ESPACE APPAREIL</small><b id="module-name"></b><nav id="module-nav" aria-label="Appareil sélectionné"></nav></div>
     <div class="side-foot"><div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-txt">Connexion…</span></div><small id="conn-fw"></small><div class="upd-card" id="upd-card" style="display:none"><div class="upd-top"><span class="upd-dot"></span><b>Mise à jour proposée</b></div><small id="upd-txt"></small><button class="pill primary" id="upd-btn">Voir les nouveautés</button></div><div class="ver-row"><b id="ver-txt">Rustudio</b><span class="ver-state" id="ver-state"></span><button class="ibtn" id="ver-check" title="Rechercher une mise à jour"></button></div></div>
   </aside>
-  <main>
+  <main id="main-content">
     <header>
-      <div><div class="eyebrow" id="h-eye">Rustudio</div><h1 id="h-title">Mes appareils</h1><p id="h-sub">Ton matériel et ses réglages, réunis au même endroit.</p></div>
+      <div><div class="eyebrow" id="h-eye">Rustudio</div><h1 id="h-title">Mes appareils</h1><p id="h-sub">Ton matériel et ses réglages, réunis au même endroit.</p><div id="h-origin" class="module-credit"></div></div>
       <div class="hdr-actions"><button class="pill" id="hdr-mic" hidden>Micro</button><button id="fab" title="Menu"></button></div>
     </header>
     <div id="offline"><span class="spin"></span><span id="offline-txt"></span><button class="pill" id="offline-diag">Diagnostic</button></div>
@@ -570,7 +637,11 @@ select.inp option{background:#fff;color:var(--text)}
 <input type="file" id="import-file" accept=".json,application/json" hidden>
 <script>
 "use strict";
-var ICONS = { /* icones Lucide (ISC), https://lucide.dev */
+var ICONS = {
+  pullRequest: "<circle cx=\"18\" cy=\"18\" r=\"3\" />\n  <circle cx=\"6\" cy=\"6\" r=\"3\" />\n  <path d=\"M13 6h3a2 2 0 0 1 2 2v7\" />\n  <line x1=\"6\" x2=\"6\" y1=\"9\" y2=\"21\" />",
+  users: "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" />\n  <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" />\n  <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" />\n  <circle cx=\"9\" cy=\"7\" r=\"4\" />",
+  batteryCharging: "<path d=\"m11 7-3 5h4l-3 5\" />\n  <path d=\"M14.856 6H16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.935\" />\n  <path d=\"M22 14v-4\" />\n  <path d=\"M5.14 18H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2.936\" />",
+  battery: "<path d=\"M 22 14 L 22 10\" />\n  <rect x=\"2\" y=\"6\" width=\"16\" height=\"12\" rx=\"2\" />", /* icones Lucide (ISC), https://lucide.dev */
   grid: '<rect width="7" height="7" x="3" y="3" rx="1"/> <rect width="7" height="7" x="14" y="3" rx="1"/> <rect width="7" height="7" x="14" y="14" rx="1"/> <rect width="7" height="7" x="3" y="14" rx="1"/>',
   plus: '<path d="M5 12h14"/> <path d="M12 5v14"/>',
   mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/> <path d="M12 6v4"/>',
@@ -999,14 +1070,17 @@ function renderModuleNav() {
 }
 function go(path, replace) {
   var route = resolveRoute(path);
+  var changed = page !== route.page || activeModule !== route.module;
   if (sheetState && (page !== route.page || activeModule !== route.module)) closeSheet();
   page = route.page; activeModule = route.module; closePop();
+  if (changed && $("main-content")) $("main-content").scrollTop = 0;
   if (activeModule) addDevice(activeModule, false);
   if (location.hash !== "#" + route.path) history[replace ? "replaceState" : "pushState"](null, "", "#" + route.path);
   document.querySelectorAll(".page").forEach(function (e) { e.classList.toggle("on", e.id === "p-" + page); });
   renderModuleNav();
   var m = installedModule(activeModule);
   $("h-title").textContent = page === "device" && m ? m.name : PAGES[page].title; $("h-sub").textContent = PAGES[page].sub;
+  $("h-sub").hidden = page === "mouse";
   $("hdr-mic").hidden = activeModule !== "goxlr-mini";
   setOnline(engineOnline, engineDevice, engineHealth, engineUsb);
   render();
@@ -2451,39 +2525,57 @@ var mouseUI = null, mouseState = null, mouseLoading = false, mouseBusy = false, 
 function renderMouse() {
   if (!mouseUI) {
     var root = $("p-mouse"); root.innerHTML = "";
-    var hero = h("div", {"class":"card mouse-hero"}, chipIco("mouse", "#0071e3") + '<div><h2>R5 Ultra</h2><p>Des réglages enregistrés dans ta souris. Rien ne change sans ton action.</p></div>');
-    var status = h("div", {"class":"mouse-status", role:"status"}); var summary = h("div", {"class":"mouse-summary"}); summary.appendChild(status); hero.appendChild(summary);
+    var toolbar = h("div", {"class":"mouse-toolbar"});
+    var status = h("div", {"class":"mouse-status", role:"status"}); toolbar.appendChild(status);
     var refreshBtn = h("button", {"class":"pill", onclick:function () {
       if (mouseBusy) return;
       mouseBusy = true; paintMouse();
       postModule("attack-shark-r5-ultra", "refresh").then(function (r) {
         if (r) mouseState = r.state;
-      }).finally(function () { mouseBusy = false; mouseReadAt = 0; loadMouse(); });
-    }}, svg("reset") + "Actualiser"); summary.appendChild(refreshBtn); root.appendChild(hero);
-    var dpi = h("div", {"class":"card mouse-panel"}, "<h2>Sensibilité</h2><p>Choisis le palier actif et règle séparément les axes X et Y, par pas de 50 DPI.</p>");
-    var active = h("select", {"class":"inp", "aria-label":"Palier DPI actif"});
+      }).finally(function () { mouseBusy = false; mouseReadAt = 0; loadMouse(); paintMouse(); });
+    }}, svg("refresh") + "Actualiser"); toolbar.appendChild(refreshBtn); root.appendChild(toolbar);
+    var stats = {}, strip = h("div", {"class":"mouse-stats", "aria-label":"État de la souris"});
+    [["battery","battery","Batterie"],["dpi","mouse","Sensibilité active"],["polling","activity","Fréquence"],["link","usb","Connexion"]].forEach(function (spec) {
+      var card = h("div", {"class":"card mouse-stat", "data-stat":spec[0]});
+      var label = h("div", {"class":"mouse-stat-label"}, svg(spec[1]) + esc(spec[2]));
+      var value = h("strong", {}, "—"), detail = h("small", {}, "En attente de lecture");
+      card.appendChild(label); card.appendChild(value); card.appendChild(detail); strip.appendChild(card);
+      stats[spec[0]] = {card:card,label:label,value:value,detail:detail};
+    });
+    var battery = h("progress", {"class":"mouse-battery", max:"100", value:"0", "aria-label":"Charge de la batterie"});
+    battery.hidden = true; stats.battery.card.appendChild(battery); root.appendChild(strip);
+    var dashboard = h("div", {"class":"mouse-dashboard"}); root.appendChild(dashboard);
+    var dpi = h("section", {"class":"card mouse-panel", "aria-labelledby":"mouse-dpi-title"}, '<h2 id="mouse-dpi-title">' + svg("mouse") + 'Sensibilité</h2><p>Paliers X / Y · Pas de 50 DPI</p>');
+    var activeRow = h("div", {"class":"mouse-active"});
+    var active = h("select", {id:"mouse-active-stage", "class":"inp", "aria-label":"Palier DPI actif"});
     active.addEventListener("change", function () { mouseApply("active_stage", Number(active.value)); });
-    dpi.appendChild(h("label", {}, "Palier actif")); dpi.appendChild(active);
-    var rows = h("div", {"class":"mouse-dpi"}); dpi.appendChild(rows); root.appendChild(dpi);
-    var settings = h("div", {"class":"card mouse-panel"}, "<h2>Capteur et autonomie</h2><p>La fréquence maximale est de 1 000 Hz en filaire et 8 000 Hz avec le récepteur compatible.</p>");
+    activeRow.appendChild(h("label", {"for":"mouse-active-stage"}, "Palier actif")); activeRow.appendChild(active); dpi.appendChild(activeRow);
+    dpi.appendChild(h("div", {"class":"mouse-dpi-head", "aria-hidden":"true"}, '<span>N°</span><span>Axe X · DPI</span><span>Axe Y · DPI</span><span></span>'));
+    var rows = h("div", {"class":"mouse-dpi"}); dpi.appendChild(rows);
+    dpi.appendChild(h("p", {"class":"mouse-help"}, "Valide chaque palier modifié avec sa coche.")); dashboard.appendChild(dpi);
+    var settings = h("section", {"class":"card mouse-panel", "aria-labelledby":"mouse-sensor-title"}, '<h2 id="mouse-sensor-title">' + svg("settings") + 'Capteur et autonomie</h2><p>Les réglages restent enregistrés dans ta souris.</p>');
+    var fields = h("div", {"class":"mouse-settings"}); settings.appendChild(fields);
     var controls = {};
     function select(name, label, options) {
       var wrap = h("label", {"class":"mouse-field"}, "<span>" + label + "</span>");
       var el = h("select", {"class":"inp", "aria-label":label});
       options.forEach(function (o) { el.appendChild(h("option", {value:String(o[0])}, o[1])); });
-      el.addEventListener("change", function () { mouseApply(name, el.value === "true" ? true : el.value === "false" ? false : Number(el.value)); });
-      wrap.appendChild(el); settings.appendChild(wrap); controls[name] = el;
+      el.addEventListener("change", function () { mouseApply(name, Number(el.value)); });
+      wrap.appendChild(el); fields.appendChild(wrap); controls[name] = el;
     }
     select("polling_hz", "Fréquence de la souris", [125,250,500,1000,2000,4000,8000].map(function (n) { return [n,n.toLocaleString("fr-FR") + " Hz"]; }));
     select("lod_mm", "Hauteur de décrochage", [[0.7,"0,7 mm"],[1,"1 mm"],[2,"2 mm"]]);
     select("debounce_ms", "Délai anti-double clic", Array.from({length:31}, function (_,i) { return [i,i + " ms"]; }));
     select("sleep_seconds", "Mise en veille", [[30,"30 secondes"],[60,"1 minute"],[120,"2 minutes"],[300,"5 minutes"],[600,"10 minutes"],[65535,"Désactivée"]]);
-    select("angle_snap", "Correction des lignes", [[false,"Désactivée"],[true,"Activée"]]);
-    select("motion_sync", "Synchronisation du capteur", [[false,"Désactivée"],[true,"Activée"]]);
-    select("ripple_control", "Lissage des mouvements", [[false,"Désactivé"],[true,"Activé"]]);
-    root.appendChild(settings);
-    var note = h("p", {"class":"workspace-note"}, "Branche le câble USB ou le récepteur 2,4 GHz. Le mode Bluetooth, les macros, le remappage des boutons et les mises à jour du firmware ne sont pas pris en charge par ce module."); root.appendChild(note);
-    mouseUI = {status:status, active:active, rows:rows, controls:controls, refresh:refreshBtn, root:root, count:0};
+    var toggles = h("div", {"class":"mouse-toggles"}); settings.appendChild(toggles);
+    [["angle_snap","Correction des lignes","routing"],["motion_sync","Synchronisation du capteur","refresh"],["ripple_control","Lissage des mouvements","activity"]].forEach(function (spec) {
+      var row = h("div", {"class":"mouse-toggle"}, "<span>" + svg(spec[2]) + esc(spec[1]) + "</span>");
+      var button = h("button", {"class":"switch", role:"switch", "aria-label":spec[1], "aria-checked":"false", onclick:function () { if (mouseState) mouseApply(spec[0], !mouseState[spec[0]]); }});
+      row.appendChild(button); toggles.appendChild(row); controls[spec[0]] = button;
+    });
+    settings.appendChild(h("p", {"class":"mouse-help"}, "USB : jusqu’à 1 000 Hz · Récepteur compatible : jusqu’à 8 000 Hz.")); dashboard.appendChild(settings);
+    root.appendChild(h("p", {"class":"workspace-note"}, "Branche le câble USB ou le récepteur 2,4 GHz. Bluetooth, macros, remappage des boutons et firmware ne sont pas pris en charge."));
+    mouseUI = {status:status, active:active, rows:rows, controls:controls, refresh:refreshBtn, root:root, count:0, stats:stats, battery:battery};
   }
   paintMouse(); loadMouse();
 }
@@ -2494,7 +2586,7 @@ function loadMouse() {
     mouseState = data.device.connected ? data.state : null;
     if (!data.device.connected) mouseUI.status.textContent = data.device.error || "Souris déconnectée";
     paintMouse();
-  }).catch(function () { mouseUI.status.textContent = "Lecture impossible. Réessaie avec Actualiser."; }).finally(function () { mouseLoading = false; });
+  }).catch(function () { mouseState = null; mouseUI.status.textContent = "Lecture impossible. Réessaie avec Actualiser."; }).finally(function () { mouseLoading = false; paintMouse(); });
 }
 function mouseApply(name, value) {
   if (mouseBusy || !mouseState) return Promise.resolve(null);
@@ -2508,33 +2600,60 @@ function paintMouse() {
   if (!mouseUI) return;
   var u = mouseUI, s = mouseState;
   u.refresh.disabled = mouseBusy;
+  u.refresh.classList.toggle("working", mouseBusy);
   u.active.disabled = !s || mouseBusy;
   Object.keys(u.controls).forEach(function (key) { u.controls[key].disabled = !s || mouseBusy; });
   u.rows.querySelectorAll("input,button").forEach(function (el) { el.disabled = !s || mouseBusy; });
-  if (!s) { if (!u.status.textContent) u.status.textContent = "Recherche de la souris…"; return; }
-  u.status.textContent = (moduleRuntime("attack-shark-r5-ultra").simulated ? "Simulation · " : "") + (s.wired ? "USB" : "2,4 GHz") + " · Batterie " + s.battery + " %" + (s.charging ? " · En charge" : "") + " · Profil " + s.profile + (mouseBusy ? " · Application…" : "");
+  if (!s) {
+    if (!u.status.textContent) u.status.textContent = "Recherche de la souris…";
+    Object.keys(u.stats).forEach(function (key) { u.stats[key].value.textContent = "—"; u.stats[key].detail.textContent = "Lecture indisponible"; });
+    u.battery.hidden = true; return;
+  }
+  var sim = moduleRuntime("attack-shark-r5-ultra").simulated;
+  u.status.textContent = mouseBusy ? "Application du réglage…" : sim ? "Appareil simulé · Réglages de démonstration" : "Souris connectée · Réglages confirmés";
+  var stage = s.stages[s.active_stage - 1];
+  u.stats.battery.value.textContent = s.battery + " %";
+  u.stats.battery.detail.textContent = s.charging ? "En charge" : s.battery <= 20 ? "Batterie faible" : s.wired ? "Alimentée en USB" : "Sur batterie";
+  u.stats.battery.card.classList.toggle("low", s.battery <= 20);
+  var batteryIcon = s.charging ? "batteryCharging" : "battery";
+  if (u.stats.battery.icon !== batteryIcon) { u.stats.battery.label.innerHTML = svg(batteryIcon) + "Batterie"; u.stats.battery.icon = batteryIcon; }
+  u.battery.hidden = false; u.battery.value = s.battery;
+  u.stats.dpi.value.textContent = stage.x === stage.y ? stage.x.toLocaleString("fr-FR") : stage.x.toLocaleString("fr-FR") + " / " + stage.y.toLocaleString("fr-FR");
+  u.stats.dpi.card.classList.toggle("split", stage.x !== stage.y);
+  u.stats.dpi.detail.textContent = (stage.x === stage.y ? "DPI" : "DPI X / Y") + " · Palier " + s.active_stage + " / " + s.stages.length;
+  u.stats.polling.value.textContent = s.polling_hz.toLocaleString("fr-FR") + " Hz";
+  u.stats.polling.detail.textContent = "Fréquence confirmée";
+  u.stats.link.value.textContent = s.wired ? "USB" : "2,4 GHz";
+  var linkIcon = s.wired ? "usb" : "BroadcastMix";
+  if (u.stats.link.icon !== linkIcon) { u.stats.link.label.innerHTML = svg(linkIcon) + "Connexion"; u.stats.link.icon = linkIcon; }
+  u.stats.link.detail.textContent = "Profil " + s.profile + " · FW " + s.firmware;
   if (u.count !== s.stages.length) {
     u.count = s.stages.length; u.active.innerHTML = ""; u.rows.innerHTML = "";
     s.stages.forEach(function (_, i) {
       u.active.appendChild(h("option", {value:String(i+1)}, "Palier " + (i+1)));
       var row = h("div", {"class":"mouse-dpi-row"}, "<b>" + (i+1) + "</b>");
       ["x","y"].forEach(function (axis) {
-        var label = h("label", {}, "<span>" + axis.toUpperCase() + " · DPI</span>");
         var input = h("input", {type:"number", "class":"inp", min:"50", max:String(s.dpi_max), step:"50", "aria-label":"DPI " + axis.toUpperCase() + " palier " + (i+1), "data-stage":String(i), "data-axis":axis});
-        input.addEventListener("input", function () { input.dataset.dirty = "1"; }); label.appendChild(input); row.appendChild(label);
+        input.addEventListener("input", function () { input.dataset.dirty = "1"; paintMouse(); }); row.appendChild(input);
       });
-      row.appendChild(h("button", {"class":"pill", onclick:function () {
+      row.appendChild(h("button", {"class":"mouse-save", "aria-label":"Enregistrer le palier " + (i+1), title:"Enregistrer le palier " + (i+1), onclick:function () {
         var values = row.querySelectorAll("input"), x = Number(values[0].value), y = Number(values[1].value);
         if (![x,y].every(function (n) { return Number.isInteger(n) && n >= 50 && n <= mouseState.dpi_max && n % 50 === 0; })) { toast("Choisis des DPI entre 50 et " + mouseState.dpi_max + ", par pas de 50."); return; }
         var stages = mouseState.stages.map(function (v) { return {x:v.x,y:v.y}; }); stages[i] = {x:x,y:y};
         mouseApply("stages", stages).then(function (r) { if (r) values.forEach(function (v) { delete v.dataset.dirty; }); paintMouse(); });
-      }}, "Enregistrer")); u.rows.appendChild(row);
+      }}, svg("check"))); u.rows.appendChild(row);
     });
   }
   u.active.value = String(s.active_stage);
   u.rows.querySelectorAll("input").forEach(function (el) { if (document.activeElement !== el && !el.dataset.dirty) el.value = s.stages[Number(el.dataset.stage)][el.dataset.axis]; el.max = s.dpi_max; });
+  u.rows.querySelectorAll(".mouse-dpi-row").forEach(function (row, i) {
+    var dirty = Array.from(row.querySelectorAll("input")).some(function (input) { return !!input.dataset.dirty; });
+    row.classList.toggle("active", i + 1 === s.active_stage); row.classList.toggle("dirty", dirty);
+    row.querySelector("button").disabled = mouseBusy || !dirty;
+  });
   Object.keys(u.controls).forEach(function (key) {
     var el = u.controls[key], value = String(s[key]);
+    if (el.tagName === "BUTTON") { el.classList.toggle("on", !!s[key]); el.setAttribute("aria-checked", value); return; }
     if (!Array.from(el.options).some(function (o) { return o.value === value; })) el.appendChild(h("option", {value:value}, value + (key === "sleep_seconds" ? " secondes" : "")));
     el.value = value;
     if (key === "polling_hz") Array.from(el.options).forEach(function (o) { o.disabled = s.wired && Number(o.value) > 1000; });
@@ -2542,6 +2661,14 @@ function paintMouse() {
 }
 
 /* ---------- espace personnel et modules ---------- */
+function moduleCredit(m) {
+  var credit = h("div", {"class":"module-credit"});
+  var origin = m.origin || m.status;
+  credit.appendChild(h("span", {"class":"origin"}, svg(origin === "community" ? "users" : "shield") + (origin === "official" ? "Officiel Rustudio" : origin === "community" ? "Communautaire" : "Origine non précisée")));
+  if (/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i.test(m.author || "")) credit.appendChild(h("button", {onclick:function () { openUrl("https://github.com/" + m.author); }}, "Créé par " + esc(m.author)));
+  if (origin === "community" && Number.isInteger(m.review_pr) && m.review_pr > 0) credit.appendChild(h("button", {onclick:function () { openUrl("https://github.com/samirmedani/rustudio/pull/" + m.review_pr); }, title:"Validation du mainteneur sur GitHub"}, svg("pullRequest") + " PR #" + m.review_pr + " validée"));
+  return credit;
+}
 function moduleFeatures(m) {
   return m.capabilities ? m.capabilities.map(function (c) { return CAP_LABELS[c] || c; }) : (m.features || []);
 }
@@ -2555,6 +2682,7 @@ function deviceCard(m, overview) {
     card.addEventListener("keydown", function (e) { if (e.target === card && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDevice(m.id); } });
   }
   card.innerHTML = '<div class="lib-head">' + chipIco(LIB_KIND[m.kind] || "usb", "#0071E3") + "<div><b>" + esc(m.name) + "</b><small>" + esc(m.vendor || "") + "</small></div></div>";
+  card.appendChild(moduleCredit(m));
   card.appendChild(h("div", {"class": "device-status " + status.status, role: "status"}, "<i></i>" + esc(status.label) + (d.simulated ? " · Appareil simulé" : "")));
   if (status.detail) card.appendChild(h("p", {"class": "device-detail"}, esc(status.detail)));
   else if (status.status === "disconnected") card.appendChild(h("p", {"class": "device-detail"}, "Branche ton appareil pour le retrouver ici. Tes réglages restent disponibles."));
@@ -2597,8 +2725,8 @@ function renderDeviceOverview() {
   var root = $("p-device"); root.innerHTML = ""; root.appendChild(deviceCard(m, true));
   if (!modulePages(m).length) root.appendChild(h("p", {"class": "workspace-note"}, "Aucun réglage disponible pour cet appareil dans cette version de l’interface."));
 }
-var lib = {data: null, q: "", grid: null};
-var LIB_STATUS = {official: ["Officiel", "#30D158"], community: ["Communautaire", "#0A84FF"], generic: ["Générique", "#FF9F0A"], wanted: ["À contribuer", "#8E8E93"]};
+var lib = {data: null, q: "", filter:"all", grid: null, filters:[]};
+var LIB_STATUS = {official: ["Officiel", "#176a35"], community: ["Communautaire", "#0071E3"], wanted: ["À contribuer", "#65656a"]};
 var LIB_KIND = {"audio-interface": "mixer", mouse: "mouse", keyboard: "keyboard", monitor: "monitor", headset: "Headphones"};
 function renderLibrary() {
   if (built.library) return;
@@ -2609,30 +2737,37 @@ function renderLibrary() {
   q.addEventListener("input", function () { lib.q = q.value.trim().toLowerCase(); paintLibrary(); });
   top.appendChild(q);
   top.appendChild(h("button", {"class": "pill", onclick: function () {
-    post("library-refresh").then(function (d) { if (d && d.modules) { lib.data = d; paintLibrary(); toast(d.source === "github" ? "Liste à jour" : "GitHub injoignable : liste locale"); } });
+    post("library-refresh").then(function (d) { if (d && d.modules) { lib.data = d; paintLibrary(); toast("Catalogue vérifié de cette version"); } });
   }}, svg("refresh") + "Actualiser"));
-  top.appendChild(h("button", {"class": "pill", onclick: function () { openUrl((lib.data && lib.data.contribute_url) || "https://github.com/samirmedani/rustudio"); }}, svg("plus") + "Contribuer un module"));
+  top.appendChild(h("button", {"class": "pill", onclick: function () { openUrl((lib.data && lib.data.contribute_url) || "https://github.com/samirmedani/rustudio"); }}, svg("pullRequest") + "Proposer un module"));
   root.appendChild(top);
+  var filters = h("div", {"class":"lib-filters", role:"group", "aria-label":"Origine des modules"});
+  [["all","Tous"],["official","Officiels"],["community","Communautaires"],["wanted","À contribuer"]].forEach(function (spec) {
+    var button = h("button", {"aria-pressed":String(lib.filter === spec[0]), onclick:function () { lib.filter = spec[0]; paintLibrary(); }}, spec[1]);
+    lib.filters.push({key:spec[0],button:button}); filters.appendChild(button);
+  }); root.appendChild(filters);
   lib.grid = h("div", {"class": "lib-grid"});
   root.appendChild(lib.grid);
-  root.appendChild(h("p", {"class": "muted-txt lib-foot"}, "Les modules livrés avec ta version de Rustudio peuvent rejoindre Mes appareils. Les autres fiches présentent du matériel à prendre en charge ou des contributions à intégrer à une prochaine version."));
+  root.appendChild(h("p", {"class": "muted-txt lib-foot"}, "Catalogue livré avec cette version. Les contributions communautaires passent par une pull request GitHub, une analyse et la validation du mainteneur avant publication."));
   built.library = true;
   lib.paintKey = ""; paintLibrary();
-  api("/api/library").then(function (d) { lib.data = d; paintLibrary(); return post("library-refresh"); }).then(function (d) { if (d && d.modules) { lib.data = d; paintLibrary(); } })
+  api("/api/library").then(function (d) { lib.data = d; paintLibrary(); return null; }).then(function (d) { if (d && d.modules) { lib.data = d; paintLibrary(); } })
     .catch(function () { toast("La bibliothèque n’a pas pu être chargée. Réessaie avec Actualiser."); });
 }
 function paintLibrary() {
   if (!lib.grid) return;
   var modules = installedModules().slice(), known = modules.map(function (m) { return m.id; });
-  ((lib.data && lib.data.modules) || []).forEach(function (m) { if (known.indexOf(m.id) < 0) { modules.push(m); known.push(m.id); } });
-  var key = JSON.stringify([modules, workspacePrefs.devices, lib.q]);
+  ((lib.data && lib.data.modules) || []).forEach(function (m) { if (m.status === "wanted" && known.indexOf(m.id) < 0) { modules.push(m); known.push(m.id); } });
+  var key = JSON.stringify([modules, workspacePrefs.devices, lib.q, lib.filter]);
   if (lib.paintKey === key) return;
   lib.paintKey = key; lib.grid.innerHTML = "";
-  var mods = modules.filter(function (m) { return !lib.q || (m.name + " " + m.vendor + " " + m.kind + " " + moduleFeatures(m).join(" ")).toLowerCase().indexOf(lib.q) >= 0; });
+  lib.filters.forEach(function (f) { f.button.classList.toggle("on", f.key === lib.filter); f.button.setAttribute("aria-pressed", String(f.key === lib.filter)); });
+  var mods = modules.filter(function (m) { return (lib.filter === "all" || (m.origin || m.status) === lib.filter) && (!lib.q || (m.name + " " + m.vendor + " " + m.kind + " " + (m.author || "") + " " + moduleFeatures(m).join(" ")).toLowerCase().indexOf(lib.q) >= 0); });
   mods.forEach(function (m) {
-    var local = installedModule(m.id), st = local ? ["Livré avec Rustudio", "#0071E3"] : (LIB_STATUS[m.status] || LIB_STATUS.wanted);
+    var local = installedModule(m.id), st = LIB_STATUS[m.origin || m.status] || LIB_STATUS.wanted;
     var c = h("div", {"class": "card lib-card"});
     c.innerHTML = '<div class="lib-head">' + chipIco(LIB_KIND[m.kind] || "grid", st[1]) + "<div><b>" + esc(m.name) + "</b><small>" + esc(m.vendor || "") + '</small></div><span class="lib-badge" style="--c:' + st[1] + '">' + st[0] + "</span></div><p>" + esc(m.summary || "") + '</p><div class="chips lib-feat">' + moduleFeatures(m).map(function (f) { return "<span>" + esc(f) + "</span>"; }).join("") + "</div>";
+    if (local) c.appendChild(moduleCredit(local));
     var row = h("div", {"class": "lib-act"});
     if (local) {
       if (hasDevice(m.id)) { row.appendChild(h("span", {"class": "lib-on"}, svg("check") + "Dans Mes appareils")); row.appendChild(h("button", {"class": "pill primary", onclick: function () { openDevice(m.id); }}, "Ouvrir")); }
@@ -2645,7 +2780,10 @@ function paintLibrary() {
     c.appendChild(row);
     lib.grid.appendChild(c);
   });
-  if (!mods.length) lib.grid.appendChild(h("p", {"class": "muted-txt"}, "Aucun module ne correspond. Tu peux proposer la prise en charge de ton appareil."));
+  if (!mods.length) {
+    var empty = h("div", {"class":"card workspace-empty", style:"grid-column:1/-1"}, chipIco("users", "#0071E3") + "<h2>" + (lib.filter === "community" && !lib.q ? "La communauté commence ici" : "Aucun module ne correspond") + "</h2><p>" + (lib.filter === "community" && !lib.q ? "Aucun module communautaire n’est encore publié. Propose ton appareil sur GitHub : après analyse et validation du mainteneur, il pourra rejoindre une prochaine version." : "Tu peux proposer la prise en charge de ton appareil sur GitHub.") + "</p>");
+    empty.appendChild(h("button", {"class":"pill primary", onclick:function () { openUrl("https://github.com/samirmedani/rustudio/blob/main/docs/COMMUNITY.md"); }}, svg("pullRequest") + "Proposer un module")); lib.grid.appendChild(empty);
+  }
 }
 
 /* ---------- menu bas droite ---------- */
@@ -3232,6 +3370,8 @@ function render() {
   if (page === "device") renderDeviceOverview();
   var m = installedModule(activeModule);
   $("h-eye").textContent = m ? m.name : page === "modules" ? "À chaque matériel son module" : "Ton espace personnel";
+  var creditKey = JSON.stringify(m && [m.id,m.origin,m.author,m.review_pr]);
+  if (render.creditKey !== creditKey) { render.creditKey = creditKey; $("h-origin").innerHTML = ""; if (m) $("h-origin").appendChild(moduleCredit(m)); }
   if (activeModule === "goxlr-mini") {
   var mm = $("hdr-mic"), mms = muteState("Mic");
   mm.innerHTML = svg(mms ? "micOff" : "Mic") + (mms ? (mms === "all" ? "Micro coupé" : "Micro " + MUTED_TXT[mms].toLowerCase()) : "Micro actif");

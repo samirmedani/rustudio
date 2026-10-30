@@ -39,7 +39,9 @@ le catalogue et les appareils pour lesquels tu peux contribuer.
 La version actuelle livre deux modules : **GoXLR Mini** et **Attack Shark R5 Ultra**. Les autres souris, claviers, écrans et la GoXLR complète restent des pistes de contribution ; leur présence au catalogue ne signifie pas qu’ils sont pilotés par Rustudio.
 Le module [R5 Ultra](docs/R5-ULTRA.md) règle les paliers DPI X/Y, leur sélection, la fréquence, la veille et le capteur, et affiche la batterie. Les DPI, la fréquence et le délai anti-double clic sont vérifiés sur la vraie souris en 2,4 GHz. Le transport USB est implémenté et testé en simulation ; Bluetooth, macros et remappage des boutons ne sont pas pris en charge.
 
-Les modules sont compilés dans l'application : aucun code du catalogue n'est téléchargé ou installé à la volée.
+Les modules sont compilés dans l’application : aucun code du catalogue n’est téléchargé ou installé à la volée.
+Les modules officiels indiquent leur créateur ; les modules communautaires conservent leur attribution et
+passent par une [PR GitHub analysée et validée](docs/COMMUNITY.md) avant d’apparaître dans une version publiée.
 
 Le moteur tourne en service Windows dès le démarrage et se relance s'il a un souci. Le module GoXLR Mini parle
 au pilote officiel de TC-Helicon et reprend l'appareil quand il est rebranché.

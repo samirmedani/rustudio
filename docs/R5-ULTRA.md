@@ -5,6 +5,11 @@ Livré avec Rustudio 5.5.0. Les lectures et les changements de DPI, fréquence e
 Le mode USB est implémenté et testé sur le simulateur ; il n'a pas été vérifié physiquement pendant ces essais.
 Aucun firmware n'est modifié et aucun pilote supplémentaire n'est installé.
 
+
+Le dashboard regroupe la batterie et la charge, les DPI actifs, la fréquence et la connexion en tête.
+Les six paliers X/Y et les options du capteur se répartissent en colonnes selon la largeur disponible ;
+les changements restent soumis à la confirmation de la souris.
+
 ## Fonctions implémentées
 
 - Batterie et charge, version du firmware, profil matériel courant, état USB / 2,4 GHz.

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "updated": "2026-10-30",
   "modules": [
     {
@@ -24,7 +24,9 @@
         "Éclairage",
         "Scènes",
         "Égaliseur casque"
-      ]
+      ],
+      "author": "samirmedani",
+      "review_pr": null
     },
     {
       "id": "goxlr-full",
@@ -71,7 +73,9 @@
         "Capteur",
         "Veille"
       ],
-      "builtin": true
+      "builtin": true,
+      "author": "samirmedani",
+      "review_pr": null
     },
     {
       "id": "ddc-monitor",

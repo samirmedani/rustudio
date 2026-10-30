@@ -19,4 +19,7 @@ Merci ! Quelques règles pour que le projet reste fiable et sans données person
 réseau local, numéro de série d'appareil, `state.json`, journaux, enregistrements audio, binaires
 (`.exe`, `.dll`, `.zip`). La vérification GitHub refuse ces fichiers et motifs.
 
+Toute contribution communautaire suit [le circuit de validation](docs/COMMUNITY.md). Les créateurs sont
+crédités par leur pseudo GitHub public ; utilise une adresse noreply pour tes commits publics.
+
 Les textes de l'interface sont en français, avec le tutoiement.

@@ -1,6 +1,18 @@
 //! Registre des modules compiles : seule cette liste fait autorite sur ce que Rustudio peut piloter.
-//! La bibliotheque en ligne est un catalogue de contributions, pas un chargeur de code.
+//! Le catalogue est livré avec la version validée ; il ne charge jamais de code distant.
 use serde::Serialize;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModuleOrigin {
+    Official,
+    Community,
+}
+impl ModuleOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self { Self::Official => "official", Self::Community => "community" }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct ModulePage {
@@ -15,6 +27,12 @@ pub struct ModuleDescriptor {
     pub name: &'static str,
     pub vendor: &'static str,
     pub kind: &'static str,
+    pub origin: ModuleOrigin,
+    /// Pseudo GitHub public du créateur ; jamais une identité privée ni une adresse e-mail.
+    pub author: &'static str,
+    pub source: &'static str,
+    /// PR GitHub validée par le mainteneur, obligatoire pour un module communautaire.
+    pub review_pr: Option<u32>,
     pub summary: &'static str,
     pub capabilities: &'static [&'static str],
     pub pages: &'static [ModulePage],
@@ -47,6 +65,10 @@ pub const GOXLR_MINI: ModuleDescriptor = ModuleDescriptor {
     name: "GoXLR Mini",
     vendor: "TC-Helicon",
     kind: "audio-interface",
+    origin: ModuleOrigin::Official,
+    author: "samirmedani",
+    source: "crates/goxlr",
+    review_pr: None,
     summary: "Mixeur, micro, routage, éclairage et scènes avec le pilote officiel GoXLR.",
     capabilities: &["mixer", "microphone", "headphone-eq", "routing", "lighting", "scenes"],
     pages: &[
@@ -67,6 +89,7 @@ pub const GOXLR_MINI: ModuleDescriptor = ModuleDescriptor {
 
 pub const R5_ULTRA: ModuleDescriptor = ModuleDescriptor {
     id: "attack-shark-r5-ultra", name: "R5 Ultra", vendor: "Attack Shark", kind: "mouse",
+    origin: ModuleOrigin::Official, author: "samirmedani", source: "crates/attack-shark", review_pr: None,
     summary: "DPI par palier, fréquence, batterie et réglages du capteur, en USB ou 2,4 GHz.",
     capabilities: &["dpi", "polling", "battery", "sensor"],
     pages: &[ModulePage { id: "mouse", label: "Ma souris", icon: "mouse" }],

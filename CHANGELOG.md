@@ -1,5 +1,16 @@
 # Nouveautés
 
+## 5.6.0
+
+- **R5 Ultra : nouveau dashboard**. Batterie et charge, DPI actifs, fréquence, connexion et profil visibles d’un coup d’œil. Sensibilité et capteur se règlent côte à côte lorsque la fenêtre le permet.
+- Les six paliers X/Y occupent moins de place ; le palier actif est surligné. Le libellé « Palier actif » et son sélecteur disposent d’un vrai espacement. Les saisies non enregistrées sont signalées et restent conservées en cas d’erreur.
+- Icônes de batterie, capteur et connexion, interrupteurs accessibles et animations discrètes respectant la réduction des mouvements.
+- Les modules indiquent leur origine et leur créateur : **Officiel Rustudio** ou **Communautaire**, avec accès à la PR validée. Le catalogue filtre ces origines et explique comment contribuer.
+- Le catalogue est livré avec chaque version : aucune nouvelle fiche distante non validée ne s’affiche. Les modules communautaires exigent une PR GitHub fusionnée, la validation du mainteneur et une crate identique à la révision relue avant publication.
+- Espacements et retours à la ligne améliorés dans les cartes, les actions et la recherche du catalogue.
+- Les pages audio exploitent aussi la largeur utile quand la navigation est repliée. Changer de menu revient en haut de la nouvelle page.
+
+
 ## 5.5.0
 
 - Nouveau module **Attack Shark R5 Ultra** : batterie, DPI X/Y par palier, fréquence, veille et réglages du capteur dans un espace dédié. DPI, fréquence et délai anti-double clic vérifiés sur la vraie souris en 2,4 GHz, puis restaurés.
