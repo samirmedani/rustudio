@@ -8,12 +8,12 @@ use std::io::Read;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Request, Response, Server};
 
-pub const ACTIONS: [&str; 38] = [
+pub const ACTIONS: [&str; 39] = [
     "volume", "mute", "fader", "route", "colour", "mic", "raw", "profile", "dsp", "mic-preset", "scene", "scene-save",
     "scene-delete", "theme", "lighting", "detect-mic", "auto-gain", "voice-setup", "mic-listen", "job-cancel", "settings",
     "auto-scenes", "reconnect", "restart-engine", "fx", "hp-eq", "hp-eq-save", "hp-eq-delete", "hp-eq-setup",
     "hp-eq-remove", "update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh",
-    "echo-check", "sound-test",
+    "echo-check", "sound-test", "display",
 ];
 
 pub const UI_HTML: &str = include_str!("../../../ui/index.html");

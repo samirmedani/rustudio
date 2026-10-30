@@ -10,6 +10,9 @@ use std::path::PathBuf;
 /// Coupures gardees (l'historique survit aux redemarrages du moteur et du PC) et duree presentee.
 const KEEP: usize = 300;
 const DAY: f64 = 86_400.0;
+/// Repères placés parmi les programmes lancés : l'appli signale l'extinction et le rallumage des écrans.
+pub const MARK_DISPLAY_OFF: &str = "@ecrans-eteints";
+pub const MARK_DISPLAY_ON: &str = "@ecrans-rallumes";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropEvent {
@@ -312,6 +315,17 @@ mod tests {
         assert_eq!(h[1], ("conhost.exe".to_string(), 1));
         d.note_launched(130.0, vec![]);
         assert!(d.launched.is_empty(), "les vieux lancements sont oublies");
+    }
+
+    #[test]
+    fn extinction_des_ecrans_rattachee_a_la_coupure() {
+        let mut d = UsbDrops::default();
+        d.update(Some(st(true, 1000, 0)), 100.0);
+        d.note_launched(100.4, vec![MARK_DISPLAY_OFF.into()]);
+        d.update(Some(st(true, 2000, 8)), 101.0);
+        d.note_launched(103.0, vec![]);
+        assert_eq!(d.events[0].hint.as_ref().unwrap()[0].0, MARK_DISPLAY_OFF, "coupure une demi-seconde après l'extinction");
+        assert_eq!(d.json(0.0)["top"][0]["name"], MARK_DISPLAY_OFF);
     }
 
     #[test]

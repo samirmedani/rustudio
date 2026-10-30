@@ -130,7 +130,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   c.S.modules.devices = [device()]; c.workspaceRuntimeChanged();
   assert.equal(c.hasDevice(goxlr.id), true, "l'appareil reste dans l'espace après débranchement");
   assert.match(text(h.ids.get("p-devices")), /Déconnecté/);
-  for (const [status, label] of [["starting", "Connexion…"], ["error", "Connexion impossible"], ["blocked", "Pilote bloqué"]]) {
+  for (const [status, label] of [["asleep", "En veille"], ["starting", "Connexion…"], ["error", "Connexion impossible"], ["blocked", "Pilote bloqué"]]) {
     c.L = {modules: {devices: [device({status})]}}; c.workspaceRuntimeChanged();
     assert.equal(c.moduleStatus(goxlr.id).label, label); assert.ok(text(h.ids.get("p-devices")).includes(label));
   }
@@ -142,6 +142,15 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(reopened.context.addDevice(goxlr.id), true);
   assert.equal(harness(h.storage).context.hasDevice(goxlr.id), true, "l'ajout manuel persiste aussi");
   assert.equal(h.commands.length, 0, "ajout et retrait ne touchent pas au son");
+}
+
+{
+  const h = harness(), c = h.context;
+  c.S.modules.devices = [device({status: "asleep", connected: false, error: "En veille : bouge ta souris pour la réveiller."})];
+  c.setOnline(true, true, "ok", "mini");
+  assert.equal(c.hasDevice(goxlr.id), true, "un appareil en veille est branché : il rejoint l'espace");
+  assert.match(text(h.ids.get("p-devices")), /En veille/);
+  assert.match(text(h.ids.get("p-devices")), /bouge ta souris/);
 }
 
 {

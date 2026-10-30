@@ -121,8 +121,9 @@ Dans l'interface, le même appel s'écrit `postModule("goxlr-mini", "volume", {c
 L'adaptateur du module valide et applique la commande à son état ; l'API ne parle pas directement au matériel.
 Déclare l'action `volume` dans `actions` seulement si cet adaptateur la prend en charge.
 
-Les mises à jour de Rustudio (`update-*`), le catalogue (`library-refresh`) et le redémarrage du moteur
-(`restart-engine`) sont des commandes globales. Elles gardent leurs routes `/api/{action}` et ne figurent pas
+Les mises à jour de Rustudio (`update-*`), le catalogue (`library-refresh`), le redémarrage du moteur
+(`restart-engine`) et l'état des écrans signalé par l'appli (`display`) sont des commandes globales. Elles
+gardent leurs routes `/api/{action}` et ne figurent pas
 dans les `actions` d'un module. Une reconnexion propre à un appareil appartient, elle, à son adaptateur.
 
 Les anciennes routes de la GoXLR Mini, par exemple `/api/volume`, restent compatibles. Pour de nouveaux contrôles,

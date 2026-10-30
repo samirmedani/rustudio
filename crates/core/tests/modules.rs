@@ -46,7 +46,7 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
 #[test]
 fn statuts_serialises_selon_le_contrat_accueil() {
     for (status, expected) in [
-        (ModuleStatus::Ready, "ready"), (ModuleStatus::Disconnected, "disconnected"),
+        (ModuleStatus::Ready, "ready"), (ModuleStatus::Disconnected, "disconnected"), (ModuleStatus::Asleep, "asleep"),
         (ModuleStatus::Starting, "starting"), (ModuleStatus::Error, "error"), (ModuleStatus::Blocked, "blocked"),
     ] {
         assert_eq!(serde_json::to_value(status).unwrap(), expected);

@@ -406,6 +406,10 @@ fn monitor(app: AppHandle, tray: TrayIcon, display_events: std::sync::mpsc::Rece
         }
         let display_on = display::is_on();
         if last_display != Some(display_on) {
+            // Le moteur rattache ce repère aux coupures du son : « le son saute quand les écrans s'éteignent ».
+            if last_display.is_some() {
+                std::thread::spawn(move || post("display", json!({"on": display_on})));
+            }
             last_display = Some(display_on);
             sync_webview_visibility(&app);
         }

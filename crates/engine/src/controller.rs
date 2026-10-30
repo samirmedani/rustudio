@@ -6,7 +6,7 @@ use crate::config::{now_epoch, Config};
 use crate::log::log;
 use crate::logf;
 use rustudio_core::consts::*;
-use rustudio_core::dsp::{self};
+use rustudio_core::dsp;
 use rustudio_core::state::{self, State};
 use rustudio_core::value::{get, has, parse_bool};
 use rustudio_core::{lighting, routing};
@@ -823,6 +823,14 @@ impl Ctl {
                 return Ok(json!({ "ok": true, "response_hex": r }));
             }
             "hp-eq-setup" | "hp-eq-remove" => return self.hp_start(action == "hp-eq-setup"),
+            "display" => {
+                // L'appli (session Windows) signale l'extinction ou le rallumage des écrans : repère pour les coupures.
+                let on = p.get("on").map(parse_bool).ok_or_else(|| ApiError::bad("paramètre manquant : on"))?;
+                log(if on { "Écrans rallumés" } else { "Écrans éteints (veille de l’affichage)" });
+                let mark = if on { crate::drops::MARK_DISPLAY_ON } else { crate::drops::MARK_DISPLAY_OFF };
+                self.drops.lock().unwrap_or_else(|e| e.into_inner()).note_launched(now_epoch(), vec![mark.into()]);
+                return Ok(json!({ "ok": true }));
+            }
             "reconnect" => {
                 self.lock().force_reconnect = true;
                 self.wake.set();

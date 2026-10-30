@@ -77,6 +77,14 @@ nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;backgr
 .mouse-dpi-row.pending-active{border-style:dashed;border-color:var(--accent)}
 .mouse-toolbar .pill{height:30px;font-size:12px}
 .mouse-status{font-size:13px;color:var(--text2)}
+.mouse-empty{display:grid;justify-items:center;text-align:center;gap:6px;padding:40px 24px;margin-bottom:14px}
+.mouse-empty-ico{display:grid;place-items:center;width:52px;height:52px;border-radius:16px;background:var(--fill);color:var(--accent);margin-bottom:6px}
+.mouse-empty-ico svg{width:26px;height:26px}
+.mouse-empty.asleep .mouse-empty-ico svg{animation:mouseNudge 2.4s ease-in-out infinite}
+@keyframes mouseNudge{0%,70%,100%{transform:translateX(0)}78%{transform:translateX(-3px)}86%{transform:translateX(3px)}}
+.mouse-empty b{font-size:17px}
+.mouse-empty p{margin:0;max-width:420px;color:var(--text2);font-size:13px;line-height:1.5}
+.mouse-stat.stale strong,.mouse-stat.stale .mouse-battery{opacity:.45}
 .mouse-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:14px}
 .mouse-stats .mouse-stat{min-width:0;padding:10px 16px;border-radius:18px}
 .mouse-stat-label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
@@ -131,6 +139,7 @@ header>div:first-child{min-width:0}
 .device-status.ready{color:#24813a}.device-status.ready i{background:var(--green)}
 .device-status.error,.device-status.blocked{color:#c4000f}.device-status.error i,.device-status.blocked i{background:var(--red)}
 .device-status.starting{color:var(--orange-text)}.device-status.starting i{background:var(--orange)}
+.device-status.asleep{color:var(--accent)}.device-status.asleep i{background:var(--accent)}
 .device-detail{font-size:13px;color:var(--text2);line-height:1.5}
 .device-card .lib-act{margin-top:auto;flex-wrap:wrap}
 .workspace-empty{padding:40px;text-align:center;max-width:720px;margin:24px auto}

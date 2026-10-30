@@ -313,7 +313,7 @@ function moduleRuntime(id) {
 function moduleStatus(id) {
   var d = moduleRuntime(id), status = engineOnline === false ? "unavailable" : d.status;
   if (status === "ready" && !d.connected) status = "disconnected";
-  var labels = {ready: "Connecté", disconnected: "Déconnecté", starting: "Connexion…", error: "Connexion impossible", blocked: "Pilote bloqué", unavailable: "Moteur indisponible"};
+  var labels = {ready: "Connecté", asleep: "En veille", disconnected: "Déconnecté", starting: "Connexion…", error: "Connexion impossible", blocked: "Pilote bloqué", unavailable: "Moteur indisponible"};
   return {status: labels[status] ? status : "disconnected", label: labels[status] || "Déconnecté", detail: status === "unavailable" ? "Les appareils seront relus dès que le moteur répondra." : d.error || ""};
 }
 function hasDevice(id) { return workspacePrefs.devices.indexOf(id) >= 0; }
@@ -321,7 +321,8 @@ function rememberDetected() {
   var changed = false;
   if (engineOnline === false) return;
   installedModules().forEach(function (m) {
-    if (moduleRuntime(m.id).connected && !hasDevice(m.id) && workspacePrefs.dismissed.indexOf(m.id) < 0) {
+    var d = moduleRuntime(m.id);  // un appareil en veille est branché : il a sa place dans l’espace
+    if ((d.connected || d.status === "asleep") && !hasDevice(m.id) && workspacePrefs.dismissed.indexOf(m.id) < 0) {
       workspacePrefs.devices.push(m.id); changed = true;
     }
   });

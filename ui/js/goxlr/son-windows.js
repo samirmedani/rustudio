@@ -80,22 +80,33 @@ function fmtClock(t) {
 }
 function fmtLost(ms) { return ms < 1000 ? String(Math.round(ms * 10) / 10).replace(".", ",") + " ms" : String(Math.round(ms / 100) / 10).replace(".", ",") + " s"; }
 function dropLoss(e) { return fmtLost(e.out_ms) + " vers le casque · " + fmtLost(e.in_ms) + " vers le PC (micro, stream)"; }
-function dropHint(e) { return e && e.hint && e.hint.length ? e.hint.map(function (x) { return esc(x.name) + (x.n > 1 ? " \u00d7" + x.n : ""); }).join(", ") : ""; }
+// Repères envoyés par l'appli (écrans éteints ou rallumés), mêlés aux programmes lancés : [libellé court, tournure].
+var DROP_MARKS = {"@ecrans-eteints": ["écrans éteints", "l’extinction des écrans"], "@ecrans-rallumes": ["écrans rallumés", "le rallumage des écrans"]};
+function dropHint(e) {
+  var progs = e && e.hint ? e.hint.filter(function (x) { return !DROP_MARKS[x.name]; }) : [];
+  return progs.map(function (x) { return esc(x.name) + (x.n > 1 ? " \u00d7" + x.n : ""); }).join(", ");
+}
+function dropMark(e, long) {
+  var marks = e && e.hint ? e.hint.filter(function (x) { return DROP_MARKS[x.name]; }) : [];
+  return marks.map(function (x) { return DROP_MARKS[x.name][long ? 1 : 0]; }).join(long ? " et " : ", ");
+}
 function usbDropsItem(u, st) {
   if (!u || !u.available) return null;
   var since = u.since ? " depuis " + fmtClock(u.since) : "";
   if (!u.count && u.reading === false) return echoItem("info", "Mesure USB en attente", "Les compteurs du pilote ne sont pas lisibles pour le moment. Aucune conclusion sur le son tant que la mesure ne reprend pas.");
   if (!u.count && !u.streaming) return echoItem("info", "Aucun flux audio en cours", "Les compteurs USB avancent seulement pendant une lecture ou un enregistrement. Aucune coupure enregistrée" + since + ".");
   if (!u.count) return echoItem("ok", "Aucune coupure USB enregistrée", "Aucune perte relevée dans les compteurs du pilote" + since + ".");
-  var last = u.events[0], hint = dropHint(last), burst = last && last.hint && last.hint.length && last.hint[0].n >= 5;
+  var last = u.events[0], hint = dropHint(last), mark = dropMark(last, true), burst = last && last.hint && last.hint.length && last.hint[0].n >= 5;
   var top = u.top && u.top.length && u.top[0].count >= 2 ? u.top[0] : null;
-  var lines = u.events.slice(0, 6).map(function (e) { var hh = dropHint(e); return new Date(e.t * 1000).toLocaleTimeString("fr-FR") + " \u00b7 " + dropLoss(e) + (hh ? " \u00b7 " + hh : ""); }).join("<br>");
+  var lines = u.events.slice(0, 6).map(function (e) { var hh = dropHint(e), mk = dropMark(e); return new Date(e.t * 1000).toLocaleTimeString("fr-FR") + " \u00b7 " + dropLoss(e) + (mk ? " \u00b7 " + mk : "") + (hh ? " \u00b7 " + hh : ""); }).join("<br>");
   return echoItem("warn", u.count + " coupure" + (u.count > 1 ? "s" : "") + " entre le PC et la GoXLR",
     "Comptée" + (u.count > 1 ? "s" : "") + " par le pilote" + since + " : " + dropLoss(u) + "." +
+    (mark ? " La dernière a eu lieu au moment de " + mark + "." : "") +
     (hint ? " Au moment de la dernière, Windows lançait : " + hint + "." : "") +
     (burst ? " Une rafale de programmes lancés d\u2019un coup (synchronisation, compilation, mise à jour) suffit à faire sauter le son USB : espace ou décale cette tâche." : "") +
-    (top ? " Le plus souvent lancé à ces moments-là : « " + esc(top.name) + " », " + top.count + " coupure" + (top.count > 1 ? "s" : "") + " sur " + u.count + "." : "") +
-    (hint || top ? " Ces lancements sont des pistes à vérifier, pas une cause prouvée." : "") +
+    (top && DROP_MARKS[top.name] ? " Souvent au moment de " + DROP_MARKS[top.name][1] + " : " + top.count + " coupure" + (top.count > 1 ? "s" : "") + " sur " + u.count + "." :
+      top ? " Le plus souvent lancé à ces moments-là : « " + esc(top.name) + " », " + top.count + " coupure" + (top.count > 1 ? "s" : "") + " sur " + u.count + "." : "") +
+    (hint || mark || top ? " Ces coïncidences sont des pistes à vérifier, pas une cause prouvée." : "") +
     (u.count > 1 ? "<br><span class=\"muted-txt\">" + lines + "</span>" : "") + (usbAdvice(st.usb) ? " " + usbAdvice(st.usb) : ""));
 }
 function windowsGlitchItem(w, during) {

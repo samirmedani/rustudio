@@ -44,6 +44,8 @@ pub struct ModuleDescriptor {
 pub enum ModuleStatus {
     Ready,
     Disconnected,
+    /// Récepteur ou câble présent, appareil endormi : il revient seul dès qu'on l'utilise.
+    Asleep,
     Starting,
     Error,
     Blocked,

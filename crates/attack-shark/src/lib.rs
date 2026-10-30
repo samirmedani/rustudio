@@ -9,6 +9,8 @@ pub const WIRELESS: u16 = 0x0047;
 /// Limite du modele R5 Ultra (y compris son palier overclocke documente par le fabricant).
 pub const MAX_DPI: u16 = 42000;
 pub const RATES: &[(u32, u8)] = &[(125, 8), (250, 4), (500, 2), (1000, 1), (2000, 32), (4000, 64), (8000, 128)];
+/// Récepteur présent mais souris muette : en pratique, sa mise en veille.
+pub const NO_RESPONSE: &str = "La R5 Ultra ne répond pas (veille ou liaison perdue)";
 
 pub trait Transport: Send {
     fn exchange(&mut self, request: &[u8; 64]) -> Result<Vec<u8>>;
@@ -231,7 +233,7 @@ impl Transport for Hid {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
-        Err("La R5 Ultra ne répond pas (veille ou liaison perdue)".into())
+        Err(NO_RESPONSE.into())
     }
 }
 

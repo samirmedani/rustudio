@@ -25,6 +25,13 @@ assert.equal(mic.status, "warn");
 assert.match(mic.detail, /2 ms vers le PC/, "une coupure micro seule garde sa duree");
 assert.match(mic.detail, /pas une cause prouvée/, "coincidence de lancement : pas une accusation");
 assert.ok(!mic.detail.includes("<programme>"), "le nom d'un programme n'est jamais du HTML");
+const screen = {t: 2000, out_ms: 3, in_ms: 3, hint: [{name: "@ecrans-eteints", n: 1}]};
+const asleep = render({count: 3, out_ms: 5, in_ms: 5, events: [screen, event, screen], top: [{name: "@ecrans-eteints", count: 2}]});
+assert.match(asleep.detail, /au moment de l’extinction des écrans/, "repère d'écran formulé en clair");
+assert.ok(!asleep.detail.includes("lançait : @"), "un repère d'écran n'est pas présenté comme un programme");
+assert.match(asleep.detail, /Souvent au moment de l’extinction des écrans : 2 coupures sur 3/);
+assert.match(asleep.detail, /écrans éteints/, "la liste détaillée nomme le repère");
+assert.ok(!asleep.detail.includes("@ecrans"), "aucun nom interne affiché");
 
 const win = {enabled: true, readable: true, total: 0, was_enabled: true};
 assert.equal(context.windowsGlitchItem(win, false).status, "ok");

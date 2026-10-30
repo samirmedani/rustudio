@@ -55,6 +55,12 @@ function mouseSave() {
     return r;
   }).finally(function () { mouseBusy = false; mouseSaving = false; mouseReadAt = 0; paintMouse(); loadMouse(); });
 }
+var MOUSE_EMPTY = {
+  asleep: ["Ta R5 Ultra est en veille", "Bouge-la ou clique une fois : ses réglages s’afficheront ici automatiquement."],
+  disconnected: ["R5 Ultra introuvable", "Branche son récepteur 2,4 GHz ou son câble USB : Rustudio la retrouve tout seul."],
+  error: ["Lecture impossible", "Rustudio réessaie automatiquement."],
+  starting: ["Recherche de la souris…", "Lecture de ses réglages en cours."],
+};
 function renderMouse() {
   if (!mouseUI) {
     var root = $("p-mouse"); root.innerHTML = "";
@@ -72,6 +78,9 @@ function renderMouse() {
     var save = h("button", {"class":"pill primary", hidden:"", onclick:mouseSave}, svg("save"));
     var saveLabel = h("span", {}, "Enregistrer"); save.appendChild(saveLabel);
     actions.appendChild(discard); actions.appendChild(save); toolbar.appendChild(actions); root.appendChild(toolbar);
+    var empty = h("div", {"class":"card mouse-empty", role:"status", hidden:""});
+    var emptyTitle = h("b", {}), emptyText = h("p", {});
+    empty.appendChild(h("span", {"class":"mouse-empty-ico", "aria-hidden":"true"}, svg("mouse"))); empty.appendChild(emptyTitle); empty.appendChild(emptyText); root.appendChild(empty);
     var stats = {}, strip = h("div", {"class":"mouse-stats", "aria-label":"État de la souris"});
     [["battery","battery","Batterie"],["dpi","mouse","Sensibilité active"],["polling","activity","Fréquence"],["link","usb","Connexion"]].forEach(function (spec) {
       var card = h("div", {"class":"card mouse-stat", "data-stat":spec[0]});
@@ -113,7 +122,7 @@ function renderMouse() {
     });
     settings.appendChild(h("p", {"class":"mouse-help"}, "USB : jusqu’à 1 000 Hz · Récepteur compatible : jusqu’à 8 000 Hz.")); dashboard.appendChild(settings);
     root.appendChild(h("p", {"class":"workspace-note"}, "Branche le câble USB ou le récepteur 2,4 GHz. Bluetooth, macros, remappage des boutons et firmware ne sont pas pris en charge."));
-    mouseUI = {status:status, active:active, rows:rows, controls:controls, refresh:refreshBtn, root:root, count:0, stats:stats, battery:battery, toolbar:toolbar, save:save, saveLabel:saveLabel, discard:discard};
+    mouseUI = {empty:empty, emptyTitle:emptyTitle, emptyText:emptyText, strip:strip, dashboard:dashboard, status:status, active:active, rows:rows, controls:controls, refresh:refreshBtn, root:root, count:0, stats:stats, battery:battery, toolbar:toolbar, save:save, saveLabel:saveLabel, discard:discard};
   }
   paintMouse(); loadMouse();
 }
@@ -141,18 +150,22 @@ function paintMouse() {
   u.active.disabled = !live || mouseBusy || conflict;
   Object.keys(u.controls).forEach(function (key) { u.controls[key].disabled = !live || mouseBusy || conflict; });
   u.rows.querySelectorAll("input,button").forEach(function (el) { el.disabled = !live || mouseBusy || conflict; });
+  // Aucun réglage lu : pas de formulaire rempli de valeurs par défaut qui ressembleraient aux vrais réglages.
+  u.empty.hidden = !!s; u.strip.hidden = !s; u.dashboard.hidden = !s;
   if (!s) {
-    if (!u.status.textContent) u.status.textContent = "Recherche de la souris…";
-    Object.keys(u.stats).forEach(function (key) { u.stats[key].value.textContent = "—"; u.stats[key].detail.textContent = "Lecture indisponible"; });
-    u.battery.hidden = true; return;
+    u.status.textContent = "";  // le message de la carte suffit ; la ligne garde Actualiser à droite
+    var run = moduleRuntime("attack-shark-r5-ultra"), text = MOUSE_EMPTY[run.status] || MOUSE_EMPTY.starting;
+    u.emptyTitle.textContent = text[0];
+    u.emptyText.textContent = run.status === "error" && run.error ? run.error : text[1];
+    u.empty.className = "card mouse-empty " + (run.status || "starting");
+    return;
   }
-  if (!live) {
-    Object.keys(u.stats).forEach(function (key) { u.stats[key].value.textContent = "—"; u.stats[key].detail.textContent = "Lecture indisponible"; });
-    u.battery.hidden = true;
-  } else {
+  if (live) {
   var sim = moduleRuntime("attack-shark-r5-ultra").simulated;
   var status = mouseBusy ? (mouseSaving ? "Enregistrement des modifications…" : "Lecture de la souris…") : conflict ? "Profil différent : reviens au profil modifié ou annule." : mouseNotice || (dirty ? "Modifications non enregistrées" : sim ? "Appareil simulé · Réglages de démonstration" : "Souris connectée");
   if (u.status.textContent !== status) u.status.textContent = status;
+  }
+  // En veille : les dernières valeurs lues restent visibles, atténuées.
   var stage = s.stages[s.active_stage - 1];
   u.stats.battery.value.textContent = s.battery + " %";
   u.stats.battery.detail.textContent = s.charging ? "En charge" : s.battery <= 20 ? "Batterie faible" : s.wired ? "Alimentée en USB" : "Sur batterie";
@@ -169,7 +182,10 @@ function paintMouse() {
   var linkIcon = s.wired ? "usb" : "BroadcastMix";
   if (u.stats.link.icon !== linkIcon) { u.stats.link.label.innerHTML = svg(linkIcon) + "Connexion"; u.stats.link.icon = linkIcon; }
   u.stats.link.detail.textContent = "Profil " + s.profile + " · FW " + s.firmware;
-  }
+  Object.keys(u.stats).forEach(function (key) {
+    u.stats[key].card.classList.toggle("stale", !live);
+    if (!live) u.stats[key].detail.textContent = "Dernière valeur lue";
+  });
   if (u.count !== s.stages.length) {
     u.count = s.stages.length; u.active.innerHTML = ""; u.rows.innerHTML = "";
     s.stages.forEach(function (_, i) {

@@ -5,19 +5,23 @@ pub struct Sim {
     pub state: Settings,
     pub writes: usize,
     pub disconnected: bool,
+    /// Tant que ce fichier existe, la souris simulée dort (RUSTUDIO_SIM_MOUSE_SLEEP_FILE).
+    pub sleep_flag: Option<std::path::PathBuf>,
 }
 impl Default for Sim {
     fn default() -> Self {
         Self { state: Settings { firmware: "0.12.0.0".into(), wired: false, profile: 1, battery: 84, charging: false,
             stages: vec![Dpi { x: 800, y: 800 }, Dpi { x: 1600, y: 1600 }, Dpi { x: 3200, y: 3200 }],
             active_stage: 2, dpi_max: MAX_DPI, polling_hz: 1000, lod_mm: 1.0, debounce_ms: 4,
-            sleep_seconds: 120, angle_snap: false, motion_sync: true, ripple_control: false }, writes: 0, disconnected: false }
+            sleep_seconds: 120, angle_snap: false, motion_sync: true, ripple_control: false }, writes: 0, disconnected: false,
+            sleep_flag: std::env::var_os("RUSTUDIO_SIM_MOUSE_SLEEP_FILE").map(Into::into) }
     }
 }
 impl Transport for Sim {
     fn wired(&self) -> bool { self.state.wired }
     fn exchange(&mut self, b: &[u8; 64]) -> Result<Vec<u8>> {
         if self.disconnected { return Err("Souris simulée débranchée".into()); }
+        if self.sleep_flag.as_ref().is_some_and(|p| p.exists()) { return Err(NO_RESPONSE.into()); }
         let (target, command) = (b[4], b[5]);
         if b[2] != 2 || b[3] > 58 { return Err("Trame invalide".into()); }
         let d = &b[6..6 + b[3] as usize];
