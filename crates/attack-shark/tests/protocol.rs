@@ -116,3 +116,81 @@ fn expiration_pendant_la_lecture_empeche_une_ecriture_tardive() {
     assert!(mouse.apply("debounce_ms", &json!(7)).is_err());
     assert_eq!(writes.load(Ordering::SeqCst),0);
 }
+
+#[test]
+fn groupe_confirme_seulement_les_champs_modifies() {
+    struct Count { sim: Sim, queries: Vec<(u8,u8)> }
+    impl Transport for Count {
+        fn wired(&self) -> bool {false}
+        fn exchange(&mut self, b: &[u8;64]) -> rustudio_attack_shark::Result<Vec<u8>> {
+            self.queries.push((b[4],b[5])); self.sim.exchange(b)
+        }
+    }
+    let mut transport = Count { sim:Sim::default(), queries:vec![] };
+    let cached = transport.sim.state.clone();
+    let result = Mouse::new(&mut transport).apply_changes(&cached,1,&json!({"debounce_ms":7,"polling_hz":2000,"motion_sync":false})).unwrap();
+    assert_eq!((result.debounce_ms,result.polling_hz,result.motion_sync),(7,2000,false));
+    assert_eq!(transport.sim.writes,3);
+    assert_eq!(transport.queries.len(),8,"deux lectures de profil et une écriture/relecture par champ, aucune lecture complète");
+    assert!(!transport.queries.contains(&(0,0x81)),"firmware non relu pour enregistrer un réglage");
+    assert!(!transport.queries.contains(&(0,0x83)),"batterie non relue pour enregistrer un réglage");
+}
+
+#[test]
+fn groupe_invalide_ou_profil_modifie_necrit_rien() {
+    let mut sim = Sim::default(); let cached = sim.state.clone();
+    for changes in [json!({"debounce_ms":7,"firmware":1}),json!({"angle_snap":true,"polling_hz":9000})] {
+        assert!(Mouse::new(&mut sim).apply_changes(&cached,1,&changes).is_err());
+        assert_eq!(sim.writes,0);
+    }
+    sim.state.profile = 2;
+    assert!(Mouse::new(&mut sim).apply_changes(&cached,1,&json!({"debounce_ms":7})).is_err());
+    assert_eq!(sim.writes,0);
+}
+
+#[test]
+fn groupe_lod_entier_et_reduction_des_paliers() {
+    let mut sim = Sim::default(); let cached = sim.state.clone();
+    let result = Mouse::new(&mut sim).apply_changes(&cached,1,&json!({"lod_mm":1,"active_stage":1,"stages":[{"x":850,"y":900}]})).unwrap();
+    assert_eq!(result.lod_mm,1.0); assert_eq!(result.active_stage,1);
+    assert_eq!(result.stages[0].x,850);
+}
+
+#[test]
+fn groupe_interrompu_necrit_pas_les_champs_suivants() {
+    struct Ignore { sim:Sim, writes:usize }
+    impl Transport for Ignore {
+        fn wired(&self) -> bool {false}
+        fn exchange(&mut self,b:&[u8;64]) -> rustudio_attack_shark::Result<Vec<u8>> {
+            if b[5]<0x80 { self.writes+=1; let old=self.sim.state.clone();let r=self.sim.exchange(b);self.sim.state=old;r }
+            else {self.sim.exchange(b)}
+        }
+    }
+    let mut t=Ignore{sim:Sim::default(),writes:0};let cached=t.sim.state.clone();
+    assert!(Mouse::new(&mut t).apply_changes(&cached,1,&json!({"angle_snap":true,"debounce_ms":7})).is_err());
+    assert_eq!(t.writes,1,"arrêt au premier réglage non confirmé, pas de retransmission");
+}
+
+#[test]
+fn paliers_modifies_exterieurement_ne_sont_pas_ecrases() {
+    let mut sim=Sim::default();let cached=sim.state.clone();sim.state.stages[1].x=2400;
+    assert!(Mouse::new(&mut sim).apply_changes(&cached,1,&json!({"stages":[{"x":850,"y":800},{"x":1600,"y":1600},{"x":3200,"y":3200}]})).is_err());
+    assert_eq!(sim.writes,0);
+}
+
+#[test]
+fn expiration_dun_groupe_empeche_les_ecritures_suivantes() {
+    use std::time::{Instant,Duration};
+    struct Slow(Sim);
+    impl Transport for Slow {
+        fn wired(&self)->bool {false}
+        fn exchange(&mut self,b:&[u8;64])->rustudio_attack_shark::Result<Vec<u8>> {
+            if (b[4],b[5])==(1,0x84) {std::thread::sleep(Duration::from_millis(80));}
+            self.0.exchange(b)
+        }
+    }
+    let mut t=Slow(Sim::default());let cached=t.0.state.clone();
+    let mut mouse=Mouse::new(&mut t);mouse.set_deadline(Some(Instant::now()+Duration::from_millis(40)));
+    assert!(mouse.apply_changes(&cached,1,&json!({"angle_snap":true,"debounce_ms":7})).is_err());
+    assert_eq!(t.0.writes,1);
+}

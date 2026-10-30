@@ -7,6 +7,7 @@ cargo test --locked -p rustudio-goxlr --example usbstats
 node scripts/diagnostic-ui-test.mjs
 node scripts/ui-interactions-test.mjs
 node scripts/modules-ui-test.mjs
+node scripts/mouse-ui-test.mjs
 python3 scripts/check-catalog-test.py
 python3 scripts/check-catalog.py
 python3 scripts/leakscan.py

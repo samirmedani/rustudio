@@ -37,7 +37,7 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     }
     let mouse = modules::find("attack-shark-r5-ultra").unwrap();
     assert_eq!(mouse.kind, "mouse");
-    assert_eq!(mouse.actions, ["setting", "refresh"]);
+    assert_eq!(mouse.actions, ["setting", "settings", "refresh"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");
     }

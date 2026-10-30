@@ -94,12 +94,16 @@ impl<T: Transport> Mouse<T> {
         Ok(Settings { firmware, wired: self.transport.wired(), profile, battery: battery[1], charging: battery[0] == 1,
             stages, active_stage, dpi_max, polling_hz, lod_mm, debounce_ms, sleep_seconds, angle_snap, motion_sync, ripple_control })
     }
-    /// Une seule valeur par commande, profil et limites relus avant ecriture, verification par relecture.
+    /// Compatibilité avec les anciennes interfaces ; le nouveau dashboard utilise apply_changes.
     pub fn apply(&mut self, name: &str, value: &Value) -> Result<Settings> {
         let before = self.read()?;
+        let changes = Value::Object([(name.to_owned(), value.clone())].into_iter().collect());
+        self.apply_changes(&before, before.profile, &changes)
+    }
+    fn command_for(before: &Settings, name: &str, value: &Value) -> Result<(u8, u8, Vec<u8>)> {
         let p = before.profile;
         let number = || value.as_u64().ok_or_else(|| "Valeur entière attendue".to_string());
-        let (target, cmd, bytes) = match name {
+        let command = match name {
             "active_stage" => { let n = number()?; if n == 0 || n > before.stages.len() as u64 { return Err("Palier invalide".into()); } (1, 2, vec![p, n as u8]) }
             "polling_hz" => { let n = number()?; if before.wired && n > 1000 { return Err("Le mode filaire est limité à 1 000 Hz".into()); }
                 let raw = RATES.iter().find(|(hz, _)| *hz as u64 == n).ok_or("Fréquence non prise en charge")?.1; (1, 0, vec![p, raw]) }
@@ -112,13 +116,85 @@ impl<T: Transport> Mouse<T> {
                 let mut b = vec![p, stages.len() as u8]; for s in stages { b.extend(s.x.to_be_bytes()); b.extend(s.y.to_be_bytes()); } (1, 1, b) }
             _ => return Err("Réglage inconnu".into()),
         };
-        // Un ACK perdu n'est pas une preuve d'echec : seule la relecture fait autorite.
-        let sent = self.query(target, cmd, &bytes);
-        let after = self.read().map_err(|e| format!("Réglage non confirmé : {e}. Actualise avant de réessayer. ACK : {}", if sent.is_ok() { "reçu" } else { "absent" }))?;
-        let actual = serde_json::to_value(&after).map_err(|e| e.to_string())?;
-        if actual[name] != *value || after.profile != p { return Err("La souris n’a pas confirmé le réglage. Actualise avant de réessayer.".into()); }
+        Ok(command)
+    }
+    fn read_field(&mut self, state: &mut Settings, name: &str) -> Result<()> {
+        let p = state.profile;
+        match name {
+            "stages" => {
+                let data = self.query(1, 0x81, &[p, 6])?;
+                let count = *data.get(1).ok_or("Paliers DPI absents")? as usize;
+                if !(1..=6).contains(&count) || data.len() < 2 + 4 * count { return Err("Paliers DPI invalides".into()); }
+                state.stages = data[2..2 + 4 * count].chunks_exact(4).map(|b| Dpi { x:u16::from_be_bytes([b[0],b[1]]), y:u16::from_be_bytes([b[2],b[3]]) }).collect();
+            }
+            "active_stage" => {
+                state.active_stage = self.value(1, 0x82, p)?;
+                if state.active_stage == 0 || state.active_stage as usize > state.stages.len() { return Err("Palier DPI actif invalide".into()); }
+            }
+            "polling_hz" => {
+                let raw = self.value(1, 0x80, p)?;
+                state.polling_hz = RATES.iter().find(|(_, b)| *b == raw || (raw == 16 && *b == 1)).ok_or("Fréquence inconnue")?.0;
+            }
+            "lod_mm" => state.lod_mm = match self.value(1, 0x88, p)? { 0x87=>0.7, 1=>1.0, 2=>2.0, _=>return Err("Hauteur inconnue".into()) },
+            "debounce_ms" => state.debounce_ms = self.value(0, 0x88, p)?,
+            "sleep_seconds" => {
+                let data = self.query(0, 0x87, &[p])?;
+                if data.len() < 3 { return Err("Veille illisible".into()); }
+                state.sleep_seconds = u16::from_be_bytes([data[1],data[2]]);
+            }
+            "angle_snap" | "motion_sync" | "ripple_control" => {
+                let cmd = match name { "angle_snap"=>0x84, "motion_sync"=>0x89, _=>0x8a };
+                let on = match self.value(1, cmd, p)? { 0=>false, 1=>true, _=>return Err("Option HID inconnue".into()) };
+                match name { "angle_snap"=>state.angle_snap=on, "motion_sync"=>state.motion_sync=on, _=>state.ripple_control=on }
+            }
+            _ => return Err("Réglage inconnu".into()),
+        }
+        Ok(())
+    }
+    fn plan(before: &Settings, changes: &Value) -> Result<Vec<(String, u8, u8, Vec<u8>)>> {
+        let fields = changes.as_object().ok_or("Liste de réglages attendue")?;
+        if fields.is_empty() || fields.len() > 9 { return Err("Choisis de 1 à 9 réglages".into()); }
+        let mut validation = before.clone();
+        if let Some(value) = fields.get("stages") { validation.stages = serde_json::from_value(value.clone()).map_err(|_| "Paliers DPI invalides")?; }
+        if let Some(value) = fields.get("active_stage") {
+            validation.active_stage = value.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or("Palier invalide")?;
+        }
+        let mut plan = vec![];
+        for (name, value) in fields {
+            let (target, command, bytes) = Self::command_for(&validation, name, value)?;
+            plan.push((name.clone(),target,command,bytes));
+        }
+        // Si le nombre de paliers diminue, sélectionner d'abord un palier commun aux deux tables.
+        let active_first = validation.stages.len() < before.active_stage as usize;
+        plan.sort_by_key(|(name,_,_,_)| match name.as_str() { "active_stage" if active_first=>0, "stages"=>1, "active_stage"=>2, _=>3 });
+        Ok(plan)
+    }
+    /// Un seul enregistrement : validation complète avant écriture, puis relecture ciblée.
+    /// Chaque écriture est envoyée une fois ; un ACK perdu peut être confirmé par sa relecture.
+    pub fn apply_changes(&mut self, cached: &Settings, profile: u8, changes: &Value) -> Result<Settings> {
+        if profile != cached.profile || !(1..=4).contains(&profile) { return Err("Le profil a changé. Actualise les réglages avant d’enregistrer.".into()); }
+        Self::plan(cached, changes)?;
+        if self.query(0, 0x85, &[0])?[0] != profile { return Err("Le profil a changé. Actualise les réglages avant d’enregistrer.".into()); }
+        let mut after = cached.clone(); after.wired = self.transport.wired();
+        if changes.get("stages").is_some() || changes.get("active_stage").is_some() {
+            self.read_field(&mut after, "stages")?;
+            self.read_field(&mut after, "active_stage")?;
+            if changes.get("stages").is_some() && after.stages != cached.stages {
+                return Err("Les paliers ont changé depuis la lecture. Actualise avant d’enregistrer.".into());
+            }
+        }
+        let plan = Self::plan(&after, changes)?;
+        for (name,target,cmd,bytes) in plan {
+            let sent = self.query(target, cmd, &bytes);
+            self.read_field(&mut after, &name).map_err(|e| format!("Enregistrement interrompu : {e}. Certains réglages peuvent déjà être appliqués. Actualise avant de réessayer."))?;
+            let actual = serde_json::to_value(&after).map_err(|e| e.to_string())?;
+            let matches = if name == "lod_mm" { actual[&name].as_f64() == changes[&name].as_f64() } else { actual[&name] == changes[&name] };
+            if !matches { return Err(format!("Enregistrement interrompu : {name} non confirmé (ACK {}). Certains réglages peuvent déjà être appliqués. Actualise avant de réessayer.", if sent.is_ok() { "reçu" } else { "absent" })); }
+        }
+        if self.query(0, 0x85, &[0])?[0] != profile { return Err("Le profil a changé pendant l’enregistrement. Actualise les réglages.".into()); }
         Ok(after)
     }
+
 }
 
 #[cfg(windows)]

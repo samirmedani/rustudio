@@ -93,7 +93,7 @@ pub const R5_ULTRA: ModuleDescriptor = ModuleDescriptor {
     summary: "DPI par palier, fréquence, batterie et réglages du capteur, en USB ou 2,4 GHz.",
     capabilities: &["dpi", "polling", "battery", "sensor"],
     pages: &[ModulePage { id: "mouse", label: "Ma souris", icon: "mouse" }],
-    actions: &["setting", "refresh"],
+    actions: &["setting", "settings", "refresh"],
 };
 
 const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA];

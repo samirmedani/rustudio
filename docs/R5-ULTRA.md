@@ -8,7 +8,9 @@ Aucun firmware n'est modifié et aucun pilote supplémentaire n'est installé.
 
 Le dashboard regroupe la batterie et la charge, les DPI actifs, la fréquence et la connexion en tête.
 Les six paliers X/Y et les options du capteur se répartissent en colonnes selon la largeur disponible ;
-les changements restent soumis à la confirmation de la souris.
+les contrôles préparent un brouillon local. Le bouton **Enregistrer** applique les changements ensemble ;
+**Annuler** les abandonne. Une actualisation conserve les changements en attente. Les indicateurs en tête
+représentent les dernières valeurs enregistrées, pas les choix encore en attente.
 
 ## Fonctions implémentées
 
@@ -17,7 +19,8 @@ les changements restent soumis à la confirmation de la souris.
 - Fréquence 125–8 000 Hz (maximum 1 000 Hz en filaire).
 - LOD 0,7 / 1 / 2 mm, délai anti-double clic 0–30 ms, veille, correction des lignes, Motion Sync, Ripple Control.
 - Limite du modèle à 42 000 DPI, par pas de 50. Une sonde a lu une limite native de 30 000 alors qu’un palier overclocké de 42 000 est enregistré. La commande de limite native étant intermittente sur ce firmware, elle ne fait plus partie des lectures du module. Les paliers existants sont préservés.
-- Relecture après chaque commande : pas de message de succès sans valeur confirmée.
+- Enregistrement groupé : validation complète avant écriture, puis relecture des seuls champs modifiés.
+  Aucun message de succès avant confirmation ; un échec peut avoir appliqué une partie du groupe, et conserve le brouillon.
 
 Bluetooth, remappage des boutons, macros, éclairage et flash du firmware ne sont pas implémentés.
 Les préférences restent dans la souris : Rustudio lit l'état au démarrage et à la reconnexion, sans appliquer
@@ -38,7 +41,8 @@ commandes passent par ce fil. Le fil USB GoXLR n'est pas utilisé. Réessai apr�
 
 - `GET /api/modules/attack-shark-r5-ultra/state`
 - `POST /api/modules/attack-shark-r5-ultra/refresh`
-- `POST /api/modules/attack-shark-r5-ultra/setting` avec `{"name":"polling_hz","value":1000}`
+- `POST /api/modules/attack-shark-r5-ultra/settings` avec `{"profile":1,"changes":{"polling_hz":1000,"debounce_ms":4}}`
+- Ancienne route compatible : `POST /api/modules/attack-shark-r5-ultra/setting` avec `{"name":"polling_hz","value":1000}`
 
 Les POST gardent les protections locales de Rustudio. Aucune commande brute HID n'est exposée.
 

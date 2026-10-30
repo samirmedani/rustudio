@@ -43,6 +43,7 @@ jobs:
       - run: node scripts/diagnostic-ui-test.mjs
       - run: node scripts/ui-interactions-test.mjs
       - run: node scripts/modules-ui-test.mjs
+      - run: node scripts/mouse-ui-test.mjs
 
   windows:
     name: Windows (tests, paquet, installation complète)
@@ -61,6 +62,7 @@ jobs:
       - run: node scripts/diagnostic-ui-test.mjs
       - run: node scripts/ui-interactions-test.mjs
       - run: node scripts/modules-ui-test.mjs
+      - run: node scripts/mouse-ui-test.mjs
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1

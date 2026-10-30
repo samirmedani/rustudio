@@ -1,5 +1,13 @@
 # Nouveautés
 
+## 5.6.1
+
+- **Souris : modifier, puis enregistrer.** Les DPI, le palier, la fréquence et les options se modifient immédiatement à l’écran sans envoyer de commande. Un bouton **Enregistrer** apparaît pour appliquer tous les changements ensemble ; **Annuler** les abandonne.
+- Les changements en attente sont conservés pendant les actualisations et en cas d’erreur. Un changement de profil empêche de les appliquer par erreur à un autre profil.
+- L’enregistrement vérifie uniquement les réglages modifiés, au lieu de relire toute la souris avant et après chaque changement. Les écritures ne sont pas renvoyées automatiquement.
+- Un seul message de réussite après l’enregistrement, sans confirmation à chaque modification d’un contrôle.
+
+
 ## 5.6.0
 
 - **R5 Ultra : nouveau dashboard**. Batterie et charge, DPI actifs, fréquence, connexion et profil visibles d’un coup d’œil. Sensibilité et capteur se règlent côte à côte lorsque la fenêtre le permet.

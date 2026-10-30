@@ -192,6 +192,14 @@ fn souris_independante_du_moteur_audio_et_commandes_confirmees() {
     let (code, changed) = request(&ctl, "/api/modules/attack-shark-r5-ultra/setting", Some(json!({"name":"debounce_ms","value":7})), true, None);
     assert_eq!(code, 200);
     assert_eq!(changed["state"]["debounce_ms"], 7);
+    let (code, grouped) = request(&ctl, "/api/modules/attack-shark-r5-ultra/settings", Some(json!({"profile":1,"changes":{"polling_hz":2000,"angle_snap":true,"sleep_seconds":60}})), true, None);
+    assert_eq!(code, 200);
+    assert_eq!(grouped["state"]["polling_hz"], 2000);
+    assert_eq!(grouped["state"]["angle_snap"], true);
+    assert_eq!(grouped["state"]["sleep_seconds"], 60);
+    let (code, _) = request(&ctl, "/api/modules/attack-shark-r5-ultra/settings", Some(json!({"profile":2,"changes":{"polling_hz":1000}})), true, None);
+    assert_eq!(code, 400);
+    assert_eq!(ctl.module_state_snapshot("attack-shark-r5-ultra").unwrap()["state"]["polling_hz"], 2000);
     assert_eq!(ctl.snapshot()["state"], original_audio);
     let (code, _) = request(&ctl, "/api/modules/attack-shark-r5-ultra/volume", Some(json!({"channel":"Music","value":10})), true, None);
     assert_eq!(code, 404);

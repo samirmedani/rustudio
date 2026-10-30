@@ -51,6 +51,11 @@ impl MouseHub {
                     let m = mouse.as_mut().unwrap();
                     m.set_deadline(request.as_ref().map(|r| r.deadline));
                     if let Some(r) = &request {
+                        if r.action == "settings" {
+                            let profile = r.body["profile"].as_u64().and_then(|n| u8::try_from(n).ok()).ok_or("Profil absent")?;
+                            let cached = shared.state.lock().unwrap().settings.clone().ok_or("Actualise les réglages avant d’enregistrer")?;
+                            return m.apply_changes(&cached, profile, &r.body["changes"]);
+                        }
                         if r.action == "setting" {
                             let name = r.body["name"].as_str().ok_or("Nom de réglage absent")?;
                             return m.apply(name, &r.body["value"]);
@@ -60,7 +65,11 @@ impl MouseHub {
                 })();
                 if let Some(m) = mouse.as_mut() { m.set_deadline(None); }
                 // Une saisie rejetee ne doit pas faire disparaitre une souris qui repond encore.
-                let recovered = if result.is_err() && request.is_some() { mouse.as_mut().and_then(|m| m.read().ok()) } else { None };
+                let recovered = if result.is_err() && request.is_some() { mouse.as_mut().and_then(|m| {
+                    m.set_deadline(Some(Instant::now() + Duration::from_secs(3)));
+                    m.read().ok()
+                }) } else { None };
+                if let Some(m) = mouse.as_mut() { m.set_deadline(None); }
                 {
                     let mut state = shared.state.lock().unwrap();
                     match &result {
