@@ -16,8 +16,15 @@ $data = Join-Path $env:ProgramData 'Rustudio'
 $api = 'http://127.0.0.1:14565'
 $uninstall = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 $tmp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+$fakeOut = Join-Path $tmp 'rustudio-migration-fake.stdout.txt'
+$fakeErr = Join-Path $tmp 'rustudio-migration-fake.stderr.txt'
 
 function Show-Logs {
+  Write-Host '--- etat updater 4.8.0'
+  try { Invoke-RestMethod "$api/api/update" -TimeoutSec 2 | ConvertTo-Json -Depth 6 | Write-Host } catch { Write-Host $_.Exception.Message }
+  Write-Host '--- faux GitHub'
+  Get-Content $fakeOut -ErrorAction SilentlyContinue | Select-Object -Last 30
+  Get-Content $fakeErr -ErrorAction SilentlyContinue | Select-Object -Last 30
   Write-Host '--- GoXLR Mini'; Get-Content (Join-Path $legacyData 'goxlrctl.log') -ErrorAction SilentlyContinue | Select-Object -Last 30
   Write-Host '--- installeur'; Get-Content (Join-Path $legacyData 'update\rustudio-setup.txt') -ErrorAction SilentlyContinue
   Write-Host '--- Rustudio'; Get-Content (Join-Path $data 'rustudio.log') -ErrorAction SilentlyContinue | Select-Object -Last 30
@@ -48,17 +55,33 @@ if ($p.ExitCode -ne 0) { Fail "Installation de GoXLR Mini 4.8.0 echouee (code $(
 Wait-Until { (Health).version -eq '4.8.0' } 90 'GoXLR Mini 4.8.0 en marche'
 
 # 2. son moteur, relance pour lire les releases sur le faux GitHub (meme code, memes droits administrateur)
-$fake = Start-Process python -ArgumentList ('"' + (Join-Path $root 'scripts\fake_github.py') + '"'), ('"' + $dist + '"'), $version, '8765' -PassThru -WindowStyle Hidden
+$env:RUSTUDIO_FAKE_GITHUB_LOG = '1'
+$fake = Start-Process (Get-Command python).Source -ArgumentList ('"' + (Join-Path $root 'scripts\fake_github.py') + '"'), ('"' + $dist + '"'), $version, '8765' -PassThru -WindowStyle Hidden -RedirectStandardOutput $fakeOut -RedirectStandardError $fakeErr
+Wait-Until {
+  if ($fake.HasExited) { Fail "Le faux GitHub s'est arrete (code $($fake.ExitCode))" }
+  $r = Invoke-RestMethod 'http://127.0.0.1:8765/repos/samirmedani/goxlr-mini/releases/latest' -TimeoutSec 2 -NoProxy
+  $r.tag_name -eq "v$version" -and $r.assets.Count -eq 2
+} 30 'Faux GitHub disponible avec les deux fichiers de la version cible'
 # l'appli 4.8.0 relance la tache du moteur des qu'il ne repond plus : tache desactivee, seul notre moteur reste
 Disable-ScheduledTask -TaskName 'GoXLR Mini' | Out-Null
 Stop-ScheduledTask -TaskName 'GoXLR Mini'
-Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$legacy\", [StringComparison]::OrdinalIgnoreCase) } |
+Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$legacy\", [StringComparison]::OrdinalIgnoreCase) } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Wait-Until { -not (Health) } 30 'Moteur 4.8.0 arrete'
 $env:GOXLR_UPDATE_API = 'http://127.0.0.1:8765'
 $env:GOXLR_UPDATE_PREFIX = 'http://127.0.0.1:8765/dl/'
 $env:GOXLR_UPDATE_HOSTS = '127.0.0.1'
-Start-Process (Join-Path $legacy 'python\pythonw.exe') -ArgumentList ('"' + (Join-Path $legacy 'goxlrctl.py') + '"'), 'daemon' -WorkingDirectory $legacy
+$start = [Diagnostics.ProcessStartInfo]::new()
+$start.FileName = Join-Path $legacy 'python\pythonw.exe'
+$start.Arguments = '"' + (Join-Path $legacy 'goxlrctl.py') + '" daemon'
+$start.WorkingDirectory = $legacy
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+$start.EnvironmentVariables['GOXLR_UPDATE_API'] = $env:GOXLR_UPDATE_API
+$start.EnvironmentVariables['GOXLR_UPDATE_PREFIX'] = $env:GOXLR_UPDATE_PREFIX
+$start.EnvironmentVariables['GOXLR_UPDATE_HOSTS'] = $env:GOXLR_UPDATE_HOSTS
+$start.EnvironmentVariables['NO_PROXY'] = '127.0.0.1,localhost'
+$engine = [Diagnostics.Process]::Start($start)
 Wait-Until { (Health).version -eq '4.8.0' } 60 'Moteur 4.8.0 relance sur le faux GitHub'
 
 # 3. un reglage a soi, qui doit survivre au passage

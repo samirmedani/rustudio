@@ -28,7 +28,8 @@ def asset(name):
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
-        pass
+        if os.environ.get("RUSTUDIO_FAKE_GITHUB_LOG") == "1":
+            print(args[0] % args[1:], flush=True)
 
     def reply(self, code, body, ctype):
         self.send_response(code)

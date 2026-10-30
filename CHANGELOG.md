@@ -1,6 +1,6 @@
 # Nouveautés
 
-## 5.6.6
+## 5.6.7
 
 - **Veille des écrans sous Windows :** l’application écoute désormais les changements d’affichage de la session. Écrans éteints, WebView2 et les animations se suspendent, et les lectures de configuration audio destinées à l’interface s’arrêtent.
 - L’état des appareils est relu immédiatement au réveil, sans attendre la temporisation de la veille et sans créer de lectures parallèles.
