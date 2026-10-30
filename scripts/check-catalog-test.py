@@ -95,6 +95,16 @@ class CatalogTests(unittest.TestCase):
         for changes in ({"status":"official","author":catalog.OWNER}, {"author":"autre"}, {"review_pr":18}):
             with self.assertRaises(catalog.Invalid): catalog.check_submission([{**self.module, **changes}], before, pr)
 
+    def test_public_commits_accept_masked_github_bots_but_not_private_mail(self):
+        def commit(email, text):
+            (self.root / "proof.txt").write_text(text, encoding="utf-8")
+            subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(self.root), "-c", "user.name=test", "-c", "user.email=" + email, "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], check=True)
+        commit("49699333+dependabot[bot]@users.noreply.github.com", "masqué")
+        catalog.public_files(self.root)
+        commit("personne@example.com", "autre")
+        with self.assertRaises(catalog.Invalid): catalog.public_files(self.root)
+
     def test_wrong_repository_or_branch(self):
         self.api.pr["base"]["ref"] = "autre"
         with self.assertRaises(catalog.Invalid): self.check()

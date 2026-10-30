@@ -12,7 +12,7 @@ REPO = "samirmedani/rustudio"
 OWNER = "samirmedani"
 LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
 SOURCE = re.compile(r"crates/[a-z0-9][a-z0-9-]{0,63}")
-NOREPLY = re.compile(r"(?:[0-9]+\+)?[A-Za-z0-9-]+@users\.noreply\.github\.com|noreply@github\.com")
+NOREPLY = re.compile(r"(?:[0-9]+\+)?[A-Za-z0-9-]+(?:\[bot\])?@users\.noreply\.github\.com|noreply@github\.com")
 
 
 class Invalid(ValueError):
