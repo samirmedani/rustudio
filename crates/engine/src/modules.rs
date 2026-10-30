@@ -1,6 +1,7 @@
 //! Adaptateurs des modules compiles : vues et actions propres a chaque appareil.
 //! Aucun acces direct au materiel : les vues relisent l'etat connu et les actions passent par son controleur.
-use crate::controller::{ApiError, ApiResult, Ctl, Inner};
+use crate::api::{ApiError, ApiResult};
+use crate::controller::{Ctl, Inner};
 use rustudio_core::modules::{self, ModuleRuntime, ModuleStatus};
 use serde_json::{json, Value};
 use std::sync::Arc;

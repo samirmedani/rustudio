@@ -199,7 +199,8 @@ flowchart LR
 
 - Dans le module GoXLR Mini, un seul fil parle à l'appareil ; l'API ne l'attend jamais. Toute erreur USB ferme
   la connexion et en rouvre une propre qui réapplique tous tes réglages. Un appel au pilote figé ? Le superviseur relance le moteur.
-- L'interface (`ui/index.html`) affiche l'accueil général et les pages des modules depuis le registre local.
+- L'interface (`ui/index.html`, son code par appareil dans `ui/js`) affiche l'accueil général et les pages des
+  modules depuis le registre local.
   L'appli ajoute ce qui demande ta session Windows. `GET /api/modules` expose les modules livrés et l'état de
   leurs appareils ; le catalogue GitHub est consultatif.
 

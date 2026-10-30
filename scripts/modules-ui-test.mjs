@@ -1,10 +1,9 @@
 // Contrat de l'espace personnel : seuls les modules compilés peuvent être ouverts.
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
 import {runInNewContext, Script} from "node:vm";
 
-const html = readFileSync(new URL("../ui/index.html", import.meta.url), "utf8");
-new Script(html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>")));
+import {source as html} from "./ui-source.mjs";
+new Script(html);
 function section(start, end) {
   const a = html.indexOf(start), b = html.indexOf(end, a);
   assert.ok(a >= 0 && b > a, `section présente : ${start}`);
@@ -69,7 +68,7 @@ function harness(storage = new Map(), denied = false) {
     render() { context.rememberDetected(); context.renderModuleNav(); if (context.page === "devices") context.renderDevices(); },
   };
   runInNewContext(section("function h(tag,", "function chipIco("), context);
-  runInNewContext(section("function esc(s)", "function muteState("), context);
+  runInNewContext(section("function esc(s)", "function pct("), context);
   context.$ = id => ids.get(id);
   runInNewContext(section("/* ---------- navigation", "/* ---------- mixeur"), context);
   runInNewContext(section("/* ---------- espace personnel et modules", "/* ---------- menu bas droite"), context);

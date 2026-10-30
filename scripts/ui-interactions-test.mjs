@@ -1,10 +1,9 @@
 // Exerce les fonctions de l'interface servie, sans matériel ni dépendance DOM.
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
 import {runInNewContext, Script} from "node:vm";
 
-const html = readFileSync(new URL("../ui/index.html", import.meta.url), "utf8");
-const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
+import {source as html} from "./ui-source.mjs";
+const script = html;
 new Script(script); // Vérifie aussi la syntaxe de tout le JavaScript de l'interface.
 function section(start, end) {
   const a = html.indexOf(start), b = html.indexOf(end, a);

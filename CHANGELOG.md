@@ -1,5 +1,11 @@
 # Nouveautés
 
+## 5.6.8
+
+- **Sous le capot : interface rangée par appareil.** Le code de l’interface est réparti par rôle, avec un dossier par appareil (GoXLR Mini, R5 Ultra). Ajouter un nouveau module devient plus simple et plus sûr. L’affichage et les réglages restent identiques.
+- Le moteur ne sert que les fichiers de l’interface prévus à la compilation ; tout autre chemin est refusé.
+- Le moteur sépare les règles communes à tous les modules des actions propres à la GoXLR Mini (boutons, coupures, faders).
+
 ## 5.6.7
 
 - **Veille des écrans sous Windows :** l’application écoute désormais les changements d’affichage de la session. Écrans éteints, WebView2 et les animations se suspendent, et les lectures de configuration audio destinées à l’interface s’arrêtent.

@@ -1,9 +1,8 @@
 // Verifie les verdicts du diagnostic avec les fonctions reellement servies par le moteur.
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
 import {runInNewContext} from "node:vm";
 
-const html = readFileSync(new URL("../ui/index.html", import.meta.url), "utf8");
+import {source as html} from "./ui-source.mjs";
 const start = html.indexOf("function soundLevel(");
 const end = html.indexOf("function soundAt(", start);
 assert.ok(start >= 0 && end > start, "fonctions du diagnostic presentes");

@@ -1,8 +1,7 @@
 // Contrat utilisateur : modifier localement, puis une seule requête explicite d'enregistrement.
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
-const html=readFileSync(new URL('../ui/index.html',import.meta.url),'utf8');
+import {source as html} from './ui-source.mjs';
 const code=html.slice(html.indexOf('var mouseUI = null'),html.indexOf('function renderMouse()'));
 function harness(){
   const calls=[],messages=[];

@@ -129,8 +129,21 @@ Les anciennes routes de la GoXLR Mini, par exemple `/api/volume`, restent compat
 utilise l'espace `/api/modules/{id}` et `postModule` afin que la commande désigne explicitement son module.
 
 Les routes générales sont `#devices` et `#modules`. Les pages GoXLR Mini vivent sous `#goxlr-mini/<page>`, par
-exemple `#goxlr-mini/mixer`. L'interface actuelle implémente ces pages audio ; pour ton nouveau module, ajoute ses
-composants, ses actions et la gestion de sa route. Les anciens liens audio restent des alias pour la GoXLR Mini.
+exemple `#goxlr-mini/mixer`. Les anciens liens audio restent des alias pour la GoXLR Mini.
+
+L'interface est découpée par rôle dans [ui/js](../ui/js) : `socle.js` (outils, API, navigation), un dossier par
+appareil (`goxlr/`, `attack-shark/`), puis le menu, les mises à jour et `demarrage.js`, toujours chargé en
+dernier. Pour ton module :
+
+1. crée `ui/js/<fabricant>/<appareil>.js`, commençant par `"use strict";`, avec sa fonction `render…` et ses
+   appels `postModule("<id>", …)` ;
+2. ajoute sa page dans `MODULE_VIEWS` et `PAGES` (`socle.js`), sa section `<section class="page">` et sa
+   balise `<script src="/ui/js/…">` dans [ui/index.html](../ui/index.html), avant `menu.js` ;
+3. déclare le fichier dans la liste `ui_assets!` de [crates/engine/src/http.rs](../crates/engine/src/http.rs).
+   Le moteur ne sert que les fichiers de cette liste ; un test échoue si la page et la liste divergent.
+
+Les tests sans navigateur (`scripts/*-ui-test.mjs`) lisent ces fichiers dans l'ordre de la page grâce à
+`scripts/ui-source.mjs`.
 
 ## 4. Découvrir le protocole de ton appareil
 

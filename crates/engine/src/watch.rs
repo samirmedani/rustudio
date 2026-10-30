@@ -1,6 +1,7 @@
 //! Applis ouvertes : scenes automatiques et egaliseur du casque coupe pendant le live.
 use crate::config::now_epoch;
-use crate::controller::{ApiResult, AutoActive, Ctl};
+use crate::api::ApiResult;
+use crate::controller::{AutoActive, Ctl};
 use crate::log::log;
 use crate::logf;
 use rustudio_core::consts::{known_app, SYSTEM_PROCESSES};
@@ -149,7 +150,7 @@ impl Ctl {
 
     pub fn hp_start(self: &Arc<Self>, install: bool) -> ApiResult {
         if self.eqapo.setup_running() {
-            return Err(crate::controller::ApiError::bad("Installation déjà en cours."));
+            return Err(crate::api::ApiError::bad("Installation déjà en cours."));
         }
         self.eqapo.set_setup(&[("running", json!(true)), ("step", json!("Préparation…")), ("error", Value::Null), ("done", json!(false)), ("install", json!(install))], true);
         let c = self.clone();

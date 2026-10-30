@@ -1,6 +1,7 @@
 //! API locale et interface (http://127.0.0.1:14565/) : seulement depuis la machine, en-tete obligatoire en ecriture.
 use crate::config::API_HEADER;
-use crate::controller::{ApiError, Ctl};
+use crate::api::ApiError;
+use crate::controller::Ctl;
 use crate::logf;
 use serde_json::{json, Value};
 use std::io::Read;
@@ -18,6 +19,39 @@ pub const ACTIONS: [&str; 38] = [
 pub const UI_HTML: &str = include_str!("../../../ui/index.html");
 pub const OVERLAY_HTML: &str = include_str!("../../../ui/overlay.html");
 pub const ICON_PNG: &[u8] = include_bytes!("../../../docs/icon.png");
+
+/// Fichiers de l'interface servis sous /ui/ : liste fermée, intégrée au moteur. Un chemin absent ici répond 404,
+/// sans jamais lire le disque à partir de l'URL demandée.
+macro_rules! ui_assets {
+    ($($path:literal),* $(,)?) => {
+        pub const UI_ASSETS: &[(&str, &str)] = &[$(($path, include_str!(concat!("../../../ui/", $path)))),*];
+    };
+}
+ui_assets!(
+    "app.css",
+    "js/socle.js",
+    "js/goxlr/commun.js",
+    "js/goxlr/mixeur.js",
+    "js/goxlr/micro.js",
+    "js/goxlr/casque.js",
+    "js/goxlr/routage.js",
+    "js/goxlr/eclairage.js",
+    "js/goxlr/scenes.js",
+    "js/goxlr/son-windows.js",
+    "js/attack-shark/r5-ultra.js",
+    "js/modules.js",
+    "js/menu.js",
+    "js/goxlr/voix.js",
+    "js/mises-a-jour.js",
+    "js/demarrage.js",
+);
+
+fn ui_asset(path: &str) -> Option<(String, &'static str)> {
+    let name = path.strip_prefix("/ui/")?;
+    let (name, embedded) = UI_ASSETS.iter().find(|(n, _)| *n == name)?;
+    let ctype = if name.ends_with(".css") { "text/css; charset=utf-8" } else { "text/javascript; charset=utf-8" };
+    Some((ui_file(name, embedded), ctype))
+}
 
 fn ui_file(name: &str, embedded: &'static str) -> String {
     if let Ok(dir) = std::env::var("RUSTUDIO_UI_DIR") {
@@ -57,7 +91,7 @@ pub fn serve(ctl: Arc<Ctl>, server: Arc<Server>, workers: usize) {
             while let Ok(req) = s.recv() {
                 let c2 = c.clone();
                 if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || handle(&c2, req))) {
-                    logf!("Erreur API : {}", crate::controller::panic_text(&p));
+                    logf!("Erreur API : {}", crate::api::panic_text(&p));
                 }
             }
         }).expect("fil http"));
@@ -91,6 +125,12 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                 "/" | "/index.html" => return respond(req, ui_file("index.html", UI_HTML), "text/html; charset=utf-8", 200),
                 "/overlay" | "/overlay.html" => return respond(req, ui_file("overlay.html", OVERLAY_HTML), "text/html; charset=utf-8", 200),
                 "/icon.png" => return respond(req, ICON_PNG, "image/png", 200),
+                p if p.starts_with("/ui/") => {
+                    return match ui_asset(p) {
+                        Some((body, ctype)) => respond(req, body, ctype, 200),
+                        None => json_resp(req, &json!({"error": "introuvable"}), 404),
+                    }
+                }
                 "/api/live" => ctl.live_snapshot(query.split('&').any(|q| q == "level=1")),
                 "/api/state" | "/status" => ctl.snapshot(),
                 "/api/modules" => ctl.modules_snapshot(),
@@ -207,4 +247,42 @@ fn sim_act(ctl: &Arc<Ctl>, name: &str, p: &Value) -> Result<Value, ApiError> {
         other => return Err(ApiError::bad(format!("action de simulation inconnue: {other}"))),
     }
     Ok(json!({"ok": true}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn referenced() -> Vec<&'static str> {
+        UI_HTML.split("\"/ui/").skip(1).filter_map(|s| s.split_once('"').map(|(p, _)| p)).collect()
+    }
+
+    #[test]
+    fn page_et_fichiers_servis_correspondent() {
+        let refs = referenced();
+        let served: Vec<&str> = UI_ASSETS.iter().map(|(n, _)| *n).collect();
+        for r in &refs {
+            assert!(served.contains(r), "référencé par index.html mais non servi : {r}");
+        }
+        for s in &served {
+            assert!(refs.contains(s), "servi mais jamais chargé par index.html : {s}");
+        }
+        let scripts: Vec<&str> = refs.iter().copied().filter(|r| r.ends_with(".js")).collect();
+        assert_eq!(scripts[0], "js/socle.js", "le socle commun se charge en premier");
+        assert_eq!(scripts[scripts.len() - 1], "js/demarrage.js", "le démarrage se charge en dernier");
+        for (name, body) in UI_ASSETS {
+            if name.ends_with(".js") {
+                assert!(body.contains("\"use strict\";"), "{name} garde le mode strict");
+            }
+        }
+    }
+
+    #[test]
+    fn chemins_hors_liste_refuses() {
+        assert!(ui_asset("/ui/js/socle.js").is_some());
+        assert_eq!(ui_asset("/ui/app.css").unwrap().1, "text/css; charset=utf-8");
+        for p in ["/ui/../Cargo.toml", "/ui/js/../../Cargo.toml", "/ui/", "/ui/js/inconnu.js", "/ui//etc/hosts"] {
+            assert!(ui_asset(p).is_none(), "{p}");
+        }
+    }
 }

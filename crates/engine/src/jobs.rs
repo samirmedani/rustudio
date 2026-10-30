@@ -1,6 +1,7 @@
 //! Analyses du micro : detection (48 V compris), gain automatique, assistant « Régler ma voix ».
 use crate::config::now_epoch;
-use crate::controller::{ApiError, Ctl, Key};
+use crate::api::ApiError;
+use crate::controller::{Ctl, Key};
 use crate::logf;
 use rustudio_core::consts::*;
 use rustudio_core::dsp::{self, mic_type_preset};

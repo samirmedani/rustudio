@@ -1,4 +1,6 @@
 //! Rustudio : moteur. Un seul fil parle a l'USB ; l'API locale ne touche jamais l'appareil.
+pub mod actions;
+pub mod api;
 pub mod apply;
 pub mod config;
 pub mod controller;
@@ -6,6 +8,7 @@ pub mod drops;
 pub mod eqapo;
 pub mod glitches;
 pub mod http;
+pub mod inputs;
 pub mod jobs;
 pub mod library;
 pub mod log;
