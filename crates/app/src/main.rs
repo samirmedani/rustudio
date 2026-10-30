@@ -6,6 +6,7 @@
 
 mod audio;
 mod badge;
+mod display;
 mod soundcheck;
 
 use serde_json::{json, Value};
@@ -137,6 +138,7 @@ fn osd_done(app: AppHandle) {
 /// Dit a WebView2 si la page est visible. Cachee ou reduite, la page passe en « hidden » : plus de rendu ni
 /// d'animation, et l'interface ralentit ses lectures (WebView2 ne le devine pas seul pour une fenetre cachee).
 fn webview_visible(w: &WebviewWindow, on: bool) {
+    let on = on && display::is_on();
     #[cfg(windows)]
     {
         let _ = w.with_webview(move |wv| unsafe {
@@ -144,6 +146,16 @@ fn webview_visible(w: &WebviewWindow, on: bool) {
         });
     }
     let _ = (w, on);
+}
+
+fn sync_webview_visibility(app: &AppHandle) {
+    for label in ["main", "osd"] {
+        if let Some(w) = app.get_webview_window(label) {
+            if label == "osd" && !display::is_on() { let _ = w.hide(); }
+            let visible = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
+            webview_visible(&w, visible);
+        }
+    }
 }
 
 fn show_main(app: &AppHandle) {
@@ -219,6 +231,7 @@ fn allow_mic(w: &WebviewWindow) {
 
 // ---------- bulle a l'ecran ----------
 fn osd(app: &AppHandle, title: &str, sub: &str, colour: &str, off: bool) {
+    if !display::is_on() { return; }
     let Some(w) = app.get_webview_window("osd") else { return };
     if let Ok(Some(m)) = w.primary_monitor() {
         let (ms, mp, sc) = (m.size(), m.position(), m.scale_factor());
@@ -381,13 +394,21 @@ fn relaunch_if_updated(app: &AppHandle, engine_version: &str) -> bool {
     false
 }
 
-fn monitor(app: AppHandle, tray: TrayIcon) {
+fn monitor(app: AppHandle, tray: TrayIcon, display_events: std::sync::mpsc::Receiver<()>) {
     let mut last_mic: Option<String> = None;
     let (mut icon_key, mut tip) = (String::new(), String::new());
     let (mut last_ok, mut last_rescue) = (Instant::now(), Instant::now() - Duration::from_secs(120));
     let (mut tick, mut audio_key, mut menu_key, mut loaded) = (0u64, String::new(), String::new(), false);
+    let mut last_display = None;
     loop {
-        std::thread::sleep(Duration::from_secs(1));
+        if matches!(display_events.recv_timeout(Duration::from_secs(1)), Err(std::sync::mpsc::RecvTimeoutError::Disconnected)) {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        let display_on = display::is_on();
+        if last_display != Some(display_on) {
+            last_display = Some(display_on);
+            sync_webview_visibility(&app);
+        }
         tick += 1;
         let live = get("/api/live");
         let (key, text) = match &live {
@@ -455,7 +476,7 @@ fn monitor(app: AppHandle, tray: TrayIcon) {
             tip = text;
         }
         // peripheriques Windows par defaut : relus toutes les 4 s, envoyes a l'interface s'ils changent
-        if tick % 4 == 0 && live.is_some() {
+        if display_on && tick % 4 == 0 && live.is_some() {
             let st = audio::status();
             let k = st.to_string();
             if k != audio_key {
@@ -464,7 +485,7 @@ fn monitor(app: AppHandle, tray: TrayIcon) {
             }
         }
         // menu : micro et scenes a jour
-        if tick % 3 == 1 {
+        if display_on && tick % 3 == 1 {
             let st = get("/api/state");
             let mk = st.as_ref().map(|s| format!("{}|{}|{}|{}", s["state"]["mutes"]["Mic"], s["state"]["partial"]["Mic"], s["state"]["scene"], s["state"]["user_scenes"].as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default())).unwrap_or_default();
             let mk = format!("{mk}|{}|{}|{}", st.as_ref().map(|s| &s["modules"]).unwrap_or(&Value::Null), st.as_ref().map(|s| &s["connected"]).unwrap_or(&Value::Null), is_startup());
@@ -577,7 +598,9 @@ fn main() {
                     }
                 }
             });
-            std::thread::spawn(move || monitor(handle, tray));
+            let (display_watcher, display_events) = display::subscribe();
+            app.manage(display_watcher);
+            std::thread::spawn(move || monitor(handle, tray, display_events));
             Ok(())
         })
         .run(tauri::generate_context!())

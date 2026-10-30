@@ -1,5 +1,11 @@
 # Nouveautés
 
+## 5.6.5
+
+- **Veille des écrans sous Windows :** l’application écoute désormais les changements d’affichage de la session. Écrans éteints, WebView2 et les animations se suspendent, et les lectures de configuration audio destinées à l’interface s’arrêtent.
+- L’état des appareils est relu immédiatement au réveil, sans attendre la temporisation de la veille et sans créer de lectures parallèles.
+- Au réveil, les fenêtres déjà visibles retrouvent leur rendu ; une application réduite ou rangée près de l’horloge conserve cet état. Les notifications micro de la période de veille ne réapparaissent pas en retard. Le moteur et les réglages audio restent indépendants de l’affichage.
+
 ## 5.6.4
 
 - **GoXLR Mini : affichage plus fluide.** Les volumes reçus du matériel suivent des transitions courtes et linéaires ; les gestes à la souris, au clavier et à la molette restent directs. La réduction des animations du système reste respectée.

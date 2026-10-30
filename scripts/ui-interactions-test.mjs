@@ -251,13 +251,32 @@ for (const [page,hidden,module,meter,expected] of [
   ["mouse",false,"attack-shark-r5-ultra",false,"/api/live"],
 ]) {
   const h=harness(),c=h.context,paths=[];
-  Object.assign(c,{page,activeModule:module,bootId:null,liveKey:"",liveChanged:false});
+  Object.assign(c,{page,activeModule:module,bootId:null,liveKey:"",liveChanged:false,liveTimer:null,liveRequest:null,liveWake:false});
   c.document.hidden=hidden;
   if(meter) h.ids.set("sheet-meter",c.h("div"));
   c.api=async path=>{paths.push(path);return {v:c.V,live:{fader_positions:[0,0,0,0],pressed:[],mic_db:null}};};
   runInNewContext(section("function liveLoop()", "/* ---------- curseur generique"),c);
   await c.liveLoop();
   assert.deepEqual(paths,[expected],"la mesure USB du micro est demandee seulement pour un vumetre visible");
+}
+
+{
+  const h=harness(),c=h.context,paths=[],replies=[];
+  Object.assign(c,{page:"mixer",activeModule:"goxlr-mini",bootId:null,liveKey:"",liveChanged:false,liveTimer:null,liveRequest:null,liveWake:false});
+  c.document.hidden=true;
+  c.api=path=>{paths.push(path);return new Promise(resolve=>replies.push(()=>resolve({v:c.V,live:{fader_positions:[0,0,0,0],pressed:[],mic_db:null}})));};
+  runInNewContext(section("function wakeLive()", "/* ---------- curseur generique"),c);
+  let request=c.liveLoop();replies.shift()();await request;
+  c.document.hidden=false;
+  request=c.wakeLive();
+  assert.equal(paths.length,2,"le reveil relit immediatement, sans attendre les deux secondes de veille");
+  c.wakeLive();c.wakeLive();
+  assert.equal(paths.length,2,"plusieurs notifications de reveil ne creent pas de requetes concurrentes");
+  replies.shift()();await request;h.advance(0);
+  assert.equal(paths.length,3,"un seul suivi immediat reprend apres la requete deja en vol");
+  replies.shift()();await c.liveRequest;h.advance(20);
+  assert.equal(paths.length,4,"une seule boucle conserve la cadence normale apres le reveil");
+  replies.shift()();await c.liveRequest;
 }
 
 {

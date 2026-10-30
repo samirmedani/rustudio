@@ -73,6 +73,7 @@ function harness(storage = new Map(), denied = false) {
   context.$ = id => ids.get(id);
   runInNewContext(section("/* ---------- navigation", "/* ---------- mixeur"), context);
   runInNewContext(section("/* ---------- espace personnel et modules", "/* ---------- menu bas droite"), context);
+  Object.assign(context, {liveTimer:null,liveRequest:null,liveWake:false});
   runInNewContext(section("function liveLoop()", "/* ---------- curseur"), context);
   return {context, ids, storage, commands, visits, messages};
 }

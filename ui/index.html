@@ -827,12 +827,23 @@ function refresh(result) {
     .catch(function () { setOnline(false, false); return result || null; });
 }
 var liveChanged = true, liveKey = "", bootId = null;
-document.addEventListener("visibilitychange", function () { document.documentElement.classList.toggle("asleep", document.hidden); });
+var liveTimer = null, liveRequest = null, liveWake = false;
+document.addEventListener("visibilitychange", function () {
+  document.documentElement.classList.toggle("asleep", document.hidden);
+  if (!document.hidden) wakeLive();
+});
 document.documentElement.classList.toggle("asleep", document.hidden);
+function wakeLive() {
+  if (liveTimer !== null) { clearTimeout(liveTimer); liveTimer = null; }
+  if (liveRequest) { liveWake = true; return liveRequest; }
+  return liveLoop();
+}
 function liveLoop() {
+  if (liveRequest) return liveRequest;
+  liveTimer = null;
   // Le vumetre micro necessite un echange USB supplementaire : uniquement s'il est visible.
   var level = !document.hidden && activeModule === "goxlr-mini" && (page === "mic" || !!$("sheet-meter"));
-  return api(level ? "/api/live?level=1" : "/api/live").then(function (l) {
+  liveRequest = api(level ? "/api/live?level=1" : "/api/live").then(function (l) {
     if (bootId && l.boot && l.boot !== bootId) { location.reload(); return; }
     bootId = l.boot || bootId;
     L = l; setOnline(true, l.connected, l.health, l.usb);
@@ -840,7 +851,12 @@ function liveLoop() {
     if (k !== liveKey) { liveKey = k; liveChanged = true; }
     if (l.v !== V && !pending) return refresh();
   }).catch(function () { setOnline(false, false); })
-    .finally(function () { setTimeout(liveLoop, document.hidden ? 2000 : activeModule === "goxlr-mini" ? (page === "mixer" || page === "light" ? 20 : 50) : 250); });
+    .finally(function () {
+      liveRequest = null;
+      var delay = liveWake ? 0 : document.hidden ? 2000 : activeModule === "goxlr-mini" ? (page === "mixer" || page === "light" ? 20 : 50) : 250;
+      liveWake = false; liveTimer = setTimeout(liveLoop, delay);
+    });
+  return liveRequest;
 }
 
 /* ---------- curseur generique ---------- */
