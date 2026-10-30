@@ -103,7 +103,9 @@ Voir [les fonctions et limites du module](docs/R5-ULTRA.md).
 
 - **Couper d'une seule sortie** : chaque bouton mute a son mode (partout, stream, Discord, casque, enceintes).
   Appui long = coupé partout, le bouton clignote.
-- **Faders physiques** suivis en direct ; une valeur lue une seule fois est ignorée.
+- **Faders physiques** suivis pendant leur mouvement, sans renvoyer d’anciennes valeurs au matériel ; un pic isolé est filtré.
+  La Mini n’est pas motorisée : un réglage à l’écran change le volume, pas la position de sa poignée.
+  Le prochain mouvement physique reprend la main.
 - **Anti-écho** : tout ce qui peut faire entendre une voix en double est vérifié au même endroit, avec une
   correction en un clic, et un vrai test (trois bips joués dans Discord, ton micro écouté, écho mesuré).
 - **Appli Windows** : icône d'état près de l'horloge (rouge = micro coupé), bulle à l'écran quand le micro change

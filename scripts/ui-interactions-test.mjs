@@ -14,7 +14,8 @@ function section(start, end) {
 
 function harness() {
   const ids = new Map(), listeners = {}, frames = [], messages = [], requests = [];
-  let document;
+  let document, now = 1000, timerId = 0;
+  const timers = new Map();
   class Element {
     constructor(tag) {
       this.tagName = tag.toUpperCase(); this.children = []; this.parentElement = null;
@@ -79,11 +80,12 @@ function harness() {
   }
   const box = new Element("div"); box.setAttribute("id", "sheet-box"); ids.get("sheet").appendChild(box);
   const context = {
-    document, performance: {now: () => 1000}, pending: 0, V: 1, S: {state: {name: "avant"}}, built: {}, sc: {},
+    document, performance: {now: () => now}, pending: 0, V: 1, S: {state: {name: "avant"}}, built: {}, sc: {},
     toast: (message, action, fn) => messages.push({message, action, fn}),
     installedModule: id => context.S?.modules?.installed?.find(m => m.id === id) || null,
     render() {}, setOnline() {}, svg: () => "", chipIco: () => "", clamp: (v, a, b) => Math.max(a, Math.min(b, v)),
-    setTimeout() {}, requestAnimationFrame: fn => frames.push(fn),
+    setTimeout(fn, delay = 0) { const id = ++timerId; timers.set(id, {fn, at:now+delay}); return id; },
+    clearTimeout(id) { timers.delete(id); }, requestAnimationFrame: fn => frames.push(fn),
     fetch: async (path, options) => {
       requests.push({path, options});
       return {ok: true, json: async () => options?.method === "POST" ? {ok: true} : {v: 2, state: {name: "après"}}};
@@ -100,6 +102,10 @@ function harness() {
   runInNewContext(section("function buildScenes()", "function sceneLabel("), context);
   return {
     context, document, messages, requests, ids,
+    advance(ms) {
+      now += ms;
+      for (;;) { const due = [...timers].find(([, t]) => t.at <= now); if (!due) break; timers.delete(due[0]); due[1].fn(); }
+    },
     frame: () => { while (frames.length) frames.shift()(); },
     key: props => { const e = {preventDefault() { this.defaultPrevented = true; }, ...props}; for (const fn of listeners.keydown || []) fn(e); return e; },
   };
@@ -205,6 +211,21 @@ for (const failure of ["HTTP", "réseau"]) {
   slider.el.fire("keydown", {key: "ArrowDown", ctrlKey: true}); assert.equal(slider.value, 10);
   assert.ok(slider.el.fire("wheel", {deltaY: 100}).defaultPrevented); assert.equal(slider.value, 9);
   assert.ok(committed.length >= 5, "le clavier et la molette ciblée transmettent le réglage");
+}
+
+{
+  const h = harness(), writes = [], slider = h.context.Slider({label:"Volume", min:0, max:255, step:1, value:72, settleMs:120, onInput:v=>writes.push(v)});
+  slider.el.fire("keydown", {key:"ArrowUp"});
+  slider.set(180); slider.set(255);
+  assert.equal(slider.value, 73, "la valeur locale reste pendant le court delai de confirmation");
+  h.advance(121);
+  assert.equal(slider.value, 255, "la derniere lecture se rejoue sans nouveau changement API : pas de curseur fige");
+  assert.equal(slider.busy(), false);
+  assert.deepEqual(writes, [73], "appliquer un etat recu ne renvoie aucune commande de volume");
+  slider.el.fire("keydown", {key:"Home"}); slider.set(200);
+  slider.el.fire("keydown", {key:"ArrowUp"}); h.advance(121);
+  assert.equal(slider.value, 1, "une nouvelle action locale invalide une ancienne lecture differee");
+  slider.set(255); assert.equal(slider.value, 255, "les mouvements physiques suivants sont immediats hors interaction locale");
 }
 
 {

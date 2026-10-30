@@ -521,8 +521,8 @@ select.inp option{background:#fff;color:var(--text)}
 .lib-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);white-space:nowrap}
 .lib-card p{margin:0;color:var(--text2);font-size:13px;line-height:1.45;flex:1}
 .lib-feat span{font-size:11.5px;padding:3px 9px;border-radius:999px;background:rgba(118,118,128,.1);color:var(--text2)}
-.lib-act{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-top:auto}
-.lib-on{display:inline-flex;align-items:center;gap:6px;color:#1e7e34;font-size:12.5px;font-weight:600}.lib-on svg{width:15px;height:15px}
+.lib-act{display:flex;justify-content:flex-end;align-items:center;gap:10px 16px;flex-wrap:wrap;margin-top:auto}
+.lib-on{display:inline-flex;align-items:center;gap:6px;margin-right:auto;flex-shrink:0;white-space:nowrap;color:#1e7e34;font-size:12.5px;font-weight:600}.lib-on svg{width:15px;height:15px}
 .lib-foot{margin-top:18px;font-size:12.5px;line-height:1.5;max-width:760px}
 .echo-sec{margin-top:16px}.echo-sec h4{margin:0 0 8px;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)}
 .notes{margin-top:16px;max-height:280px;overflow:auto;padding:14px 16px;border-radius:14px;background:rgba(118,118,128,.07);color:var(--text2);font-size:13.5px;line-height:1.55;user-select:text;-webkit-user-select:text}
@@ -842,7 +842,15 @@ function Slider(o) {
     "aria-label": o.label || "Réglage", "aria-orientation": o.vertical ? "vertical" : "horizontal", "aria-valuemin": o.min, "aria-valuemax": o.max});
   var track = h("div", {"class": "sl-track"}), fill = h("div", {"class": "sl-fill"}), knob = h("div", {"class": "sl-knob"});
   track.appendChild(fill); track.appendChild(knob); el.appendChild(track);
-  var value = o.value != null ? o.value : o.min, dragging = false, lockUntil = 0;
+  var value = o.value != null ? o.value : o.min, dragging = false, lockUntil = 0, deferred = null, unlockTimer = null;
+  function applyDeferred() {
+    unlockTimer = null;
+    if (dragging || deferred === null) return;
+    var wait = lockUntil - performance.now();
+    if (wait > 0) { unlockTimer = setTimeout(applyDeferred, Math.ceil(wait)); return; }
+    var v = deferred; deferred = null;
+    if (v !== value) { value = v; paint(); }
+  }
   function frac(v) { return (v - o.min) / (o.max - o.min); }
   function paint() {
     el.setAttribute("aria-valuenow", value);
@@ -859,7 +867,9 @@ function Slider(o) {
   }
   function setLocal(v, commit) {
     v = clamp(v, o.min, o.max);
-    lockUntil = performance.now() + 900;
+    if (unlockTimer !== null) { clearTimeout(unlockTimer); unlockTimer = null; }
+    deferred = null;
+    lockUntil = performance.now() + (o.settleMs == null ? 900 : o.settleMs);
     if (v !== value) { value = v; paint(); if (o.onInput) o.onInput(v); }
     if (commit && o.onCommit) o.onCommit(v);
   }
@@ -888,7 +898,7 @@ function Slider(o) {
   paint();
   return {
     el: el, track: track,
-    set: function (v) { if (dragging || performance.now() < lockUntil) return; if (v !== value) { value = v; paint(); } },
+    set: function (v) { deferred = v; if (unlockTimer === null) applyDeferred(); },
     colour: function (c) { el.style.setProperty("--c", c); },
     get value() { return value; },
     busy: function () { return dragging || performance.now() < lockUntil; }
@@ -1132,7 +1142,7 @@ function buildMixer() {
     var st = h("div", {"class": "strip"});
     st.innerHTML = '<span class="fnum">FADER ' + (i + 1) + '</span>';
     var head = h("button", {"class": "strip-head", title: "Changer la voie de ce fader"});
-    var sl = Slider({label: "Volume du fader " + (i + 1), format: function (v) { return pct(v) + " %"; }, vertical: true, min: 0, max: 255, step: 1, wheel: 5,
+    var sl = Slider({label: "Volume du fader " + (i + 1), format: function (v) { return pct(v) + " %"; }, vertical: true, min: 0, max: 255, step: 1, wheel: 5, settleMs: 120,
       onInput: function (v) { var ch = S.state.faders[f]; S.state.volumes[ch] = v; volumeSender(ch)(v); paintStripVal(f); },
       onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: S.state.faders[f], value: v}); }});
     var ghost = h("div", {"class": "ghost"}); sl.track.appendChild(ghost);
@@ -1149,6 +1159,7 @@ function buildMixer() {
     grid.appendChild(st);
     strips[f] = {el: st, head: head, sl: sl, ghost: ghost, note: note, val: val, mute: mute, cap: cap};
   });
+  root.appendChild(h("p", {"class":"workspace-note",style:"margin:0 0 14px;color:var(--text2)"}, "Les curseurs règlent le volume. La Mini n’est pas motorisée : ses poignées restent en place. Bouger un fader physique reprend la main."));
   root.appendChild(grid);
   var card = h("div", {"class": "card others"});
   root.appendChild(card);
@@ -1224,7 +1235,7 @@ function renderOthers() {
     list.forEach(function (ch) {
       var row = h("div", {"class": "orow"});
       row.innerHTML = chipIco(ch, col(ch)) + '<span class="nm">' + LABELS[ch] + '</span>';
-      var sl = Slider({label: "Volume " + LABELS[ch], format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, wheel: 5, colour: col(ch),
+      var sl = Slider({label: "Volume " + LABELS[ch], format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, wheel: 5, settleMs: 120, colour: col(ch),
         onInput: function (v) { S.state.volumes[ch] = v; volumeSender(ch)(v); p.textContent = pct(v) + " %"; },
         onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: ch, value: v}); }});
       var p = h("span", {"class": "pct"});
@@ -1261,7 +1272,7 @@ function liveMixer() {
     s.ghost.style.bottom = (pos / 255 * 100) + "%";
     s.ghost.classList.toggle("show", off);
     s.note.classList.toggle("show", off);
-    if (off) s.note.textContent = "Fader physique à " + pct(pos) + " %";
+    if (off) s.note.textContent = "Niveau lu sur la GoXLR : " + pct(pos) + " %";
   });
 }
 

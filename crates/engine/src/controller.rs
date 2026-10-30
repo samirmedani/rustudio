@@ -127,8 +127,7 @@ pub struct Inner {
     pub save_dirty: bool,
     pub prev_mask: u32,
     pub prev_pos: Option<[u8; 4]>,
-    pub pos_cand: [u8; 4],
-    pub pos_count: [u32; 4],
+    pub pos_history: [[u8; 2]; 4],
     pub faders_seen: bool,
     pub btn: HashMap<&'static str, (Instant, bool)>,
     pub bleep: bool,
@@ -402,29 +401,27 @@ impl Inner {
             self.on_hold(name);
         }
         let mut changed = false;
-        let mut a_envoyer: Vec<String> = Vec::new();
         match self.prev_pos {
             None => {
                 // premiere lecture : la reference, rien a appliquer
                 self.prev_pos = Some(vols);
-                self.pos_cand = vols;
-                self.pos_count = [crate::controller::FADER_STABLE; 4];
+                self.pos_history = vols.map(|v| [v; 2]);
                 self.faders_seen = self.faders_seen || vols.iter().any(|v| *v != 0);
             }
             Some(mut prev) => {
-                // une position ne compte qu'une fois stable : certaines Mini renvoient des valeurs fugaces
                 for i in 0..4 {
-                    let (mut cand, mut count) = (self.pos_cand[i], self.pos_count[i]);
-                    let accepte = fader_accept(prev[i], &mut cand, &mut count, vols[i]);
-                    self.pos_cand[i] = cand;
-                    self.pos_count[i] = count;
-                    if accepte {
-                        prev[i] = vols[i]; // fader physique bouge : l'appareil a deja change le volume
-                        self.faders_seen = true;
+                    let value = fader_filtered(prev[i], &mut self.pos_history[i], vols[i]);
+                    if let Some(value) = value {
                         let c = self.state.fader_channel(FADERS[i]).to_string();
-                        if self.state.volume(&c) != vols[i] as i32 {
-                            self.state.volumes.insert(c.clone(), vols[i] as i32);
-                            a_envoyer.push(c);
+                        // Une commande logicielle arrivee pendant cette lecture doit partir avant
+                        // d'accepter un nouvel etat du materiel.
+                        if self.dirty.contains(&Key::All) || self.dirty.contains(&Key::Faders) || self.dirty.contains(&Key::Volume(ch(&c))) {
+                            continue;
+                        }
+                        prev[i] = value;
+                        self.faders_seen = true;
+                        if self.state.volume(&c) != value as i32 {
+                            self.state.volumes.insert(c, value as i32);
                             changed = true;
                         }
                     }
@@ -432,11 +429,8 @@ impl Inner {
                 self.prev_pos = Some(prev);
             }
         }
-        // Le fader indique une position ; c'est au logiciel de l'appliquer au mixeur (comme goxlr-utility).
-        // Sans cela, la position etait enregistree mais le son ne suivait pas.
-        for name in a_envoyer {
-            self.mark(&[Key::Volume(ch(&name))], false);
-        }
+        // La Mini applique deja les mouvements physiques a son mixeur. Les renvoyer en
+        // commandes Volume peut ecraser un mouvement plus recent et figer le niveau.
         if changed {
             self.version += 1;
             self.save_dirty = true;
@@ -838,23 +832,18 @@ impl Inner {
     }
 }
 
-pub const FADER_STABLE: u32 = 3;
-/// Un fader est un potentiometre : au repos sa valeur oscille de quelques unites. Exiger des lectures
-/// strictement identiques ferait manquer toute position intermediaire, et le volume ne suivrait pas le fader.
-pub const FADER_TOLERANCE: i16 = 2;
-/// Ecart minimal applique, pour ne pas transformer ce bruit en variations de volume.
+/// Deux unites d'hysteresis eliminent le bruit au repos. Les butees restent exactes.
 pub const FADER_DEADZONE: i16 = 2;
 
-/// Position retenue apres plusieurs lectures proches (bruit tolere) et seulement si elle s'ecarte vraiment de la
-/// position connue. Un pic isole laisse un compteur trop bas : il ne change rien.
-pub fn fader_accept(prev: u8, cand: &mut u8, count: &mut u32, value: u8) -> bool {
-    if (value as i16 - *cand as i16).abs() <= FADER_TOLERANCE {
-        *count = count.saturating_add(1);
-    } else {
-        *cand = value;
-        *count = 1;
-    }
-    *count >= FADER_STABLE && (value as i16 - prev as i16).abs() >= FADER_DEADZONE
+/// Mediane des trois dernieres lectures : un pic isole est ignore, un mouvement continu
+/// est suivi avec une seule lecture de retard, sans attendre que le fader s'immobilise.
+pub fn fader_filtered(prev: u8, history: &mut [u8; 2], value: u8) -> Option<u8> {
+    let mut values = [history[0], history[1], value];
+    *history = [history[1], value];
+    values.sort_unstable();
+    let filtered = values[1];
+    let delta = (filtered as i16 - prev as i16).abs();
+    (delta >= FADER_DEADZONE || (delta != 0 && matches!(filtered, 0 | 255))).then_some(filtered)
 }
 
 type CallFn = Box<dyn FnOnce(&mut GoXlr) -> Result<Value, DevError> + Send>;
@@ -932,7 +921,7 @@ impl Ctl {
         let inner = Inner {
             state: st, connected: false, present: None, last_error: None, connected_since: None, conn_mono: None,
             live: Live::default(), version: 1, job: None, fast_level: false, level_until: None, dirty: HashSet::new(),
-            want: 0, done: 0, save_dirty: first_run, prev_mask: 0, prev_pos: None, pos_cand: [0; 4], pos_count: [0; 4],
+            want: 0, done: 0, save_dirty: first_run, prev_mask: 0, prev_pos: None, pos_history: [[0; 2]; 4],
             faders_seen: false, btn: HashMap::new(), bleep: false, blink: HashMap::new(), gain_override: None,
             listen_until: None, sound_test_until: None, listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
             errors: VecDeque::new(), connects: 0, reconnects: 0, fail_streak: 0, auto_active: AutoActive::Off,
@@ -1079,7 +1068,17 @@ impl Ctl {
         };
         let n = ops.len();
         for op in ops {
+            let volume = match &op { Op::Volume(c, v) => Some((*c, *v as u8)), _ => None };
             exec(dev, op)?;
+            if let Some((channel, value)) = volume {
+                let mut g = self.lock();
+                for (i, fader) in FADERS.iter().enumerate() {
+                    if ch(g.state.fader_channel(fader)) == channel {
+                        g.pos_history[i] = [value; 2];
+                        if let Some(ref mut prev) = g.prev_pos { prev[i] = value; }
+                    }
+                }
+            }
             self.beat();
         }
         let mut g = self.lock();
@@ -1448,39 +1447,36 @@ pub fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
 
 #[cfg(test)]
 mod fader_tests {
-    use super::{fader_accept, FADER_TOLERANCE};
+    use super::fader_filtered;
 
     #[test]
-    fn fader_analogique_bruite_finit_par_etre_suivi() {
-        let (mut cand, mut count, mut prev) = (0u8, 0u32, 0u8);
-        let mut acceptes = vec![];
-        for v in [136u8, 138, 137, 137, 139, 136, 138] {
-            if fader_accept(prev, &mut cand, &mut count, v) {
-                prev = v;
-                acceptes.push(v);
-            }
+    fn mouvement_continu_suivi_avec_une_seule_lecture_de_retard() {
+        let mut history = [0; 2];
+        let mut previous = 0;
+        let trajectory = [20, 50, 90, 130, 180, 220, 255, 255];
+        for (i, value) in trajectory.into_iter().enumerate() {
+            if let Some(filtered) = fader_filtered(previous, &mut history, value) { previous = filtered; }
+            assert_eq!(previous, if i == 0 { 0 } else { trajectory[i - 1] });
         }
-        assert!(!acceptes.is_empty(), "le bruit ne doit plus bloquer une position intermediaire");
-        assert!((acceptes[0] as i16 - 137).abs() <= FADER_TOLERANCE, "{acceptes:?}");
+        assert_eq!(previous, 255);
     }
 
     #[test]
     fn pic_isole_ignore() {
-        let (mut cand, mut count) = (128u8, 3u32);
-        assert!(!fader_accept(128, &mut cand, &mut count, 255), "un seul pic ne change rien");
-        assert_eq!((cand, count), (255, 1));
-        for _ in 0..3 {
-            let _ = fader_accept(128, &mut cand, &mut count, 128);
+        let mut history = [128; 2];
+        for value in [255, 128, 128, 0, 128, 128] {
+            assert_eq!(fader_filtered(128, &mut history, value), None);
         }
-        assert!(!fader_accept(128, &mut cand, &mut count, 128), "retour a la position connue : rien a appliquer");
     }
 
     #[test]
-    fn bruit_d_unite_ignore_puis_grand_ecart_applique() {
-        let (mut cand, mut count) = (100u8, 3u32);
-        assert!(!fader_accept(100, &mut cand, &mut count, 101), "une unite : bruit du potentiometre");
-        assert!(!fader_accept(100, &mut cand, &mut count, 140), "premiere lecture loin : pas encore stable");
-        assert!(!fader_accept(100, &mut cand, &mut count, 140));
-        assert!(fader_accept(100, &mut cand, &mut count, 141), "trois lectures proches : position suivie");
+    fn bruit_d_unite_ignore_et_butees_exactes() {
+        let mut history = [100; 2];
+        for value in [101, 100, 101, 100] { assert_eq!(fader_filtered(100, &mut history, value), None); }
+        for (previous, end) in [(254, 255), (1, 0)] {
+            let mut history = [previous; 2];
+            assert_eq!(fader_filtered(previous, &mut history, end), None);
+            assert_eq!(fader_filtered(previous, &mut history, end), Some(end));
+        }
     }
 }

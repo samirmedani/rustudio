@@ -4,7 +4,7 @@ members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/engine"
 default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/engine"]
 
 [workspace.package]
-version = "5.6.1"
+version = "5.6.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/samirmedani/rustudio"

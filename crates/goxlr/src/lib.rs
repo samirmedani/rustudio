@@ -369,7 +369,9 @@ impl GoXlr {
     pub fn set_button_states(&mut self, states: &[u8]) -> Res<()> {
         self.command(0x808 << 12, states).map(|_| ())
     }
-    /// (masque des boutons, position des 4 faders, encodeurs)
+    /// (masque des boutons, niveaux des 4 voies de faders, encodeurs).
+    /// Sur la Mini, ces niveaux suivent aussi SetChannelVolume : ce ne sont pas des
+    /// coordonnees absolues des poignees non motorisees.
     pub fn get_button_states(&mut self) -> Res<(u32, [u8; 4], [i8; 4])> {
         let b = self.command(0x800 << 12, &[])?;
         if b.len() < 12 {

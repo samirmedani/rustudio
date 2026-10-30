@@ -1,5 +1,14 @@
 # Nouveautés
 
+## 5.6.2
+
+- **GoXLR Mini : synchronisation des faders corrigée.** Le moteur ne renvoie plus au matériel les niveaux déjà appliqués par les faders, ce qui pouvait écraser un mouvement récent et laisser un niveau bloqué.
+- Les mouvements continus sont suivis sans attendre l’immobilisation, avec filtrage des pics isolés et butées exactes à 0 et 100 %.
+- Un curseur manipulé à la souris reprend automatiquement la dernière valeur reçue après le glissement. La courte protection du geste ne laisse plus le curseur figé.
+- L’interface explique la priorité : un réglage logiciel change le volume sans déplacer la poignée non motorisée ; le prochain mouvement physique reprend la main.
+
+- **Modules** : le statut « Dans Mes appareils » reste à gauche de la carte et le bouton « Ouvrir » à droite, avec un espacement adapté à la largeur disponible.
+
 ## 5.6.1
 
 - **Souris : modifier, puis enregistrer.** Les DPI, le palier, la fréquence et les options se modifient immédiatement à l’écran sans envoyer de commande. Un bouton **Enregistrer** apparaît pour appliquer tous les changements ensemble ; **Annuler** les abandonne.

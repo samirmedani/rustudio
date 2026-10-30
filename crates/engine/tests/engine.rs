@@ -80,6 +80,11 @@ impl Bench {
             t.join().unwrap();
         }
     }
+    fn manual(&mut self) {
+        self.stop_loop();
+        self.ctl.with_dev(|d| self.ctl.connect(d, true).unwrap());
+        self.ctl.with_dev(|d| self.ctl.poll_once(d, false).unwrap());
+    }
     fn led(&self, button: &str) -> u8 {
         self.sim.lock().dev.button_states[button_bit(button).unwrap() as usize]
     }
@@ -312,17 +317,20 @@ fn bouton_micro_maintenir_pour_couper() {
 
 #[test]
 fn faders_physiques() {
-    let b = Bench::new();
+    let mut b = Bench::new();
     b.sim.move_fader(2, 77);
     let c = b.ctl.lock().state.faders["C"].clone();
     assert!(wait_for(2.0, || b.ctl.lock().state.volume(&c) == 77));
+    b.stop_loop();
     // une valeur lue une seule fois ne change rien
+    let baseline = b.ctl.lock().prev_pos.unwrap();
     let a = b.ctl.lock().state.faders["A"].clone();
     let before = b.ctl.lock().state.volume(&a);
     {
         let mut g = b.ctl.lock();
-        for v in [128u8, 255, 128, 128, 128, 128] {
-            g.handle_inputs(0, [v, 128, 77, 128], Instant::now());
+        for v in [baseline[0], 255, baseline[0], baseline[0], baseline[0], baseline[0]] {
+            let mut report = baseline; report[0] = v;
+            g.handle_inputs(0, report, Instant::now());
         }
     }
     assert_eq!(b.ctl.lock().state.volume(&a), before);
@@ -339,7 +347,7 @@ fn faders_physiques() {
 }
 
 #[test]
-fn fader_physique_applique_le_volume_au_mixeur() {
+fn fader_physique_met_a_jour_etat_sans_retransmettre_le_volume() {
     let mut b = Bench::new();
     b.stop_loop();
     let c = b.ctl.lock().state.faders["A"].clone();
@@ -349,10 +357,52 @@ fn fader_physique_applique_le_volume_au_mixeur() {
         for v in [90u8, 91, 90, 91, 90] {
             g.handle_inputs(0, [v, 128, 128, 128], Instant::now());
         }
-        assert_eq!(g.state.volume(&c), 90 as i32, "le fader bouge, le volume suit");
-        assert!(g.dirty.contains(&rustudio_engine::controller::Key::Volume(rustudio_engine::controller::ch(&c))),
-            "le nouveau volume doit partir vers la GoXLR : {:?}", g.dirty);
+        assert!((90..=91).contains(&g.state.volume(&c)), "le fader bruite est suivi");
+        assert!(!g.dirty.contains(&rustudio_engine::controller::Key::Volume(rustudio_engine::controller::ch(&c))),
+            "la Mini a deja applique le volume : une retransmission pourrait ecraser un mouvement plus recent");
     }
+}
+
+#[test]
+fn mouvement_plus_recent_jamais_ecrase_par_un_echo_logiciel() {
+    let mut b = Bench::new();
+    b.manual();
+    let channel = b.ctl.lock().state.faders["A"].clone();
+    b.act("volume", json!({"channel":channel,"value":72}));
+    b.ctl.with_dev(|d| b.ctl.flush(d).unwrap());
+    for _ in 0..3 {
+        b.sim.move_fader(0, 90);
+        b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap());
+    }
+    assert_eq!(b.ctl.lock().state.volume(&channel), 90);
+    // L'utilisateur continue a monter APRES la lecture, avant le prochain flush.
+    b.sim.move_fader(0, 255);
+    let sent = b.ctl.with_dev(|d| b.ctl.flush(d).unwrap());
+    assert_eq!(sent, Some(0), "aucune commande en echo du mouvement physique");
+    assert_eq!(b.sim.lock().dev.volumes[rustudio_engine::controller::ch(&channel)], 255);
+    for _ in 0..2 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
+    assert_eq!(b.ctl.lock().state.volume(&channel), 255);
+    assert_eq!(b.ctl.lock().live.fader_positions[0], Some(255));
+}
+
+#[test]
+fn souris_puis_fader_physique_derniere_action_prioritaire() {
+    let mut b = Bench::new();
+    b.manual();
+    let channel = b.ctl.lock().state.faders["A"].clone();
+    let knob = b.sim.lock().dev.fader_pos[0];
+    b.act("volume", json!({"channel":channel,"value":72}));
+    // Une lecture precedant l'ecriture ne doit pas annuler la demande logicielle.
+    { let mut g = b.ctl.lock(); for _ in 0..3 { g.handle_inputs(0, [200;4], Instant::now()); } }
+    assert_eq!(b.ctl.lock().state.volume(&channel), 72);
+    b.ctl.with_dev(|d| b.ctl.flush(d).unwrap());
+    for _ in 0..3 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
+    assert_eq!(b.ctl.lock().state.volume(&channel), 72);
+    assert_eq!(b.sim.lock().dev.fader_pos[0], knob, "un volume logiciel ne deplace pas la poignee");
+    b.sim.move_fader(0, 255);
+    for _ in 0..2 { b.ctl.with_dev(|d| b.ctl.poll_once(d, false).unwrap()); }
+    assert_eq!(b.ctl.lock().state.volume(&channel), 255);
+    assert_eq!(b.ctl.with_dev(|d| b.ctl.flush(d).unwrap()), Some(0));
 }
 
 // ---------- routage ----------
