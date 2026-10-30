@@ -5,8 +5,8 @@
 <h1 align="center">Rustudio</h1>
 
 <p align="center">
-  <b>Ta GoXLR Mini, ta voix et ton son, réglés proprement.</b><br>
-  Logiciel libre pour Windows, écrit en Rust, qui pilote ton matériel avec le seul pilote officiel.
+  <b>Ton matériel, dans un même espace.</b><br>
+  Logiciel libre pour Windows, écrit en Rust, organisé en modules. Premier appareil pris en charge : la GoXLR Mini.
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/captures/mixer.jpg" width="880" alt="Mixeur de Rustudio : quatre faders, et une mise à jour proposée en bas à gauche">
+  <img src="docs/captures/devices.jpg" width="880" alt="Accueil Mes appareils de Rustudio : un espace propre à chaque appareil">
 </p>
 
 *Open-source controller for your desk gear on Windows, written in Rust. First device: the TC-Helicon GoXLR Mini,
@@ -32,16 +32,33 @@ headphone EQ, echo check, OBS overlay, opt-in updates). Anyone can add a device 
 
 ## Pourquoi
 
-La GoXLR se pilote depuis l'ordinateur : sans logiciel, ses boutons ne coupent rien et ses couleurs restent
-figées. Rustudio est un moteur qui parle directement au pilote officiel de TC-Helicon, et une appli claire pour tout
-régler. Il tourne en service Windows dès le démarrage, se relance seul s'il a un souci et reprend la GoXLR dès
-qu'elle est rebranchée.
+Rustudio réunit les réglages de ton matériel dans une seule application. **Mes appareils** est l'accueil : tu y
+vois les appareils pris en charge par les modules livrés, leur état et l'accès à leurs réglages. **Modules** présente
+le catalogue et les appareils pour lesquels tu peux contribuer.
 
-Rustudio vise plus loin qu'un seul appareil. Chaque matériel est un **module**, et la **bibliothèque** intégrée
-liste ceux qui existent et ceux qu'il reste à écrire : souris, claviers, écrans… N'importe qui, ou son agent de
-code, peut ajouter le sien par une pull request.
+La version actuelle livre un seul module fonctionnel : **GoXLR Mini**. Souris, claviers, écrans et GoXLR complète
+sont des pistes de contribution ; leur présence au catalogue ne signifie pas qu'ils sont pilotés par Rustudio.
+Les modules sont compilés dans l'application : aucun code du catalogue n'est téléchargé ou installé à la volée.
 
-## Ce qu'il sait faire
+Le moteur tourne en service Windows dès le démarrage et se relance s'il a un souci. Le module GoXLR Mini parle
+au pilote officiel de TC-Helicon et reprend l'appareil quand il est rebranché.
+
+## Retrouver ton matériel
+
+1. Ouvre **Mes appareils** : les appareils déjà détectés ou ajoutés gardent leur carte après un débranchement.
+   Pour ajouter un appareil hors ligne, passe par **Modules**.
+2. Choisis **GoXLR Mini** pour ouvrir son espace : Mixeur, Micro, Casque, Routage, Éclairage et Scènes.
+3. Ouvre **Modules** pour consulter les appareils disponibles ou à contribuer. Seul un module livré et son
+   adaptateur matériel permettent de piloter un appareil.
+
+Le menu de l'icône Windows donne aussi accès à **Mes appareils**, **Modules**, puis aux actions de la **GoXLR Mini**
+dans son propre sous-menu quand elle est connectée.
+
+<p align="center">
+  <img src="docs/captures/modules.jpg" width="880" alt="Catalogue Modules : les modules livrés sont distingués des appareils à contribuer">
+</p>
+
+## Ce que le module GoXLR Mini sait faire
 
 <table>
 <tr>
@@ -62,11 +79,11 @@ code, peut ajouter le sien par une pull request.
 </tr>
 <tr>
 <td><img src="docs/captures/light.jpg" alt="Page Éclairage"></td>
-<td><img src="docs/captures/library.jpg" alt="Bibliothèque d'appareils"></td>
+<td><img src="docs/captures/mixer.jpg" alt="Mixeur du module GoXLR Mini"></td>
 </tr>
 <tr>
 <td><b>Éclairage</b> : thèmes (les barres prennent la couleur de la voie), couleurs par bouton, styles des barres, animations.</td>
-<td><b>Bibliothèque</b> : les appareils pris en charge et ceux à contribuer, avec leur statut (officiel, communautaire, générique).</td>
+<td><b>Mixeur</b> : quatre faders, toutes les voies et leurs volumes, avec les boutons de coupure par sortie.</td>
 </tr>
 </table>
 
@@ -94,8 +111,8 @@ code, peut ajouter le sien par une pull request.
 
 ## Une voix propre, sans écho
 
-1. Page **Micro › Régler ma voix** : parle une dizaine de secondes, puis tais-toi. Le gain se cale sur ta voix ;
-   aucun traitement ne s'allume. Allume ensuite ceux qui t'aident et vérifie avec **M'écouter**.
+1. Dans **Mes appareils › GoXLR Mini › Micro › Régler ma voix** : parle une dizaine de secondes, puis tais-toi.
+   Le gain se cale sur ta voix ; aucun traitement ne s'allume. Allume ensuite ceux qui t'aident et vérifie avec **M'écouter**.
 2. **Anti-écho** (menu ⋯ ou page Micro) : Rustudio vérifie le routage, le micro que Windows donne à Discord et
    aux jeux (« Chat Mic », jamais « Broadcast Stream Mix »), puis mesure l'écho pour de vrai.
 3. **Discord** : micro « Chat Mic », sortie « Chat ». Avec un casque, coupe l'annulation d'écho et le réglage
@@ -105,13 +122,16 @@ code, peut ajouter le sien par une pull request.
 
 ## Installer
 
-1. Installe le **pilote officiel GoXLR** de TC-Helicon, et ferme GoXLR Utility ou l'appli officielle :
-   deux logiciels ne peuvent pas piloter la GoXLR en même temps.
-2. Télécharge **[Rustudio-Setup.exe](https://github.com/samirmedani/rustudio/releases/latest)** et lance-le
+1. Télécharge **[Rustudio-Setup.exe](https://github.com/samirmedani/rustudio/releases/latest)** et lance-le
    (droits administrateur), puis **Installer**.
-3. Tu utilisais **GoXLR Mini** ? L'installeur le remplace et reprend tes réglages (voix, scènes, couleurs,
-   égaliseur). Tu peux aussi cliquer « Mettre à jour » dans GoXLR Mini : si Rustudio ne reprend pas ta GoXLR,
-   GoXLR Mini revient tout seul.
+2. Ouvre **Mes appareils**. Pour la **GoXLR Mini**, installe le **pilote officiel GoXLR** de TC-Helicon et ferme
+   GoXLR Utility ou l'appli officielle : deux logiciels ne peuvent pas piloter la GoXLR en même temps.
+3. Ouvre sa carte pour régler ton son. Les appareils indiqués « À contribuer » dans **Modules** demandent
+   encore un module ; installer Rustudio ne les rend pas compatibles.
+
+Tu utilisais l'ancien logiciel **GoXLR Mini** ? L'installeur le remplace et reprend tes réglages (voix, scènes,
+couleurs, égaliseur). Son bouton « Mettre à jour » permet aussi le passage à Rustudio, avec retour arrière si
+Rustudio ne reprend pas l'appareil.
 
 <p align="center">
   <img src="docs/captures/setup.jpg" width="420" alt="Installeur de Rustudio">
@@ -134,8 +154,8 @@ Rien ne s'installe sans ton clic. « Mettre à jour maintenant » :
 3. met la version en place de côté, installe la nouvelle et redémarre le service ;
 4. si la nouvelle version ne répond pas, **remet l'ancienne** toute seule.
 
-Aucune télémétrie : le seul échange avec Internet est la lecture de la dernière release (et de la liste de la
-bibliothèque), sans compte ni identifiant, puis le téléchargement que tu as accepté.
+Aucune télémétrie : le seul échange avec Internet est la lecture de la dernière release (et du catalogue de
+modules), sans compte ni identifiant, puis le téléchargement que tu as accepté.
 
 ## Comment ça marche
 
@@ -143,24 +163,27 @@ bibliothèque), sans compte ni identifiant, puis le téléchargement que tu as a
 flowchart LR
   A["Appli Rustudio.exe<br/>(Tauri 2 : fenêtre, icône, bulle,<br/>périphériques Windows)"] -- "HTTP 127.0.0.1:14565" --> C
   O["OBS<br/>source navigateur"] -- HTTP --> C
-  S["Service « Rustudio »<br/>superviseur"] -- "lance, surveille, relance" --> C["Moteur Rust<br/>un seul fil USB"]
-  C -- "pilote officiel<br/>(API Thesycon)" --> D["GoXLR Mini"]
+  S["Service « Rustudio »<br/>superviseur"] -- "lance, surveille, relance" --> C["Moteur Rust<br/>API et supervision"]
+  C --- R["Registre local<br/>modules et capacités"]
+  C -- "adaptateur GoXLR Mini<br/>un seul fil USB" --> M["Module GoXLR Mini"]
+  M -- "pilote officiel<br/>(API Thesycon)" --> D["GoXLR Mini"]
   C --- E["Réglages<br/>ProgramData"]
-  C -. "mises à jour, bibliothèque" .-> G["Releases GitHub"]
+  C -. "mises à jour, catalogue" .-> G["Releases GitHub"]
 ```
 
 | Crate | Rôle |
 | --- | --- |
-| `rustudio-core` | État, préréglages, scènes, éclairage, égaliseur du casque : tout ce qui se calcule sans matériel |
+| `rustudio-core` | Registre des modules et capacités ; état, préréglages et calculs du module GoXLR Mini |
 | `rustudio-goxlr` | Protocole USB de la GoXLR Mini (pilote officiel chargé à l'exécution) et fausse GoXLR pour les tests |
-| `rustudio-engine` | Service Windows, superviseur, boucle USB, API locale, mises à jour, Equalizer APO, désinstallation |
+| `rustudio-engine` | Service Windows, API locale, états des modules et mises à jour ; adaptateur GoXLR Mini, boucle USB et Equalizer APO |
 | `rustudio-app` | Appli Tauri 2 : fenêtre WebView2, icône d'état, bulle, micro et sortie par défaut de Windows |
 | `rustudio-setup` | Installeur en un seul fichier, et passage depuis GoXLR Mini avec retour arrière |
 
-- Un seul fil parle à l'appareil ; l'API ne l'attend jamais. Toute erreur USB ferme la connexion et en rouvre une
-  propre qui réapplique tous tes réglages. Un appel au pilote figé ? Le superviseur relance le moteur.
-- L'interface (`ui/index.html`) est une page locale servie par le moteur ; l'appli l'affiche et ajoute ce qui
-  demande ta session Windows.
+- Dans le module GoXLR Mini, un seul fil parle à l'appareil ; l'API ne l'attend jamais. Toute erreur USB ferme
+  la connexion et en rouvre une propre qui réapplique tous tes réglages. Un appel au pilote figé ? Le superviseur relance le moteur.
+- L'interface (`ui/index.html`) affiche l'accueil général et les pages des modules depuis le registre local.
+  L'appli ajoute ce qui demande ta session Windows. `GET /api/modules` expose les modules livrés et l'état de
+  leurs appareils ; le catalogue GitHub est consultatif.
 
 ## Développer
 
@@ -181,13 +204,14 @@ suivante. Voir [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Ajouter un appareil
 
-Ta souris, ton clavier, ton écran ne sont pas dans la bibliothèque ? [docs/MODULES.md](docs/MODULES.md) explique
+Le module de ta souris, de ton clavier ou de ton écran reste à écrire ? [docs/MODULES.md](docs/MODULES.md) explique
 comment écrire son module, le tester sans l'appareil et le proposer à tous. Un agent de code peut s'en charger :
 les règles qu'il doit suivre sont dans [AGENTS.md](AGENTS.md).
 
 ## Compatibilité
 
-- **GoXLR Mini** (firmware 1.2.x testé ; 1.3 pris en charge avec Stream Mix 2). La GoXLR complète est à contribuer.
+- **Seul module matériel livré : GoXLR Mini** (firmware 1.2.x testé ; 1.3 pris en charge avec Stream Mix 2).
+  La GoXLR complète, les souris, claviers et écrans du catalogue restent à contribuer.
 - Windows 10 ou 11, 64 bits, pilote officiel GoXLR, Microsoft Edge WebView2 (présent sur Windows 11).
 - Captures faites avec l'appareil simulé.
 

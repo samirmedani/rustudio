@@ -22,6 +22,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 static QUITTING: AtomicBool = AtomicBool::new(false);
 static ICON: &[u8] = include_bytes!("../icons/32x32.png");
+static OPEN_PAGE: Mutex<&str> = Mutex::new("devices");
 
 struct Icons {
     on: Image<'static>,
@@ -154,6 +155,28 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Navigation demandee par un clic sur le menu Windows ; le moniteur conserve aussi cette page au demarrage.
+fn show_page(app: &AppHandle, page: &'static str) {
+    *OPEN_PAGE.lock().unwrap() = page;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.eval(&format!("if (typeof go === 'function') {{ if (typeof closeSheet === 'function') closeSheet(); go({}); }}", json!(page)));
+    }
+    show_main(app);
+}
+
+fn goxlr_connected(snapshot: &Value) -> bool {
+    match snapshot["modules"]["devices"].as_array() {
+        Some(devices) => devices.iter().any(|d| d["id"] == "goxlr-mini" && d["connected"] == true),
+        None => snapshot["connected"].as_bool().unwrap_or(false), // moteur anterieur au registre des modules
+    }
+}
+
+fn connected_devices(snapshot: &Value) -> usize {
+    snapshot["modules"]["devices"].as_array()
+        .map(|devices| devices.iter().filter(|d| d["connected"] == true).count())
+        .unwrap_or_else(|| usize::from(snapshot["connected"].as_bool().unwrap_or(false)))
+}
+
 #[cfg(windows)]
 fn style_main(w: &WebviewWindow) {
     use windows::Win32::Foundation::HWND;
@@ -241,13 +264,18 @@ fn mic_label(t: &str) -> &'static str {
 
 // ---------- menu de l'icone ----------
 fn build_menu(app: &AppHandle, st: Option<&Value>) -> tauri::Result<Menu<tauri::Wry>> {
+    let connected = st.map(goxlr_connected).unwrap_or(false);
     let muted = st.map(|s| {
         let s = &s["state"];
         s["mutes"]["Mic"].as_bool().unwrap_or(false) || s["partial"]["Mic"].is_string()
     });
     let open = MenuItem::with_id(app, "open", "Ouvrir Rustudio", true, None::<&str>)?;
-    let mic = CheckMenuItem::with_id(app, "mic", if muted == Some(true) { "Réactiver le micro" } else { "Couper le micro" }, muted.is_some(), muted.unwrap_or(false), None::<&str>)?;
-    let scenes = Submenu::with_id(app, "scenes", "Scènes", st.is_some())?;
+    let devices = MenuItem::with_id(app, "devices", "Mes appareils", true, None::<&str>)?;
+    let modules = MenuItem::with_id(app, "modules", "Modules", true, None::<&str>)?;
+    let goxlr = Submenu::with_id(app, "goxlr", if connected { "GoXLR Mini" } else { "GoXLR Mini — déconnectée" }, st.is_some())?;
+    let mixer = MenuItem::with_id(app, "goxlr-open", "Ouvrir les réglages", st.is_some(), None::<&str>)?;
+    let mic = CheckMenuItem::with_id(app, "mic", if muted == Some(true) { "Réactiver le micro" } else { "Couper le micro" }, connected, muted.unwrap_or(false), None::<&str>)?;
+    let scenes = Submenu::with_id(app, "scenes", "Scènes", connected)?;
     if let Some(s) = st {
         let active = s["state"]["scene"].as_str().unwrap_or("");
         if let Some(m) = s["meta"]["scenes"].as_object() {
@@ -262,28 +290,46 @@ fn build_menu(app: &AppHandle, st: Option<&Value>) -> tauri::Result<Menu<tauri::
             }
         }
     }
-    let reconnect = MenuItem::with_id(app, "reconnect", "Reconnecter la GoXLR", true, None::<&str>)?;
-    let diag = MenuItem::with_id(app, "diag", "Diagnostic…", true, None::<&str>)?;
+    let reconnect = MenuItem::with_id(app, "reconnect", "Reconnecter GoXLR Mini", st.is_some(), None::<&str>)?;
+    let diag = MenuItem::with_id(app, "diag", "Diagnostic GoXLR Mini…", st.is_some(), None::<&str>)?;
+    let overlay = MenuItem::with_id(app, "overlay", "Incrustation GoXLR Mini pour OBS…", st.is_some(), None::<&str>)?;
+    goxlr.append_items(&[&mixer, &mic, &scenes, &PredefinedMenuItem::separator(app)?, &reconnect, &diag, &overlay])?;
     let startup = CheckMenuItem::with_id(app, "startup", "Démarrer avec Windows", true, is_startup(), None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quitter l'appli", true, None::<&str>)?;
-    Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &mic, &scenes, &PredefinedMenuItem::separator(app)?, &reconnect, &diag, &startup, &quit])
+    let menu = Menu::with_items(app, &[&open, &devices, &modules])?;
+    if connected {
+        menu.append_items(&[&PredefinedMenuItem::separator(app)?, &goxlr])?;
+    }
+    menu.append_items(&[&PredefinedMenuItem::separator(app)?, &startup, &quit])?;
+    Ok(menu)
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "open" => show_main(app),
+        "devices" => show_page(app, "devices"),
+        "modules" => show_page(app, "modules"),
+        "goxlr-open" => show_page(app, "goxlr-mini/mixer"),
         "mic" => {
-            let st = get("/api/state");
-            let muted = st.as_ref().map(|s| s["state"]["mutes"]["Mic"].as_bool().unwrap_or(false) || s["state"]["partial"]["Mic"].is_string()).unwrap_or(false);
-            std::thread::spawn(move || post("mute", json!({"channel": "Mic", "muted": !muted, "target": "all"})));
+            std::thread::spawn(|| {
+                let Some(st) = get("/api/state").filter(goxlr_connected) else { return };
+                let muted = st["state"]["mutes"]["Mic"].as_bool().unwrap_or(false) || st["state"]["partial"]["Mic"].is_string();
+                post("mute", json!({"channel": "Mic", "muted": !muted, "target": "all"}));
+            });
         }
         "reconnect" => {
             std::thread::spawn(|| post("reconnect", json!({})));
         }
         "diag" => {
-            show_main(app);
+            show_page(app, "goxlr-mini/mixer");
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.eval("typeof openDiag === 'function' && openDiag()");
+            }
+        }
+        "overlay" => {
+            show_page(app, "goxlr-mini/mixer");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("typeof openOverlaySheet === 'function' && openOverlaySheet()");
             }
         }
         "startup" => set_startup_reg(!is_startup()),
@@ -350,10 +396,12 @@ fn monitor(app: AppHandle, tray: TrayIcon) {
                 if !loaded {
                     loaded = true;
                     if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.navigate(format!("{ENGINE}/").parse().unwrap());
+                        let page = *OPEN_PAGE.lock().unwrap();
+                        let _ = w.navigate(format!("{ENGINE}/#{page}").parse().unwrap());
                     }
                 }
-                let connected = l["connected"].as_bool().unwrap_or(false);
+                let connected = goxlr_connected(l);
+                let device_count = connected_devices(l);
                 let health = l["health"].as_str().unwrap_or("ok");
                 let mic = if l["mic"]["muted"].as_bool().unwrap_or(false) { "all".to_string() } else { l["mic"]["partial"].as_str().unwrap_or("on").to_string() };
                 if let Some(v) = l["app_version"].as_str() {
@@ -371,15 +419,19 @@ fn monitor(app: AppHandle, tray: TrayIcon) {
                 if connected {
                     last_mic = Some(mic.clone());
                 }
-                let key = if !connected || health != "ok" { "off" } else if mic == "on" { "on" } else if mic == "all" { "muted" } else { "part" };
-                let text = if !connected {
-                    if health == "absent" { "Rustudio · GoXLR débranchée".to_string() } else { "Rustudio · reconnexion…".to_string() }
+                let key = if device_count == 0 || (connected && health != "ok") { "off" } else if !connected || mic == "on" { "on" } else if mic == "all" { "muted" } else { "part" };
+                let text = if device_count == 0 {
+                    "Rustudio · aucun appareil connecté".to_string()
+                } else if !connected {
+                    format!("Rustudio · {device_count} appareil{} connecté{}", if device_count > 1 { "s" } else { "" }, if device_count > 1 { "s" } else { "" })
+                } else if health != "ok" {
+                    "Rustudio · GoXLR Mini · connexion à vérifier".into()
                 } else if mic == "on" {
-                    "Rustudio · micro actif".into()
+                    "Rustudio · GoXLR Mini · micro actif".into()
                 } else if mic == "all" {
-                    "Rustudio · micro coupé".into()
+                    "Rustudio · GoXLR Mini · micro coupé".into()
                 } else {
-                    format!("Rustudio · micro {}", mic_label(&mic))
+                    format!("Rustudio · GoXLR Mini · micro {}", mic_label(&mic))
                 };
                 (key.to_string(), text)
             }
@@ -415,7 +467,7 @@ fn monitor(app: AppHandle, tray: TrayIcon) {
         if tick % 3 == 1 {
             let st = get("/api/state");
             let mk = st.as_ref().map(|s| format!("{}|{}|{}|{}", s["state"]["mutes"]["Mic"], s["state"]["partial"]["Mic"], s["state"]["scene"], s["state"]["user_scenes"].as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default())).unwrap_or_default();
-            let mk = format!("{mk}|{}", is_startup());
+            let mk = format!("{mk}|{}|{}|{}", st.as_ref().map(|s| &s["modules"]).unwrap_or(&Value::Null), st.as_ref().map(|s| &s["connected"]).unwrap_or(&Value::Null), is_startup());
             if mk != menu_key {
                 menu_key = mk;
                 if let Ok(m) = build_menu(&app, st.as_ref()) {

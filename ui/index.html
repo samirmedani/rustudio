@@ -22,6 +22,7 @@
   color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   font-family:"Inter Variable","Segoe UI Variable Text","Segoe UI",-apple-system,system-ui,sans-serif;
   font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
@@ -62,6 +63,26 @@ nav button:hover:not(.on){background:rgba(255,255,255,.55)}
 nav button.on{color:var(--accent);background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(243,248,255,.92));box-shadow:0 1px 2px rgba(0,40,120,.08),0 8px 20px rgba(0,70,170,.08),inset 0 0 0 .5px rgba(0,113,227,.14)}
 nav button.on svg{color:var(--accent)}
 nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;background:rgba(255,149,0,.16);color:var(--orange-text);font-size:12px;font-weight:650;display:grid;place-items:center;padding:0 6px}
+.module-space{margin-top:18px;padding-top:14px;border-top:1px solid var(--hair);min-height:0;overflow:auto}
+.module-space>small{display:block;padding:0 12px;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.module-space>b{display:block;padding:3px 12px 0;font-size:14px}
+.module-space nav{margin-top:10px}
+.workspace-top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
+.workspace-top p{max-width:560px;color:var(--text2);font-size:14px}
+.device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
+.device-card{display:flex;flex-direction:column;gap:14px;padding:24px}
+.device-card .lib-head{margin:0}
+.device-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text2)}
+.device-status i{width:7px;height:7px;border-radius:50%;background:var(--text3)}
+.device-status.ready{color:#24813a}.device-status.ready i{background:var(--green)}
+.device-status.error,.device-status.blocked{color:#c4000f}.device-status.error i,.device-status.blocked i{background:var(--red)}
+.device-status.starting{color:var(--orange-text)}.device-status.starting i{background:var(--orange)}
+.device-detail{font-size:13px;color:var(--text2);line-height:1.5}
+.device-card .lib-act{margin-top:auto;flex-wrap:wrap}
+.workspace-empty{padding:40px;text-align:center;max-width:720px;margin:24px auto}
+.workspace-empty .chip-ico{margin:0 auto 16px;width:52px;height:52px;border-radius:17px}
+.workspace-empty h2{font-size:22px;letter-spacing:-.02em}.workspace-empty p{margin:8px auto 20px;max-width:440px;color:var(--text2)}
+.workspace-note{margin-top:18px;font-size:12px;color:var(--text3)}
 .side-foot{margin-top:auto;padding:12px 10px 2px;border-top:.5px solid var(--hair)}
 .conn{display:flex;align-items:center;gap:11px;font-weight:600;font-size:13px}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--red);box-shadow:0 0 0 3px rgba(255,59,48,.16)}
@@ -156,6 +177,7 @@ header p{color:var(--text2);font-size:15px;margin-top:6px}
 /* popover et menu */
 .pop{position:fixed;z-index:50;min-width:220px;padding:8px;border-radius:18px;background:linear-gradient(160deg,rgba(255,255,255,.96),rgba(255,255,255,.9));-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);box-shadow:inset 0 1px .5px #fff,0 0 0 .5px rgba(0,0,0,.08),var(--shadow-lift);opacity:0;transform:scale(.96) translateY(-4px);transform-origin:top left;transition:opacity .16s,transform .2s var(--ease);pointer-events:none}
 .pop.on{opacity:1;transform:none;pointer-events:auto}
+.pop{max-height:calc(100vh - 20px);overflow:auto}
 .pop .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;width:336px}
 .pop .tile{display:flex;flex-direction:column;align-items:center;gap:7px;padding:12px 6px 10px;border-radius:12px;font-size:12.5px;font-weight:560;position:relative}
 .pop .tile:hover{background:rgba(118,118,128,.1)}
@@ -473,6 +495,7 @@ select.inp option{background:#fff;color:var(--text)}
   aside{padding:16px 8px 12px;align-items:center}
   .brand{padding:0}
   .brand div,nav button span:not(.badge),.side-foot small,.ver-row,.upd-card,#conn-txt{display:none}
+  .module-space{padding-top:12px;width:100%}.module-space>b,.module-space>small{display:none}
   nav button{width:44px;justify-content:center;padding:0}
   nav .badge{position:absolute;top:2px;right:0;min-width:16px;height:16px;font-size:10px;padding:0 4px}
   .side-foot{padding:12px 0 2px;border-top:0}
@@ -484,6 +507,7 @@ select.inp option{background:#fff;color:var(--text)}
 @media (max-width:640px){
   .strips{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:26px}
   header{flex-direction:column;align-items:flex-start}
+  .workspace-top{align-items:flex-start;flex-direction:column}.device-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
@@ -495,31 +519,29 @@ select.inp option{background:#fff;color:var(--text)}
 <div class="ambient" id="glow"><span class="a"></span><span class="b"></span><span class="c"></span><span class="d"></span></div>
 <div id="app">
   <aside>
-    <div class="brand"><img src="/icon.png" width="38" height="38" alt=""><div><b>Rustudio</b><small>GoXLR Mini</small></div></div>
-    <nav>
-      <button data-p="mixer" data-i="mixer"><span>Mixeur</span></button>
-      <button data-p="mic" data-i="Mic"><span>Micro</span></button>
-      <button data-p="hp" data-i="Headphones"><span>Casque</span></button>
-      <button data-p="routing" data-i="routing"><span>Routage</span></button>
-      <button data-p="light" data-i="light"><span>Éclairage</span></button>
-      <button data-p="scenes" data-i="scenes"><span>Scènes</span><span class="badge" id="nav-badge" style="display:none"></span></button>
-      <button data-p="library" data-i="grid"><span>Bibliothèque</span></button>
+    <div class="brand"><img src="/icon.png" width="38" height="38" alt=""><div><b>Rustudio</b><small>Ton matériel, ton espace</small></div></div>
+    <nav id="main-nav" aria-label="Rustudio">
+      <button data-p="devices" data-i="usb" class="on" title="Mes appareils"><span>Mes appareils</span></button>
+      <button data-p="modules" data-i="grid" title="Modules"><span>Modules</span></button>
     </nav>
+    <div class="module-space" id="module-space" hidden><small>ESPACE APPAREIL</small><b id="module-name"></b><nav id="module-nav" aria-label="Appareil sélectionné"></nav></div>
     <div class="side-foot"><div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-txt">Connexion…</span></div><small id="conn-fw"></small><div class="upd-card" id="upd-card" style="display:none"><div class="upd-top"><span class="upd-dot"></span><b>Mise à jour proposée</b></div><small id="upd-txt"></small><button class="pill primary" id="upd-btn">Voir les nouveautés</button></div><div class="ver-row"><b id="ver-txt">Rustudio</b><span class="ver-state" id="ver-state"></span><button class="ibtn" id="ver-check" title="Rechercher une mise à jour"></button></div></div>
   </aside>
   <main>
     <header>
-      <div><div class="eyebrow" id="h-eye">Rustudio</div><h1 id="h-title">Mixeur</h1><p id="h-sub"></p></div>
-      <div class="hdr-actions"><button class="pill" id="hdr-mic">Micro</button><button id="fab" title="Menu"></button></div>
+      <div><div class="eyebrow" id="h-eye">Rustudio</div><h1 id="h-title">Mes appareils</h1><p id="h-sub">Ton matériel et ses réglages, réunis au même endroit.</p></div>
+      <div class="hdr-actions"><button class="pill" id="hdr-mic" hidden>Micro</button><button id="fab" title="Menu"></button></div>
     </header>
     <div id="offline"><span class="spin"></span><span id="offline-txt"></span><button class="pill" id="offline-diag">Diagnostic</button></div>
+    <section class="page on" id="p-devices"></section>
+    <section class="page" id="p-modules"></section>
+    <section class="page" id="p-device"></section>
     <section class="page" id="p-mixer"></section>
     <section class="page" id="p-mic"></section>
     <section class="page" id="p-hp"></section>
     <section class="page" id="p-routing"></section>
     <section class="page" id="p-light"></section>
     <section class="page" id="p-scenes"></section>
-    <section class="page" id="p-library"></section>
   </main>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -603,12 +625,12 @@ var FX_INFO = [["eq", "Égaliseur", "Ajuste les graves, les médiums et les aigu
 function fxAny() { var f = S.state.fx || {}; return FX_INFO.some(function (x) { return f[x[0]]; }); }
 function fxSet(k, v) {
   var patch = {}; patch[k] = v; S.state.fx[k] = v; renderMic();
-  post("fx", patch).then(refresh);
+  postModule("goxlr-mini", "fx", patch).then(refresh);
 }
 function monitorSet(on) {
   var st = S.state; st.routing.Microphone.Headphones = on; renderMic();
-  var p = post("route", {input: "Microphone", output: "Headphones", enabled: on});
-  if (on && st.volumes.MicMonitor < 26) p = p.then(function (r) { return r ? post("volume", {channel: "MicMonitor", value: 102}) : null; });
+  var p = postModule("goxlr-mini", "route", {input: "Microphone", output: "Headphones", enabled: on});
+  if (on && st.volumes.MicMonitor < 26) p = p.then(function (r) { return r ? postModule("goxlr-mini", "volume", {channel: "MicMonitor", value: 102}) : null; });
   p.then(refresh);
 }
 var SCENE_ICONS = {streaming:"BroadcastMix", "stream-safe":"shield", gaming:"Game", discord:"Chat", podcast:"Mic", ecoute:"Headphones"};
@@ -618,7 +640,7 @@ var STYLE_LABELS = {"two-colour":"Deux couleurs", "gradient":"Dégradé", "meter
 var PALETTE = ["FF453A","FF9F0A","FFD60A","30D158","63E6BE","64D2FF","0A84FF","5E5CE6","BF5AF2","FF375F","FF6482","AC8E68","FFFFFF","D1D1D6","8E8E93","00E5FF","FF00E5","7B61FF"];
 var RATIO_LABEL = function (i) { var r = S ? S.meta.ratios[i] : 1; return (r >= 10 ? r.toFixed(0) : r.toFixed(1)).replace(".", ",") + ":1"; };
 
-var S = null, L = null, V = 0, page = "mixer", built = {}, metaKey = "";
+var S = null, L = null, V = 0, page = "devices", activeModule = null, built = {}, metaKey = "";
 var pending = 0;
 
 function $(id) { return document.getElementById(id); }
@@ -645,7 +667,7 @@ function setMute(ch, muted, target) {
   else if (target === "all" || !hasInput(ch)) { S.state.mutes[ch] = true; S.state.partial[ch] = null; }
   else { S.state.mutes[ch] = false; S.state.partial[ch] = target; }
   render();
-  return post("mute", {channel: ch, muted: muted, target: target});
+  return postModule("goxlr-mini", "mute", {channel: ch, muted: muted, target: target});
 }
 function toggleMute(ch, target) { return setMute(ch, !muteState(ch), target); }
 function col(ch) { return "#" + uiHex(S ? S.meta.channel_colours[ch] : "8E8E93"); }
@@ -676,15 +698,28 @@ function invoke(cmd, args) { return inApp() ? TAURI.core.invoke(cmd, args || {})
 
 /* ---------- API ---------- */
 function api(path) { return fetch(path, {cache: "no-store"}).then(function (r) { if (!r.ok) throw new Error("Lecture du moteur impossible"); return r.json(); }); }
-function post(action, body) {
+function postRequest(path, body) {
   pending++;
-  return fetch("/api/" + action, {method: "POST", headers: {"Content-Type": "application/json", "X-Rustudio": "1"}, body: JSON.stringify(body || {})})
+  return fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Rustudio": "1"}, body: JSON.stringify(body || {})})
     .then(function (r) { return r.json().then(function (j) {
       if (!r.ok || !j || j.ok === false) { toast((j && j.error) || "Action impossible"); V = -1; return null; }
       return j;
     }); })
-    .catch(function () { toast("Le moteur GoXLR ne répond pas"); V = -1; return null; })
+    .catch(function () { toast("Le moteur Rustudio ne répond pas"); V = -1; return null; })
     .finally(function () { pending--; });
+}
+function post(action, body) { return postRequest("/api/" + action, body); }
+function postModule(id, action, body) {
+  var m = installedModule(id);
+  var globalActions = ["update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh", "restart-engine"];
+  if (globalActions.indexOf(action) < 0) {
+    if (m && Array.isArray(m.actions) && m.actions.indexOf(action) >= 0) return postRequest("/api/modules/" + encodeURIComponent(id) + "/" + encodeURIComponent(action), body);
+    // Compatibilité avec les moteurs qui précèdent les commandes par module.
+    if (id === "goxlr-mini" && (m ? !Object.prototype.hasOwnProperty.call(m, "actions") : !(S && S.modules && Array.isArray(S.modules.installed)))) return post(action, body);
+  }
+  toast("Cette commande n’est pas disponible pour cet appareil.");
+  V = -1;
+  return Promise.resolve(null);
 }
 // Les actions échouées renvoient null : leurs suites ne doivent annoncer aucun succès.
 function refresh(result) {
@@ -696,7 +731,7 @@ var liveChanged = true, liveKey = "", bootId = null;
 document.addEventListener("visibilitychange", function () { document.documentElement.classList.toggle("asleep", document.hidden); });
 document.documentElement.classList.toggle("asleep", document.hidden);
 function liveLoop() {
-  api(document.hidden ? "/api/live" : "/api/live?level=1").then(function (l) {
+  api(document.hidden || activeModule !== "goxlr-mini" ? "/api/live" : "/api/live?level=1").then(function (l) {
     if (bootId && l.boot && l.boot !== bootId) { location.reload(); return; }
     bootId = l.boot || bootId;
     L = l; setOnline(true, l.connected, l.health, l.usb);
@@ -704,7 +739,7 @@ function liveLoop() {
     if (k !== liveKey) { liveKey = k; liveChanged = true; }
     if (l.v !== V && !pending) return refresh();
   }).catch(function () { setOnline(false, false); })
-    .finally(function () { setTimeout(liveLoop, document.hidden ? 2000 : 50); });
+    .finally(function () { setTimeout(liveLoop, document.hidden ? 2000 : activeModule === "goxlr-mini" ? 50 : 250); });
 }
 
 /* ---------- curseur generique ---------- */
@@ -805,24 +840,135 @@ function toast(msg, actionLabel, action) {
 }
 function withUndo(msg, fn) {
   var before = JSON.parse(JSON.stringify(S.state));
-  return fn().then(function (r) { if (r) toast(msg, "Annuler", function () { post("profile", before).then(refresh); }); return r; });
+  return fn().then(function (r) { if (r) toast(msg, "Annuler", function () { postModule("goxlr-mini", "profile", before).then(refresh); }); return r; });
 }
 
 /* ---------- navigation ---------- */
+var WORKSPACE_KEY = "rustudio.workspace.v1", workspacePrefs = loadWorkspace();
+var moduleNavKey = "", engineOnline = null, engineDevice = false, engineHealth = null, engineUsb = null;
+var devicesUI = {grid: null, key: ""};
+var MODULE_VIEWS = {"goxlr-mini": ["mixer", "mic", "hp", "routing", "light", "scenes"]};
+var CAP_LABELS = {mixer: "Mixeur", microphone: "Micro", "headphone-eq": "Égaliseur casque", routing: "Routage", lighting: "Éclairage", scenes: "Scènes"};
+function loadWorkspace() {
+  var empty = {devices: [], dismissed: []};
+  try {
+    var saved = JSON.parse(window.localStorage.getItem("rustudio.workspace.v1") || "null");
+    if (!saved || typeof saved !== "object") return empty;
+    function ids(a) { return Array.isArray(a) ? a.filter(function (id) { return typeof id === "string" && /^[a-z0-9-]{1,64}$/i.test(id); }).slice(0, 128) : []; }
+    return {devices: ids(saved.devices), dismissed: ids(saved.dismissed)};
+  } catch (_) { return empty; }
+}
+function saveWorkspace() { try { window.localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspacePrefs)); } catch (_) {} }
+function installedModules() {
+  return S && S.modules && Array.isArray(S.modules.installed) ? S.modules.installed : [];
+}
+function installedModule(id) { return installedModules().find(function (m) { return m.id === id; }) || null; }
+function modulePages(m) {
+  var supported = MODULE_VIEWS[m.id] || [];
+  return (m.pages || []).filter(function (p) { return supported.indexOf(p.id) >= 0; });
+}
+function moduleRuntime(id) {
+  var live = L && L.modules && Array.isArray(L.modules.devices) ? L.modules.devices : [];
+  var saved = S && S.modules && Array.isArray(S.modules.devices) ? S.modules.devices : [];
+  return live.find(function (d) { return d.id === id; }) || saved.find(function (d) { return d.id === id; }) || {id: id, connected: false, status: "disconnected"};
+}
+function moduleStatus(id) {
+  var d = moduleRuntime(id), status = engineOnline === false ? "unavailable" : d.status;
+  if (status === "ready" && !d.connected) status = "disconnected";
+  var labels = {ready: "Connecté", disconnected: "Déconnecté", starting: "Connexion…", error: "Connexion impossible", blocked: "Pilote bloqué", unavailable: "Moteur indisponible"};
+  return {status: labels[status] ? status : "disconnected", label: labels[status] || "Déconnecté", detail: status === "unavailable" ? "Les appareils seront relus dès que le moteur répondra." : d.error || ""};
+}
+function hasDevice(id) { return workspacePrefs.devices.indexOf(id) >= 0; }
+function rememberDetected() {
+  var changed = false;
+  if (engineOnline === false) return;
+  installedModules().forEach(function (m) {
+    if (moduleRuntime(m.id).connected && !hasDevice(m.id) && workspacePrefs.dismissed.indexOf(m.id) < 0) {
+      workspacePrefs.devices.push(m.id); changed = true;
+    }
+  });
+  if (changed) saveWorkspace();
+}
+function addDevice(id, repaint) {
+  if (!installedModule(id)) return false;
+  if (!hasDevice(id)) workspacePrefs.devices.push(id);
+  workspacePrefs.dismissed = workspacePrefs.dismissed.filter(function (x) { return x !== id; });
+  saveWorkspace();
+  if (repaint !== false) { renderDevices(); if (page === "modules") paintLibrary(); }
+  return true;
+}
+function removeDevice(id) {
+  var m = installedModule(id); if (!m) return;
+  workspacePrefs.devices = workspacePrefs.devices.filter(function (x) { return x !== id; });
+  if (workspacePrefs.dismissed.indexOf(id) < 0) workspacePrefs.dismissed.push(id);
+  saveWorkspace();
+  if (activeModule === id) go("devices"); else { renderDevices(); if (page === "modules") paintLibrary(); }
+  toast(m.name + " retiré de ton espace");
+}
+function openDevice(id) {
+  var m = installedModule(id); if (!m) return;
+  var pages = modulePages(m);
+  go(id + "/" + (pages.length ? pages[0].id : "overview"));
+}
+function workspaceRuntimeChanged() {
+  rememberDetected();
+  if (page === "devices") renderDevices();
+  if (page === "modules") paintLibrary();
+  if (page === "device" && activeModule) renderDeviceOverview();
+}
 var PAGES = {
+  devices: {title: "Mes appareils", sub: "Ton matériel et ses réglages, réunis au même endroit."},
+  modules: {title: "Modules", sub: "Choisis les modules qui correspondent à ton matériel."},
+  device: {title: "Mon appareil", sub: "L’état de ton appareil et les fonctions de son module."},
   mixer: {title: "Mixeur", sub: "Tes quatre faders et toutes les voies, en direct."},
   mic: {title: "Micro", sub: "Détection, gain et traitement de ta voix."},
   hp: {title: "Casque", sub: "Égaliseur, correction de ton casque et profils."},
   routing: {title: "Routage", sub: "Choisis qui entend quoi : toi, ton stream et tes amis."},
   light: {title: "Éclairage", sub: "Couleurs, thèmes et animations de l'appareil."},
-  scenes: {title: "Scènes", sub: "Des configurations complètes en un clic, et des conseils."},
-  library: {title: "Bibliothèque", sub: "Les appareils que Rustudio sait piloter, et ceux à ajouter."}
+  scenes: {title: "Scènes", sub: "Des configurations complètes en un clic, et des conseils."}
 };
-function go(p) {
-  page = p; closePop();
-  document.querySelectorAll("nav button").forEach(function (b) { b.classList.toggle("on", b.dataset.p === p); });
-  document.querySelectorAll(".page").forEach(function (e) { e.classList.toggle("on", e.id === "p-" + p); });
-  $("h-title").textContent = PAGES[p].title; $("h-sub").textContent = PAGES[p].sub;
+function resolveRoute(path) {
+  path = String(path || "devices").replace(/^#/, "");
+  if (path === "library") path = "modules";
+  if (path === "devices" || path === "modules") return {page: path, module: null, path: path};
+  if (MODULE_VIEWS["goxlr-mini"].indexOf(path) >= 0) path = "goxlr-mini/" + path;
+  var parts = path.split("/"), m = installedModule(parts[0]);
+  if (m && parts.length === 2 && parts[1] === "overview") return {page: "device", module: m.id, path: path};
+  if (m && parts.length === 2 && modulePages(m).some(function (p) { return p.id === parts[1]; })) return {page: parts[1], module: m.id, path: path};
+  return {page: "devices", module: null, path: "devices"};
+}
+function renderModuleNav() {
+  var m = installedModule(activeModule), key = JSON.stringify(m ? [m.id, m.name, modulePages(m)] : null);
+  $("module-space").hidden = !m;
+  if (key !== moduleNavKey) {
+    moduleNavKey = key; $("module-nav").innerHTML = "";
+    if (m) {
+      $("module-name").textContent = m.name;
+      $("module-nav").setAttribute("aria-label", m.name);
+      var pages = modulePages(m);
+      if (!pages.length) pages = [{id: "overview", label: "Vue d’ensemble", icon: "info"}];
+      pages.forEach(function (p) {
+        var route = m.id + "/" + p.id;
+        var b = h("button", {"data-p": route, title: p.label, "aria-label": p.label}, svg(p.icon) + "<span>" + esc(p.label) + "</span>" + (m.id === "goxlr-mini" && p.id === "scenes" ? '<span class="badge" id="nav-badge" style="display:none"></span>' : ""));
+        b.addEventListener("click", function () { go(route); }); $("module-nav").appendChild(b);
+      });
+    }
+  }
+  var route = activeModule ? activeModule + "/" + (page === "device" ? "overview" : page) : page;
+  document.querySelectorAll("nav button").forEach(function (b) { var on = b.dataset.p === route; b.classList.toggle("on", on); if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
+}
+function go(path, replace) {
+  var route = resolveRoute(path);
+  if (sheetState && (page !== route.page || activeModule !== route.module)) closeSheet();
+  page = route.page; activeModule = route.module; closePop();
+  if (activeModule) addDevice(activeModule, false);
+  if (location.hash !== "#" + route.path) history[replace ? "replaceState" : "pushState"](null, "", "#" + route.path);
+  document.querySelectorAll(".page").forEach(function (e) { e.classList.toggle("on", e.id === "p-" + page); });
+  renderModuleNav();
+  var m = installedModule(activeModule);
+  $("h-title").textContent = page === "device" && m ? m.name : PAGES[page].title; $("h-sub").textContent = PAGES[page].sub;
+  $("hdr-mic").hidden = activeModule !== "goxlr-mini";
+  setOnline(engineOnline, engineDevice, engineHealth, engineUsb);
   render();
 }
 var HEALTH_TXT = {
@@ -839,25 +985,29 @@ var USB_TXT = {
   mini: "Windows voit la GoXLR, mais son pilote ne la trouve pas encore. Si ça dure, débranche-la puis rebranche-la."
 };
 function setOnline(daemon, dev, health, usb) {
+  engineOnline = daemon; engineDevice = dev; engineHealth = health; engineUsb = usb;
   var o = $("offline");
   var msg = null, kind = "";
-  if (!daemon) msg = "Le moteur GoXLR ne répond pas. Relance automatique en cours…";
-  else if (health && health !== "ok" && HEALTH_TXT[health]) { kind = HEALTH_TXT[health][0]; msg = (health === "absent" && USB_TXT[usb]) || HEALTH_TXT[health][1]; }
-  else if (!dev) msg = "GoXLR déconnectée. Reconnexion automatique dès qu’elle revient…";
+  if (daemon === false) msg = "Le moteur Rustudio ne répond pas. Relance automatique en cours…";
+  else if (activeModule === "goxlr-mini") {
+    if (health && health !== "ok" && HEALTH_TXT[health]) { kind = HEALTH_TXT[health][0]; msg = (health === "absent" && USB_TXT[usb]) || HEALTH_TXT[health][1]; }
+    else if (daemon && !dev) msg = "GoXLR déconnectée. Reconnexion automatique dès qu’elle revient…";
+  }
   o.classList.toggle("on", !!msg);
   o.classList.toggle("warn", kind === "warn");
   o.classList.toggle("info", kind === "info");
   if (msg && $("offline-txt").textContent !== msg) $("offline-txt").textContent = msg;
-  var ok = daemon && dev && (!health || health === "ok");
-  $("conn-dot").classList.toggle("ok", ok);
-  $("conn-txt").textContent = !daemon ? "Moteur arrêté" : ok ? "Connectée" : health === "absent" ? "Débranchée" : health === "blocked" ? "Pilote bloqué" : dev ? "Connectée" : "Reconnexion…";
+  $("offline-diag").hidden = activeModule !== "goxlr-mini";
+  $("conn-dot").classList.toggle("ok", daemon === true);
+  $("conn-txt").textContent = daemon === false ? "Moteur arrêté" : daemon ? "Moteur connecté" : "Connexion…";
+  if (S) workspaceRuntimeChanged();
 }
 
 /* ---------- mixeur ---------- */
 var strips = {}, others = {};
 var sendVolume = {};
 function volumeSender(ch) {
-  if (!sendVolume[ch]) sendVolume[ch] = throttle(function (v) { post("volume", {channel: ch, value: v}); }, 45);
+  if (!sendVolume[ch]) sendVolume[ch] = throttle(function (v) { postModule("goxlr-mini", "volume", {channel: ch, value: v}); }, 45);
   return sendVolume[ch];
 }
 function buildMixer() {
@@ -869,7 +1019,7 @@ function buildMixer() {
     var head = h("button", {"class": "strip-head", title: "Changer la voie de ce fader"});
     var sl = Slider({label: "Volume du fader " + (i + 1), format: function (v) { return pct(v) + " %"; }, vertical: true, min: 0, max: 255, step: 1, wheel: 5,
       onInput: function (v) { var ch = S.state.faders[f]; S.state.volumes[ch] = v; volumeSender(ch)(v); paintStripVal(f); },
-      onCommit: function (v) { post("volume", {channel: S.state.faders[f], value: v}); }});
+      onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: S.state.faders[f], value: v}); }});
     var ghost = h("div", {"class": "ghost"}); sl.track.appendChild(ghost);
     var note = h("div", {"class": "phys-note"});
     var val = h("div", {"class": "val"});
@@ -904,7 +1054,7 @@ function channelPicker(f) {
       var old = S.state.faders[f];
       if (where) S.state.faders[where] = old;
       S.state.faders[f] = ch; render();
-      post("fader", {fader: f, channel: ch}).then(refresh);
+      postModule("goxlr-mini", "fader", {fader: f, channel: ch}).then(refresh);
     });
     g.appendChild(t);
   });
@@ -916,7 +1066,7 @@ function channelPicker(f) {
     var b = h("button", {"class": S.state.mute_modes[f] === t ? "on" : ""}, MUTE_LABELS[t]);
     b.addEventListener("click", function () {
       var m = {}; m[f] = t; S.state.mute_modes[f] = t; closePop(); render();
-      post("settings", {mute_modes: m});
+      postModule("goxlr-mini", "settings", {mute_modes: m});
       toast("Bouton " + (i + 1) + " : " + MUTE_VERB[t].toLowerCase() + (t === "all" ? "" : " · appui long pour couper partout"));
     });
     mc.appendChild(b);
@@ -961,7 +1111,7 @@ function renderOthers() {
       row.innerHTML = chipIco(ch, col(ch)) + '<span class="nm">' + LABELS[ch] + '</span>';
       var sl = Slider({label: "Volume " + LABELS[ch], format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, wheel: 5, colour: col(ch),
         onInput: function (v) { S.state.volumes[ch] = v; volumeSender(ch)(v); p.textContent = pct(v) + " %"; },
-        onCommit: function (v) { post("volume", {channel: ch, value: v}); }});
+        onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: ch, value: v}); }});
       var p = h("span", {"class": "pct"});
       var m = h("button", {"class": "ibtn", title: "Couper partout"});
       m.addEventListener("click", function () { toggleMute(ch, "all"); });
@@ -1018,15 +1168,15 @@ function buildMic() {
     var b = h("button", {"data-t": t}, MIC_TYPE_LABELS[t]);
     b.addEventListener("click", function () {
       if (t === "condenser" && S.state.mic.type !== "condenser") toast("Alimentation fantôme 48 V activée pour le micro statique");
-      post("mic", {type: t, suggest_gain: true}).then(refresh);
+      postModule("goxlr-mini", "mic", {type: t, suggest_gain: true}).then(refresh);
     });
     seg.appendChild(b);
   });
   typeField.appendChild(seg);
   inCard.appendChild(typeField);
   var gainField = h("div", {"class": "field"}, '<div class="field-top">Gain<span id="gain-val"></span></div>');
-  var gainSend = throttle(function (v) { post("mic", {gain_db: v}); }, 60);
-  mic.gain = Slider({label: "Gain du micro", format: function (v) { return v + " dB"; }, min: 0, max: 72, step: 1, colour: "#FF453A", onInput: function (v) { S.state.mic.gain_db = v; $("gain-val").textContent = v + " dB"; gainSend(v); }, onCommit: function (v) { post("mic", {gain_db: v}); }});
+  var gainSend = throttle(function (v) { postModule("goxlr-mini", "mic", {gain_db: v}); }, 60);
+  mic.gain = Slider({label: "Gain du micro", format: function (v) { return v + " dB"; }, min: 0, max: 72, step: 1, colour: "#FF453A", onInput: function (v) { S.state.mic.gain_db = v; $("gain-val").textContent = v + " dB"; gainSend(v); }, onCommit: function (v) { postModule("goxlr-mini", "mic", {gain_db: v}); }});
   gainField.appendChild(mic.gain.el);
   inCard.appendChild(gainField);
   var row = h("div", {"class": "btn-row"});
@@ -1047,7 +1197,7 @@ function buildMic() {
     var b = h("button", {"data-m": m[0]}, m[1]);
     b.addEventListener("click", function () {
       S.state.mic_button.mode = m[0]; renderMic();
-      post("settings", {mic_button: {mode: m[0]}}).then(refresh);
+      postModule("goxlr-mini", "settings", {mic_button: {mode: m[0]}}).then(refresh);
       if (m[0] === "ptt") toast("Micro coupé au repos : garde le bouton appuyé pour parler");
     });
     mic.mbSeg.appendChild(b);
@@ -1057,14 +1207,14 @@ function buildMic() {
   mic.mbTarget = h("div", {"class": "chips"});
   [["all", "Partout"], ["stream", "Du stream"], ["chat", "De Discord"]].forEach(function (t) {
     var b = h("button", {"data-t": t[0]}, t[1]);
-    b.addEventListener("click", function () { S.state.mic_button.target = t[0]; renderMic(); post("settings", {mic_button: {target: t[0]}}).then(refresh); });
+    b.addEventListener("click", function () { S.state.mic_button.target = t[0]; renderMic(); postModule("goxlr-mini", "settings", {mic_button: {target: t[0]}}).then(refresh); });
     mic.mbTarget.appendChild(b);
   });
   tgRow.appendChild(mic.mbTarget);
   mbf.appendChild(tgRow);
   var bl = h("div", {"class": "row-switch", style: "padding-bottom:0"}, '<div><b>Clignoter quand il est coupé</b><small>Impossible d\u2019oublier que tu es muet.</small></div>');
   mic.blinkSw = h("button", {"class": "switch"});
-  mic.blinkSw.addEventListener("click", function () { var v = !S.state.mic_button.blink; S.state.mic_button.blink = v; renderMic(); post("settings", {mic_button: {blink: v}}); });
+  mic.blinkSw.addEventListener("click", function () { var v = !S.state.mic_button.blink; S.state.mic_button.blink = v; renderMic(); postModule("goxlr-mini", "settings", {mic_button: {blink: v}}); });
   bl.appendChild(mic.blinkSw); mbf.appendChild(bl);
   muteCard.appendChild(mbf);
   var monSw = h("div", {"class": "row-switch", style: "padding-bottom:0"}, '<div><b>M\u2019entendre dans le casque</b><small id="mon-sub"></small></div>');
@@ -1072,7 +1222,7 @@ function buildMic() {
   mic.monSw.addEventListener("click", function () { monitorSet(!S.state.routing.Microphone.Headphones); });
   monSw.appendChild(mic.monSw); muteCard.appendChild(monSw);
   var mon = h("div", {"class": "field", id: "mon-field"}, '<div class="field-top">Volume du retour<span id="mon-val"></span></div>');
-  mic.mon = Slider({label: "Volume du retour micro", format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, colour: "#FF6961", onInput: function (v) { S.state.volumes.MicMonitor = v; $("mon-val").textContent = pct(v) + " %"; volumeSender("MicMonitor")(v); }, onCommit: function (v) { post("volume", {channel: "MicMonitor", value: v}); }});
+  mic.mon = Slider({label: "Volume du retour micro", format: function (v) { return pct(v) + " %"; }, min: 0, max: 255, step: 1, colour: "#FF6961", onInput: function (v) { S.state.volumes.MicMonitor = v; $("mon-val").textContent = pct(v) + " %"; volumeSender("MicMonitor")(v); }, onCommit: function (v) { postModule("goxlr-mini", "volume", {channel: "MicMonitor", value: v}); }});
   mon.appendChild(mic.mon.el); muteCard.appendChild(mon);
   left.appendChild(muteCard);
   grid.appendChild(left);
@@ -1093,7 +1243,7 @@ function buildMic() {
   Object.keys(S.meta.mic_presets).forEach(function (k) {
     var p = S.meta.mic_presets[k];
     var b = h("button", {"class": "preset"}, chipIco(PRESET_ICONS[k], PRESET_COLOURS[k]) + "<b>" + frLabel(p.label) + "</b><p>" + frLabel(p.desc) + "</p>");
-    b.addEventListener("click", function () { withUndo("Préréglage " + frLabel(p.label) + " appliqué", function () { return post("mic-preset", {name: k}).then(refresh); }); });
+    b.addEventListener("click", function () { withUndo("Préréglage " + frLabel(p.label) + " appliqué", function () { return postModule("goxlr-mini", "mic-preset", {name: k}).then(refresh); }); });
     pg.appendChild(b); mic.presetBtns[k] = b;
   });
   pc.appendChild(pg);
@@ -1116,7 +1266,7 @@ function buildMic() {
   var cv = h("canvas"); eq.appendChild(cv); mic.eqCanvas = cv;
   var bands = h("div", {"class": "eq-bands"});
   mic.eq = {};
-  var dspSend = throttle(function (patch) { post("dsp", patch); }, 80);
+  var dspSend = throttle(function (patch) { postModule("goxlr-mini", "dsp", patch); }, 80);
   S.meta.eq_bands.forEach(function (b) {
     var wrap = h("div", {"class": "eq-band"});
     var lab = h("b");
@@ -1299,7 +1449,7 @@ function hpStatus() {
   return {st: st, eq: eq, needSetup: !st.apo || miss.length > 0, absent: absent.length === eq.channels.length && eq.channels.length > 0};
 }
 function hpSetup() {
-  post("hp-eq-setup", {}).then(function (r) { if (r && r.ok) { toast("Installation de l\u2019égaliseur…"); refresh(); } });
+  postModule("goxlr-mini", "hp-eq-setup", {}).then(function (r) { if (r && r.ok) { toast("Installation de l\u2019égaliseur…"); refresh(); } });
 }
 function buildHp() {
   var root = $("p-hp"); root.innerHTML = "";
@@ -1311,7 +1461,7 @@ function buildHp() {
   hp.sw.addEventListener("click", function () {
     var x = hpStatus(), v = !x.eq.enabled;
     if (v && x.needSetup) { hpSetup(); return; }
-    x.eq.enabled = v; renderHp(); post("hp-eq", {enabled: v}).then(refresh);
+    x.eq.enabled = v; renderHp(); postModule("goxlr-mini", "hp-eq", {enabled: v}).then(refresh);
   });
   rs.appendChild(hp.sw); c1.appendChild(rs);
   hp.setup = h("div", {"class": "hp-setup"}); c1.appendChild(hp.setup);
@@ -1320,7 +1470,7 @@ function buildHp() {
   hp.model = h("select", {"class": "inp", style: "width:100%"});
   hp.model.appendChild(h("option", {value: ""}, "Aucune correction"));
   Object.keys(S.meta.headphones).forEach(function (n) { hp.model.appendChild(h("option", {value: n}, esc(n))); });
-  hp.model.addEventListener("change", function () { S.state.hp_eq.headphone = hp.model.value || null; renderHp(); post("hp-eq", {headphone: hp.model.value || null}).then(refresh); });
+  hp.model.addEventListener("change", function () { S.state.hp_eq.headphone = hp.model.value || null; renderHp(); postModule("goxlr-mini", "hp-eq", {headphone: hp.model.value || null}).then(refresh); });
   c2.appendChild(hp.model);
   c2.appendChild(h("p", {"class": "muted-txt", style: "margin-top:10px;font-size:12.5px;line-height:1.45"}, "Correction AutoEq : ton casque ramené à la courbe de référence Harman, d\u2019après les mesures d\u2019oratory1990. Les styles s\u2019ajoutent par-dessus."));
   left.appendChild(c2);
@@ -1333,19 +1483,19 @@ function buildHp() {
       var eq = S.state.hp_eq, i = eq.channels.indexOf(c);
       if (i >= 0) eq.channels.splice(i, 1); else eq.channels.push(c);
       eq.channels = S.meta.hp_channels.filter(function (x) { return eq.channels.indexOf(x) >= 0; });
-      renderHp(); post("hp-eq", {channels: eq.channels}).then(refresh);
+      renderHp(); postModule("goxlr-mini", "hp-eq", {channels: eq.channels}).then(refresh);
     });
     hp.ch.appendChild(b);
   });
   f.appendChild(hp.ch); c3.appendChild(f);
   var lv = h("div", {"class": "row-switch", style: "margin-top:8px"}, "<div><b>Couper pendant le live</b><small>Ton stream reçoit aussi le son égalisé : quand OBS est ouvert, l\u2019égaliseur se coupe tout seul.</small></div>");
   hp.live = h("button", {"class": "switch"});
-  hp.live.addEventListener("click", function () { var v = !S.state.hp_eq.pause_live; S.state.hp_eq.pause_live = v; renderHp(); post("hp-eq", {pause_live: v}); });
+  hp.live.addEventListener("click", function () { var v = !S.state.hp_eq.pause_live; S.state.hp_eq.pause_live = v; renderHp(); postModule("goxlr-mini", "hp-eq", {pause_live: v}); });
   lv.appendChild(hp.live); c3.appendChild(lv);
   hp.pre = h("p", {"class": "muted-txt", style: "margin-top:6px;font-size:12.5px;line-height:1.45"}); c3.appendChild(hp.pre);
   hp.remove = h("button", {"class": "pill", style: "margin-top:12px;height:30px;font-size:12.5px", onclick: function () {
     sheet({icon: "Headphones", title: "Retirer l\u2019égaliseur ?", text: "Les voies GoXLR retrouvent leurs effets Windows d\u2019origine. Le son coupe 2 secondes. Tes profils sont gardés.",
-      actions: [["Annuler", null], ["Retirer", function () { post("hp-eq-remove", {}).then(refresh); }, "danger"]]});
+      actions: [["Annuler", null], ["Retirer", function () { postModule("goxlr-mini", "hp-eq-remove", {}).then(refresh); }, "danger"]]});
   }}, "Retirer l\u2019égaliseur de Windows");
   c3.appendChild(hp.remove);
   left.appendChild(c3);
@@ -1360,19 +1510,19 @@ function buildHp() {
   hp.cv = h("canvas"); eqb.appendChild(hp.cv);
   var bands = h("div", {"class": "eq-bands"});
   hp.bands = [];
-  var send = throttle(function () { post("hp-eq", {bands: S.state.hp_eq.bands}); }, 90);
+  var send = throttle(function () { postModule("goxlr-mini", "hp-eq", {bands: S.state.hp_eq.bands}); }, 90);
   S.meta.hp_bands.forEach(function (b, i) {
     var wrap = h("div", {"class": "eq-band"}), lab = h("b");
     var sl = Slider({label: "Égaliseur casque " + b + " Hz", format: function (v) { return v + " dB"; }, vertical: true, min: -12, max: 12, step: 1, onInput: function (v) {
       var eq = S.state.hp_eq; eq.bands[i] = v; eq.style = null; lab.textContent = (v > 0 ? "+" : "") + v; drawHp(); renderHpStyles(); hpPreText(); send();
-    }, onCommit: function () { post("hp-eq", {bands: S.state.hp_eq.bands}).then(refresh); }});
+    }, onCommit: function () { postModule("goxlr-mini", "hp-eq", {bands: S.state.hp_eq.bands}).then(refresh); }});
     wrap.appendChild(lab); wrap.appendChild(sl.el);
     wrap.appendChild(h("small", {}, b >= 1000 ? (b / 1000) + "k" : String(b)));
     bands.appendChild(wrap); hp.bands.push({sl: sl, lab: lab});
   });
   eqb.appendChild(bands); c5.appendChild(eqb);
   var row = h("div", {"class": "btn-row"});
-  row.appendChild(h("button", {"class": "pill", onclick: function () { post("hp-eq", {style: "neutre"}).then(refresh); }}, svg("reset") + "Remettre à plat"));
+  row.appendChild(h("button", {"class": "pill", onclick: function () { postModule("goxlr-mini", "hp-eq", {style: "neutre"}).then(refresh); }}, svg("reset") + "Remettre à plat"));
   row.appendChild(h("button", {"class": "pill primary", onclick: hpSaveSheet}, svg("save") + "Enregistrer comme profil"));
   c5.appendChild(row);
   right.appendChild(c5);
@@ -1390,7 +1540,7 @@ function hpSaveSheet() {
   function save() {
     var n = inp.value.trim(); if (!n) { inp.focus(); return; } if (saving) return;
     saving = true;
-    post("hp-eq-save", {name: n}).then(function (r) {
+    postModule("goxlr-mini", "hp-eq-save", {name: n}).then(function (r) {
       if (!r) return;
       if (sheetState && sheetState.body === body) closeSheet();
       toast("Profil « " + n + " » enregistré"); return refresh();
@@ -1406,10 +1556,10 @@ function renderHpStyles() {
   hp.stylesKey = key; hp.styles.innerHTML = "";
   function card(id, label, desc, icon, colour, removable) {
     var b = h("button", {"class": "preset" + (eq.style === id ? " on" : "")}, chipIco(icon, colour) + "<b>" + esc(label) + "</b><p>" + esc(desc) + "</p>");
-    b.addEventListener("click", function () { post("hp-eq", {style: id}).then(refresh); });
+    b.addEventListener("click", function () { postModule("goxlr-mini", "hp-eq", {style: id}).then(refresh); });
     if (removable) {
       var x = h("span", {"class": "preset-x", title: "Supprimer ce profil"}, svg("trash"));
-      x.addEventListener("click", function (e) { e.stopPropagation(); post("hp-eq-delete", {name: label}).then(function (r) { if (r) { toast("Profil « " + label + " » supprimé"); refresh(); } }); });
+      x.addEventListener("click", function (e) { e.stopPropagation(); postModule("goxlr-mini", "hp-eq-delete", {name: label}).then(function (r) { if (r) { toast("Profil « " + label + " » supprimé"); refresh(); } }); });
       b.appendChild(x);
     }
     hp.styles.appendChild(b);
@@ -1500,7 +1650,7 @@ function renderHp() {
 var rt = {};
 var SHORTCUTS = [
   {t: "VOD sans musique", d: "Ta VOD reçoit le stream, sans la musique (anti-DMCA).", get: function (s) { return s.vod.mode === "no-music"; },
-   apply: function (on) { S.state.vod.mode = on ? "no-music" : "off"; return post("settings", {vod: {mode: S.state.vod.mode}}).then(refresh); }},
+   apply: function (on) { S.state.vod.mode = on ? "no-music" : "off"; return postModule("goxlr-mini", "settings", {vod: {mode: S.state.vod.mode}}).then(refresh); }},
   {t: "Musique hors du stream", d: "Anti-DMCA : la musique reste dans ton casque.", get: function (s) { return !s.routing.Music.BroadcastMix; }, set: function (on) { return [["Music", "BroadcastMix", !on]]; }},
   {t: "Discord entend ta musique", d: "Partage ce que tu écoutes avec tes amis.", get: function (s) { return s.routing.Music.ChatMic; }, set: function (on) { return [["Music", "ChatMic", on]]; }},
   {t: "Notifications hors du stream", d: "Les sons Windows ne passent pas en live.", get: function (s) { return !s.routing.System.BroadcastMix; }, set: function (on) { return [["System", "BroadcastMix", !on]]; }},
@@ -1523,7 +1673,7 @@ function buildRouting() {
       var td = h("td"), n = h("button", {"class": "node", style: "--c:" + col(ch), title: LABELS[ch] + " → " + OUT_LABELS[o]}, svg("check", ' stroke-width="3"'));
       n.addEventListener("click", function () {
         if (vodAuto(o)) { toast("La VOD suit le stream sans la musique. Désactive « VOD sans musique » pour la régler à la main."); return; }
-        var v = !S.state.routing[i][o]; S.state.routing[i][o] = v; renderRouting(); post("route", {input: i, output: o, enabled: v});
+        var v = !S.state.routing[i][o]; S.state.routing[i][o] = v; renderRouting(); postModule("goxlr-mini", "route", {input: i, output: o, enabled: v});
       });
       td.appendChild(n); tr.appendChild(td); rt.nodes[i + "|" + o] = n;
     });
@@ -1542,7 +1692,7 @@ function buildRouting() {
     sw.addEventListener("click", function () {
       var on = !sc.get(S.state);
       if (sc.apply) { sc.apply(on); renderRouting(); return; }
-      sc.set(on).forEach(function (c) { S.state.routing[c[0]][c[1]] = c[2]; post("route", {input: c[0], output: c[1], enabled: c[2]}); });
+      sc.set(on).forEach(function (c) { S.state.routing[c[0]][c[1]] = c[2]; postModule("goxlr-mini", "route", {input: c[0], output: c[1], enabled: c[2]}); });
       renderRouting();
     });
     row.appendChild(sw); side.appendChild(row); rt.sc.push({sc: sc, sw: sw});
@@ -1576,7 +1726,7 @@ function buildLight() {
   lt.styles = h("div", {"class": "seg"});
   S.meta.fader_styles.forEach(function (k) {
     var b = h("button", {"data-k": k}, STYLE_LABELS[k]);
-    b.addEventListener("click", function () { S.meta.faders.forEach(function (f) { S.state.lighting.fader_style[f] = k; }); renderLight(); post("lighting", {fader_style: k}); });
+    b.addEventListener("click", function () { S.meta.faders.forEach(function (f) { S.state.lighting.fader_style[f] = k; }); renderLight(); postModule("goxlr-mini", "lighting", {fader_style: k}); });
     lt.styles.appendChild(b);
   });
   styleCard.appendChild(lt.styles);
@@ -1584,11 +1734,11 @@ function buildLight() {
   lt.anims = h("div", {"class": "chips"});
   S.meta.animations.forEach(function (k) {
     var b = h("button", {"data-k": k}, ANIM_LABELS[k] || k);
-    b.addEventListener("click", function () { S.state.lighting.animation = k; renderLight(); post("lighting", {animation: k}); });
+    b.addEventListener("click", function () { S.state.lighting.animation = k; renderLight(); postModule("goxlr-mini", "lighting", {animation: k}); });
     lt.anims.appendChild(b);
   });
   styleCard.appendChild(lt.anims);
-  var animSend = throttle(function (p) { post("lighting", p); }, 120);
+  var animSend = throttle(function (p) { postModule("goxlr-mini", "lighting", p); }, 120);
   lt.mod1 = fineSlider(styleCard, "Amplitude", 0, 100, function (v) { return v + " %"; }, function (v) { S.state.lighting.mod1 = v; animSend({mod1: v}); });
   lt.mod2 = fineSlider(styleCard, "Vitesse", 0, 100, function (v) { return v + " %"; }, function (v) { S.state.lighting.mod2 = v; animSend({mod2: v}); });
   left.appendChild(styleCard);
@@ -1630,7 +1780,7 @@ function renderLight() {
     Object.keys(S.meta.themes).forEach(function (k) {
       var t = S.meta.themes[k], b = h("button", {"class": "theme" + (li.theme === k ? " on" : "")});
       b.innerHTML = '<div class="bars">' + t.preview.map(function (x) { return '<i style="background:linear-gradient(0deg,#' + darken(x, .25) + ',#' + x + ')"></i>'; }).join("") + "</div><b>" + frLabel(t.label) + "</b>";
-      b.addEventListener("click", function () { withUndo("Thème " + frLabel(t.label) + " appliqué", function () { return post("theme", {name: k}).then(refresh); }); });
+      b.addEventListener("click", function () { withUndo("Thème " + frLabel(t.label) + " appliqué", function () { return postModule("goxlr-mini", "theme", {name: k}).then(refresh); }); });
       lt.themes.appendChild(b);
     });
     lt.themesKey = key;
@@ -1658,7 +1808,7 @@ function customRow(label, colours, toTargets) {
       colourPop(b, cur, function (nc) {
         toTargets(nc).forEach(function (t) {
           var cols = S.state.colours[t[0]]; if (t[1][0]) cols[0] = t[1][0]; if (t[1][1]) cols[1] = t[1][1];
-          post("colour", {target: t[0], colours: t[1]});
+          postModule("goxlr-mini", "colour", {target: t[0], colours: t[1]});
         });
         S.state.lighting.theme = "custom"; lt.customKey = null; lt.themesKey = null; renderLight();
       });
@@ -1714,7 +1864,7 @@ function buildScenes() {
   sb.addEventListener("click", function () {
     var n = sc.name.value.trim(); if (!n) { sc.name.focus(); return; }
     sb.disabled = true;
-    post("scene-save", {name: n}).then(function (r) { if (r) { if (sc.name.value.trim() === n) sc.name.value = ""; toast("Scène « " + n + " » enregistrée"); return refresh(); } })
+    postModule("goxlr-mini", "scene-save", {name: n}).then(function (r) { if (r) { if (sc.name.value.trim() === n) sc.name.value = ""; toast("Scène « " + n + " » enregistrée"); return refresh(); } })
       .finally(function () { sb.disabled = false; });
   });
   sc.name.addEventListener("keydown", function (e) { if (e.key === "Enter") sb.click(); });
@@ -1773,7 +1923,7 @@ function saveAuto(patch) {
   var a = S.state.auto_scenes;
   var body = {enabled: "enabled" in patch ? patch.enabled : a.enabled, rules: patch.rules || a.rules, fallback: "fallback" in patch ? patch.fallback : a.fallback};
   S.state.auto_scenes = body; sc.autoKey = null; renderAuto();
-  return post("auto-scenes", body).then(refresh);
+  return postModule("goxlr-mini", "auto-scenes", body).then(refresh);
 }
 function renderAuto() {
   var a = S.state.auto_scenes, names = sceneNames();
@@ -1807,7 +1957,7 @@ function renderScenes() {
       var d = S.meta.scenes[k], b = h("button", {"class": "scene" + (st.scene === k ? " on" : "")});
       var lane = S.meta.faders.map(function (f) { var ch = d.faders[f]; return '<span style="--c:' + col(ch) + '" title="' + LABELS[ch] + '">' + svg(ch) + "</span>"; }).join("");
       b.innerHTML = chipIco(SCENE_ICONS[k], SCENE_COLOURS[k]) + "<b>" + frLabel(d.label) + "</b><p>" + frLabel(d.desc) + '</p><div class="lane">' + lane + "</div>" + (st.scene === k ? '<span class="tag">ACTIVE</span>' : "");
-      b.addEventListener("click", function () { withUndo("Scène " + frLabel(d.label) + " appliquée", function () { return post("scene", {name: k}).then(refresh); }); });
+      b.addEventListener("click", function () { withUndo("Scène " + frLabel(d.label) + " appliquée", function () { return postModule("goxlr-mini", "scene", {name: k}).then(refresh); }); });
       sc.grid.appendChild(b);
     });
     sc.mine.innerHTML = "";
@@ -1818,8 +1968,8 @@ function renderScenes() {
       it.appendChild(h("span", {"class": "chip-ico", style: "--c:#0A84FF;width:28px;height:28px;border-radius:8px"}, svg("scenes")));
       var b = h("b"); b.textContent = n; it.appendChild(b);
       if (st.scene === n) it.appendChild(h("span", {"class": "muted-txt", style: "font-size:11px"}, "active"));
-      it.appendChild(h("button", {"class": "pill", style: "height:28px;padding:0 12px", onclick: function () { withUndo("Scène « " + n + " » appliquée", function () { return post("scene", {name: n}).then(refresh); }); }}, "Appliquer"));
-      it.appendChild(h("button", {"class": "ibtn", title: "Supprimer", onclick: function () { post("scene-delete", {name: n}).then(refresh); }}, svg("trash")));
+      it.appendChild(h("button", {"class": "pill", style: "height:28px;padding:0 12px", onclick: function () { withUndo("Scène « " + n + " » appliquée", function () { return postModule("goxlr-mini", "scene", {name: n}).then(refresh); }); }}, "Appliquer"));
+      it.appendChild(h("button", {"class": "ibtn", title: "Supprimer", onclick: function () { postModule("goxlr-mini", "scene-delete", {name: n}).then(refresh); }}, svg("trash")));
       sc.mine.appendChild(it);
     });
     sc.key = key;
@@ -1831,25 +1981,25 @@ function advices() {
   var s = S.state, a = [];
   if (!S.connected) return [{lvl: "warn", t: "GoXLR déconnectée", d: (L && USB_TXT[L.usb]) || "Vérifie le câble USB. L\u2019appli se reconnecte toute seule."}];
   var voice = function () { voiceIntro(); return Promise.resolve(); };
-  if (s.mutes.Mic) a.push({lvl: "warn", t: "Ton micro est coupé", d: "Personne ne t\u2019entend en ce moment.", label: "Réactiver", fn: function () { return post("mute", {channel: "Mic", muted: false}); }});
-  else if (s.partial.Mic) a.push({lvl: "warn", t: "Micro " + MUTED_TXT[s.partial.Mic].toLowerCase(), d: "Une partie de ton public ne t\u2019entend pas.", label: "Réactiver", fn: function () { return post("mute", {channel: "Mic", muted: false}); }});
+  if (s.mutes.Mic) a.push({lvl: "warn", t: "Ton micro est coupé", d: "Personne ne t\u2019entend en ce moment.", label: "Réactiver", fn: function () { return postModule("goxlr-mini", "mute", {channel: "Mic", muted: false}); }});
+  else if (s.partial.Mic) a.push({lvl: "warn", t: "Micro " + MUTED_TXT[s.partial.Mic].toLowerCase(), d: "Une partie de ton public ne t\u2019entend pas.", label: "Réactiver", fn: function () { return postModule("goxlr-mini", "mute", {channel: "Mic", muted: false}); }});
   if (L && L.live.mic_db <= -72 && !s.mutes.Mic) a.push({lvl: "warn", t: "Aucun son du micro", d: s.mic.type === "condenser" ? "Vérifie le câble XLR, puis lance « Régler ma voix »." : "Un micro statique ne marche qu\u2019avec le 48 V : « Régler ma voix » le détecte et l\u2019allume.", label: "Régler ma voix", fn: voice});
   else if (!micCal()) a.push({t: "Ta voix n\u2019est pas encore réglée", d: "20 secondes pour caler le gain sur ta voix. Aucun traitement n\u2019est allumé sans ton accord.", label: "Régler ma voix", fn: voice});
-  if (s.routing.Chat.ChatMic) a.push({lvl: "warn", t: "Écho dans Discord", d: "Le chat est renvoyé vers le chat : tes amis s\u2019entendent eux-mêmes.", label: "Corriger", fn: function () { return post("route", {input: "Chat", output: "ChatMic", enabled: false}); }});
+  if (s.routing.Chat.ChatMic) a.push({lvl: "warn", t: "Écho dans Discord", d: "Le chat est renvoyé vers le chat : tes amis s\u2019entendent eux-mêmes.", label: "Corriger", fn: function () { return postModule("goxlr-mini", "route", {input: "Chat", output: "ChatMic", enabled: false}); }});
   winAdvice(a);
-  if (s.routing.System.BroadcastMix) a.push({t: "Tes notifications passent en live", d: "Les sons Windows sont envoyés au stream.", label: "Les retirer", fn: function () { return post("route", {input: "System", output: "BroadcastMix", enabled: false}); }});
+  if (s.routing.System.BroadcastMix) a.push({t: "Tes notifications passent en live", d: "Les sons Windows sont envoyés au stream.", label: "Les retirer", fn: function () { return postModule("goxlr-mini", "route", {input: "System", output: "BroadcastMix", enabled: false}); }});
   if (s.mic.type === "dynamic" && s.mic.gain_db < 40 && !micCal()) a.push({t: "Gain bas pour un micro dynamique", d: "Il est à " + s.mic.gain_db + " dB ; un micro dynamique demande souvent 45 à 60 dB.", label: "Régler ma voix", fn: voice});
   var onF = S.meta.faders.map(function (f) { return s.faders[f]; });
   if (onF.indexOf("Mic") < 0) a.push({t: "Micro hors des faders", d: "Tu le coupes avec le bouton de toux ; son volume se règle dans Mixeur."});
-  if (s.volumes.Headphones < 64) a.push({t: "Casque très bas", d: "Il est à " + pct(s.volumes.Headphones) + " %.", label: "Remonter à 80 %", fn: function () { return post("volume", {channel: "Headphones", value: 204}); }});
+  if (s.volumes.Headphones < 64) a.push({t: "Casque très bas", d: "Il est à " + pct(s.volumes.Headphones) + " %.", label: "Remonter à 80 %", fn: function () { return postModule("goxlr-mini", "volume", {channel: "Headphones", value: 204}); }});
   if (!a.length) a.push({lvl: "ok", t: "Tout est bien réglé", d: "Rien à signaler sur ta configuration."});
   return a;
 }
 function renderAdvice() {
-  if (!S) return;
+  if (!S || activeModule !== "goxlr-mini") return;
   var a = advices(), key = JSON.stringify(a.map(function (x) { return x.t + x.d; }));
   var warn = a.filter(function (x) { return x.lvl !== "ok"; }).length;
-  var badge = $("nav-badge"); badge.textContent = warn; badge.style.display = warn ? "" : "none";
+  var badge = $("nav-badge"); if (badge) { badge.textContent = warn; badge.style.display = warn ? "" : "none"; }
   if (!built.scenes || sc.advKey === key) return;
   sc.adv.innerHTML = "";
   a.forEach(function (x) {
@@ -1885,6 +2035,7 @@ function winAdvice(a) {
 function onWinAudio(d) {
   if (!d || d.type !== "audio-defaults") return;
   WIN = d;
+  if (activeModule !== "goxlr-mini") return;
   if (d.fixed != null) toast(d.fixed > 0 ? "Windows utilise maintenant ta GoXLR" : d.fixed === 0 ? "Windows utilisait déjà ta GoXLR" : "Windows ne voit pas encore les voies de la GoXLR");
   var k = winByKind();
   if (k["capture-loop"] && !winLoopTold && d.fixed == null) {
@@ -1915,7 +2066,7 @@ function openSoundSheet() {
   closePop();
   var body = h("div");
   sheet({wide: true, sound: true, body: body, res: null, day: null, actions: [["Fermer", null, "primary"]],
-    onClose: function () { if (st.res && st.res.running) post("sound-test", {seconds: 0}); clearInterval(st.timer); }});
+    onClose: function () { if (st.res && st.res.running) postModule("goxlr-mini", "sound-test", {seconds: 0}); clearInterval(st.timer); }});
   var st = sheetState;
   api("/api/glitches").then(function (g) { if (sheetState === st) { st.day = g; paintSound(); } }, function () {});
   api("/api/usb").then(function (u) { if (sheetState === st) { st.usb = u; paintSound(); } }, function () {});
@@ -2027,7 +2178,7 @@ function hpSoftBands(max) {
 }
 function hpSoften() {
   var b = hpSoftBands(HP_SAFE_DB);
-  return post("hp-eq", {bands: b}).then(function (r) { if (!r) return null; toast("Basses adoucies : +" + HP_SAFE_DB + " dB au plus"); return refresh(); });
+  return postModule("goxlr-mini", "hp-eq", {bands: b}).then(function (r) { if (!r) return null; toast("Basses adoucies : +" + HP_SAFE_DB + " dB au plus"); return refresh(); });
 }
 var HP_SAFE_DB = 10;
 function paintSound() {
@@ -2099,7 +2250,7 @@ function runSound(secs) {
   st.res = {running: true, t0: Date.now(), secs: secs}; paintSound();
   clearInterval(st.timer);
   st.timer = setInterval(function () { if (sheetState !== st || !st.res || !st.res.running) { clearInterval(st.timer); return; } paintSound(); }, 1000);
-  return post("sound-test", {seconds: secs + 20}).then(function (r) {
+  return postModule("goxlr-mini", "sound-test", {seconds: secs + 20}).then(function (r) {
     if (!r) throw new Error("Le moteur n’a pas pu démarrer le test audio.");
     return Promise.all([invoke("sound_check", {seconds: secs}), invoke("sound_loop_test", {seconds: secs})]);
   }).then(function (r) {
@@ -2108,7 +2259,7 @@ function runSound(secs) {
     function (e) { st.res = {error: e && e.message ? e.message : String(e || "erreur inconnue")}; })
     .then(function () {
       clearInterval(st.timer);
-      post("sound-test", {seconds: 0});
+      postModule("goxlr-mini", "sound-test", {seconds: 0});
       return api("/api/glitches").then(function (g) { st.day = g; }, function () {});
     }).then(function () { paintSound(); });
 }
@@ -2117,7 +2268,7 @@ function openEchoSheet() {
   var body = h("div");
   sheet({wide: true, echo: true, body: body, checks: null, echoRes: null, actions: [["Fermer", null, "primary"]]});
   var st = sheetState;
-  post("echo-check").then(function (r) { if (sheetState === st && r) { st.checks = r.checks || []; paintEcho(); } });
+  postModule("goxlr-mini", "echo-check").then(function (r) { if (sheetState === st && r) { st.checks = r.checks || []; paintEcho(); } });
   if (inApp()) invoke("audio_defaults").then(onWinAudio, function () {});
   paintEcho();
 }
@@ -2129,7 +2280,7 @@ function paintEcho() {
   if (!st.checks) g.appendChild(h("p", {"class": "muted-txt"}, "Vérification…"));
   (st.checks || []).forEach(function (c) {
     g.appendChild(echoItem(c.ok ? "ok" : c.lvl, esc(c.t), esc(c.d), c.fix && c.fix.label, c.fix && function () {
-      return post(c.fix.action, c.fix.body).then(function (r) { return r ? post("echo-check") : null; }).then(function (r) { if (r) { st.checks = r.checks; paintEcho(); refresh(); } });
+      return postModule("goxlr-mini", c.fix.action, c.fix.body).then(function (r) { return r ? postModule("goxlr-mini", "echo-check") : null; }).then(function (r) { if (r) { st.checks = r.checks; paintEcho(); refresh(); } });
     }));
   });
   b.appendChild(g);
@@ -2255,52 +2406,115 @@ function echoTest(onStep) {
   }).catch(function (e) { cleanup(); throw e; });
 }
 
-/* ---------- bibliothèque d'appareils ---------- */
+/* ---------- espace personnel et modules ---------- */
+function moduleFeatures(m) {
+  return m.capabilities ? m.capabilities.map(function (c) { return CAP_LABELS[c] || c; }) : (m.features || []);
+}
+function deviceCard(m, overview) {
+  var status = moduleStatus(m.id), d = moduleRuntime(m.id);
+  var card = h("div", {"class": "card device-card", "data-device": m.id});
+  card.innerHTML = '<div class="lib-head">' + chipIco(LIB_KIND[m.kind] || "usb", "#0071E3") + "<div><b>" + esc(m.name) + "</b><small>" + esc(m.vendor || "") + "</small></div></div>";
+  card.appendChild(h("div", {"class": "device-status " + status.status, role: "status"}, "<i></i>" + esc(status.label) + (d.simulated ? " · Appareil simulé" : "")));
+  if (status.detail) card.appendChild(h("p", {"class": "device-detail"}, esc(status.detail)));
+  else if (status.status === "disconnected") card.appendChild(h("p", {"class": "device-detail"}, "Branche ton appareil pour le retrouver ici. Tes réglages restent disponibles."));
+  if (m.summary) card.appendChild(h("p", {"class": "device-detail"}, esc(m.summary)));
+  card.appendChild(h("div", {"class": "chips lib-feat"}, moduleFeatures(m).map(function (f) { return "<span>" + esc(f) + "</span>"; }).join("")));
+  if (d.firmware) card.appendChild(h("small", {"class": "muted-txt"}, "Firmware " + esc(d.firmware)));
+  var actions = h("div", {"class": "lib-act"});
+  if (!overview) actions.appendChild(h("button", {"class": "pill primary", onclick: function () { openDevice(m.id); }}, "Ouvrir" + svg("chev")));
+  actions.appendChild(h("button", {"class": "pill", onclick: function () { removeDevice(m.id); }}, "Retirer de mon espace"));
+  card.appendChild(actions);
+  return card;
+}
+function renderDevices() {
+  var root = $("p-devices");
+  if (!built.devices) {
+    root.innerHTML = "";
+    var top = h("div", {"class": "workspace-top"}, "<p>Chaque appareil a son propre espace. Ajoute le matériel que tu possèdes ; les appareils connectés apparaissent automatiquement.</p>");
+    top.appendChild(h("button", {"class": "pill primary", onclick: function () { go("modules"); }}, svg("plus") + "Ajouter un appareil"));
+    root.appendChild(top); devicesUI.grid = h("div", {"class": "device-grid"}); root.appendChild(devicesUI.grid);
+    root.appendChild(h("p", {"class": "workspace-note"}, "Retirer un appareil masque sa carte. Ses réglages et son fonctionnement restent en place."));
+    devicesUI.key = ""; built.devices = true;
+  }
+  var mine = installedModules().filter(function (m) { return hasDevice(m.id); });
+  var key = JSON.stringify([mine, mine.map(function (m) { return [moduleRuntime(m.id), moduleStatus(m.id)]; })]);
+  if (devicesUI.key === key) return;
+  devicesUI.key = key; devicesUI.grid.innerHTML = "";
+  mine.forEach(function (m) { devicesUI.grid.appendChild(deviceCard(m)); });
+  if (!mine.length) {
+    var empty = h("div", {"class": "card workspace-empty", style: "grid-column:1/-1"}, chipIco("usb", "#0071E3") + "<h2>Aucun appareil ajouté</h2><p>Retrouve les modules disponibles et ajoute le matériel que tu possèdes.</p>");
+    empty.appendChild(h("button", {"class": "pill primary", onclick: function () { go("modules"); }}, "Explorer les modules"));
+    devicesUI.grid.appendChild(empty);
+  }
+}
+var overviewKey = "";
+function renderDeviceOverview() {
+  var m = installedModule(activeModule); if (!m) return;
+  var key = JSON.stringify([m, moduleRuntime(m.id), moduleStatus(m.id)]);
+  if (overviewKey === key) return;
+  overviewKey = key;
+  var root = $("p-device"); root.innerHTML = ""; root.appendChild(deviceCard(m, true));
+  if (!modulePages(m).length) root.appendChild(h("p", {"class": "workspace-note"}, "Aucun réglage disponible pour cet appareil dans cette version de l’interface."));
+}
 var lib = {data: null, q: "", grid: null};
 var LIB_STATUS = {official: ["Officiel", "#30D158"], community: ["Communautaire", "#0A84FF"], generic: ["Générique", "#FF9F0A"], wanted: ["À contribuer", "#8E8E93"]};
 var LIB_KIND = {"audio-interface": "mixer", mouse: "mouse", keyboard: "keyboard", monitor: "monitor", headset: "Headphones"};
 function renderLibrary() {
   if (built.library) return;
-  var root = $("p-library"); root.innerHTML = "";
+  var root = $("p-modules"); root.innerHTML = "";
   var top = h("div", {"class": "lib-top"});
   var q = h("input", {"class": "inp", placeholder: "Chercher un appareil, une marque…", style: "flex:1"});
+  q.value = lib.q; q.setAttribute("aria-label", "Chercher un module");
   q.addEventListener("input", function () { lib.q = q.value.trim().toLowerCase(); paintLibrary(); });
   top.appendChild(q);
   top.appendChild(h("button", {"class": "pill", onclick: function () {
     post("library-refresh").then(function (d) { if (d && d.modules) { lib.data = d; paintLibrary(); toast(d.source === "github" ? "Liste à jour" : "GitHub injoignable : liste locale"); } });
   }}, svg("refresh") + "Actualiser"));
-  top.appendChild(h("button", {"class": "pill primary", onclick: function () { openUrl((lib.data && lib.data.contribute_url) || "https://github.com/samirmedani/rustudio"); }}, svg("plus") + "Ajouter un appareil"));
+  top.appendChild(h("button", {"class": "pill", onclick: function () { openUrl((lib.data && lib.data.contribute_url) || "https://github.com/samirmedani/rustudio"); }}, svg("plus") + "Contribuer un module"));
   root.appendChild(top);
   lib.grid = h("div", {"class": "lib-grid"});
   root.appendChild(lib.grid);
-  root.appendChild(h("p", {"class": "muted-txt lib-foot"}, "Chaque appareil est un module. Les modules sont proposés sur GitHub par pull request, relus, puis ajoutés à cette liste. Un module générique couvre toute une famille d\u2019appareils : pour ton modèle précis, adapte-le (fork) ou propose ta version à tous."));
+  root.appendChild(h("p", {"class": "muted-txt lib-foot"}, "Les modules livrés avec ta version de Rustudio peuvent rejoindre Mes appareils. Les autres fiches présentent du matériel à prendre en charge ou des contributions à intégrer à une prochaine version."));
   built.library = true;
+  lib.paintKey = ""; paintLibrary();
   api("/api/library").then(function (d) { lib.data = d; paintLibrary(); return post("library-refresh"); }).then(function (d) { if (d && d.modules) { lib.data = d; paintLibrary(); } })
     .catch(function () { toast("La bibliothèque n’a pas pu être chargée. Réessaie avec Actualiser."); });
 }
 function paintLibrary() {
-  if (!lib.grid || !lib.data) return;
-  lib.grid.innerHTML = "";
-  var dev = S && S.meta.device ? S.meta.device.id : null;
-  var mods = (lib.data.modules || []).filter(function (m) { return !lib.q || (m.name + " " + m.vendor + " " + m.kind + " " + m.features.join(" ")).toLowerCase().indexOf(lib.q) >= 0; });
+  if (!lib.grid) return;
+  var modules = installedModules().slice(), known = modules.map(function (m) { return m.id; });
+  ((lib.data && lib.data.modules) || []).forEach(function (m) { if (known.indexOf(m.id) < 0) { modules.push(m); known.push(m.id); } });
+  var key = JSON.stringify([modules, workspacePrefs.devices, lib.q]);
+  if (lib.paintKey === key) return;
+  lib.paintKey = key; lib.grid.innerHTML = "";
+  var mods = modules.filter(function (m) { return !lib.q || (m.name + " " + m.vendor + " " + m.kind + " " + moduleFeatures(m).join(" ")).toLowerCase().indexOf(lib.q) >= 0; });
   mods.forEach(function (m) {
-    var st = LIB_STATUS[m.status] || LIB_STATUS.wanted;
+    var local = installedModule(m.id), st = local ? ["Livré avec Rustudio", "#0071E3"] : (LIB_STATUS[m.status] || LIB_STATUS.wanted);
     var c = h("div", {"class": "card lib-card"});
-    c.innerHTML = '<div class="lib-head">' + chipIco(LIB_KIND[m.kind] || "grid", st[1]) + "<div><b>" + esc(m.name) + "</b><small>" + esc(m.vendor) + '</small></div><span class="lib-badge" style="--c:' + st[1] + '">' + st[0] + "</span></div><p>" + esc(m.summary) + '</p><div class="chips lib-feat">' + m.features.map(function (f) { return "<span>" + esc(f) + "</span>"; }).join("") + "</div>";
+    c.innerHTML = '<div class="lib-head">' + chipIco(LIB_KIND[m.kind] || "grid", st[1]) + "<div><b>" + esc(m.name) + "</b><small>" + esc(m.vendor || "") + '</small></div><span class="lib-badge" style="--c:' + st[1] + '">' + st[0] + "</span></div><p>" + esc(m.summary || "") + '</p><div class="chips lib-feat">' + moduleFeatures(m).map(function (f) { return "<span>" + esc(f) + "</span>"; }).join("") + "</div>";
     var row = h("div", {"class": "lib-act"});
-    if (m.builtin) row.appendChild(h("span", {"class": "lib-on"}, svg("check") + (m.id === dev ? "Intégré · ton appareil" : "Intégré")));
-    else if (m.status === "wanted") row.appendChild(h("button", {"class": "pill", onclick: function () { openUrl(lib.data.contribute_url); }}, "Coder ce module"));
-    else row.appendChild(h("button", {"class": "pill", onclick: function () { openUrl("https://github.com/samirmedani/rustudio/tree/main/" + m.source); }}, "Voir le module"));
+    if (local) {
+      if (hasDevice(m.id)) { row.appendChild(h("span", {"class": "lib-on"}, svg("check") + "Dans Mes appareils")); row.appendChild(h("button", {"class": "pill primary", onclick: function () { openDevice(m.id); }}, "Ouvrir")); }
+      else row.appendChild(h("button", {"class": "pill primary", onclick: function () { if (addDevice(m.id)) toast(m.name + " ajouté à Mes appareils"); }}, "Ajouter à Mes appareils"));
+    } else if (m.status === "wanted") row.appendChild(h("button", {"class": "pill", onclick: function () { openUrl((lib.data && lib.data.contribute_url) || "https://github.com/samirmedani/rustudio/blob/main/docs/MODULES.md"); }}, "Contribuer ce module"));
+    else {
+      row.appendChild(h("span", {"class": "muted-txt"}, "Absent de cette version"));
+      row.appendChild(h("button", {"class": "pill", onclick: function () { openUrl("https://github.com/samirmedani/rustudio/tree/main/" + m.source); }}, "Voir le module"));
+    }
     c.appendChild(row);
     lib.grid.appendChild(c);
   });
-  if (!mods.length) lib.grid.appendChild(h("p", {"class": "muted-txt"}, "Aucun appareil ne correspond. Il n\u2019existe pas encore ? Ajoute-le."));
+  if (!mods.length) lib.grid.appendChild(h("p", {"class": "muted-txt"}, "Aucun module ne correspond. Tu peux proposer la prise en charge de ton appareil."));
 }
 
 /* ---------- menu bas droite ---------- */
 function openMenu() {
   var box = h("div", {style: "width:284px"});
   function item(icon, label, fn) { var b = h("button", {"class": "menu-item"}, svg(icon) + "<span>" + label + "</span>"); b.addEventListener("click", function () { closePop(); fn(); }); box.appendChild(b); }
+  item("usb", "Mes appareils", function () { go("devices"); });
+  item("grid", "Modules", function () { go("modules"); });
+  if (activeModule === "goxlr-mini" && S) {
+  box.appendChild(h("div", {"class": "menu-sep"}));
   var micMuted = S && !!muteState("Mic");
   item(micMuted ? "Mic" : "micOff", micMuted ? "Réactiver le micro" : "Couper le micro", function () { setMute("Mic", !micMuted, "all"); });
   box.appendChild(h("div", {"class": "menu-sep"}));
@@ -2310,7 +2524,6 @@ function openMenu() {
   item("activity", "Diagnostic", openDiag);
   item("shield", "Anti-écho", openEchoSheet);
   item("audioLines", "Son qui crépite ?", openSoundSheet);
-  item("refresh", "Rechercher une mise à jour", checkUpdate);
   box.appendChild(h("div", {"class": "menu-sep"}));
   item("download", "Exporter ma configuration", function () {
     var a = h("a", {href: URL.createObjectURL(new Blob([JSON.stringify(S.state, null, 2)], {type: "application/json"})), download: "rustudio-config.json"}); a.click();
@@ -2319,14 +2532,16 @@ function openMenu() {
   item("reset", "Revenir aux réglages d\u2019origine", function () {
     sheet({icon: "reset", title: "Revenir aux réglages d\u2019origine ?", text: "Faders, volumes, routage, micro et couleurs reprennent le profil de base. Tes scènes enregistrées sont gardées.",
       actions: [["Annuler", null], ["Réinitialiser", function () {
-        api("/api/default-profile").then(function (p) { p.user_scenes = S.state.user_scenes; return withUndo("Réglages d\u2019origine rétablis", function () { return post("profile", p).then(refresh); }); })
+        api("/api/default-profile").then(function (p) { p.user_scenes = S.state.user_scenes; return withUndo("Réglages d\u2019origine rétablis", function () { return postModule("goxlr-mini", "profile", p).then(refresh); }); })
           .catch(function () { toast("Les réglages d’origine n’ont pas pu être chargés."); });
       }, "danger"]]});
   });
+  }
   box.appendChild(h("div", {"class": "menu-sep"}));
+  item("refresh", "Rechercher une mise à jour", checkUpdate);
   item("info", "À propos", function () {
-    var repo = (S.update && S.update.repo_url) || "https://github.com/samirmedani/rustudio";
-    sheet({icon: "info", title: "Rustudio " + S.version, text: "Logiciel libre (licence MIT), écrit en Rust, qui pilote tes périphériques sous Windows. Appareil : GoXLR Mini, avec le pilote officiel." + "<br>Firmware " + (S.firmware || "—") + (S.sim ? " · <b>appareil simulé</b>" : "") + "<br><br><span class=\"muted-txt\">Projet indépendant, non affilié à TC-Helicon ni à Music Tribe.</span>",
+    var repo = (S && S.update && S.update.repo_url) || "https://github.com/samirmedani/rustudio";
+    sheet({icon: "info", title: "Rustudio" + (S ? " " + esc(S.version) : ""), text: "Logiciel libre (licence MIT), écrit en Rust, qui réunit tes périphériques sous Windows. Chaque appareil dispose de son module et de son propre espace de réglages." + "<br><br><span class=\"muted-txt\">Projet indépendant, non affilié aux fabricants du matériel.</span>",
       actions: [["Code source sur GitHub", function () { openUrl(repo); }], ["Fermer", null, "primary"]]});
   });
   openPop($("fab"), box, "down-right");
@@ -2338,7 +2553,7 @@ function fmtDur(s) { if (s == null) return "—"; if (s < 60) return s + " s"; i
 var STATUS_FR = {ok: ["Tout va bien", "#30D158", "ok"], absent: ["GoXLR débranchée", "#FF9F0A", "warn"], error: ["Connexion impossible", "#FF9F0A", "warn"], blocked: ["Pilote USB bloqué", "#FF453A", "warn"], starting: ["Démarrage", "#64D2FF", "info"]};
 function openDiag() {
   var body = h("div");
-  sheet({wide: true, body: body, actions: [["Copier le rapport", function () { copyReport(); }, "", true], ["Son qui crépite ?", openSoundSheet, "", true], ["Reconnecter la GoXLR", function () { post("reconnect").then(function (r) { if (r) toast("Reconnexion demandée"); }); }, "", true], ["Fermer", null, "primary"]]});
+  sheet({wide: true, body: body, actions: [["Copier le rapport", function () { copyReport(); }, "", true], ["Son qui crépite ?", openSoundSheet, "", true], ["Reconnecter la GoXLR", function () { postModule("goxlr-mini", "reconnect").then(function (r) { if (r) toast("Reconnexion demandée"); }); }, "", true], ["Fermer", null, "primary"]]});
   function paint() {
     api("/api/health").then(function (hl) {
       if (!sheetState || sheetState.body !== body) return;
@@ -2391,11 +2606,11 @@ function openSettingsSheet() {
   var f = h("div", {"class": "field"}, '<div class="field-top">Durée d\u2019un appui long<span id="hold-val"></span></div>');
   var sl = Slider({label: "Durée d’un appui long", format: function (v) { return (v / 1000).toFixed(2).replace(".", ",") + " s"; }, min: 250, max: 1500, step: 50, value: S.state.prefs.hold_ms, colour: "var(--accent)",
     onInput: function (v) { $("hold-val").textContent = (v / 1000).toFixed(2).replace(".", ",") + " s"; },
-    onCommit: function (v) { S.state.prefs.hold_ms = v; post("settings", {prefs: {hold_ms: v}}); }});
+    onCommit: function (v) { S.state.prefs.hold_ms = v; postModule("goxlr-mini", "settings", {prefs: {hold_ms: v}}); }});
   f.appendChild(sl.el); body.appendChild(f);
   var r = h("div", {"class": "row-switch", style: "margin-top:10px"}, "<div><b>Bulle à l\u2019écran quand le micro change</b><small>Petit rappel en bas de l\u2019écran, même en jeu (appli Windows).</small></div>");
   var sw = h("button", {"class": "switch" + (S.state.prefs.osd ? " on" : "")});
-  sw.addEventListener("click", function () { var v = !S.state.prefs.osd; S.state.prefs.osd = v; sw.classList.toggle("on", v); post("settings", {prefs: {osd: v}}); });
+  sw.addEventListener("click", function () { var v = !S.state.prefs.osd; S.state.prefs.osd = v; sw.classList.toggle("on", v); postModule("goxlr-mini", "settings", {prefs: {osd: v}}); });
   r.appendChild(sw); body.appendChild(r);
   sheet({wide: true, body: body, actions: [["Fermer", null, "primary"]]});
   $("hold-val").textContent = (S.state.prefs.hold_ms / 1000).toFixed(2).replace(".", ",") + " s";
@@ -2458,7 +2673,7 @@ function closeSheet() {
 }
 var jobSeen = null;
 function startJob(kind, params) {
-  post(kind, params).then(function (r) { if (r && r.ok) { jobSeen = {kind: kind, id: r.job}; showJob({kind: kind, running: true, progress: 0, step: "Préparation…"}); } });
+  postModule("goxlr-mini", kind, params).then(function (r) { if (r && r.ok) { jobSeen = {kind: kind, id: r.job}; showJob({kind: kind, running: true, progress: 0, step: "Préparation…"}); } });
 }
 function showJob(j) {
   if (j.kind === "voice-setup") return showVoiceJob(j);
@@ -2471,7 +2686,7 @@ function showJob(j) {
       return;
     }
     sheet({job: true, icon: j.kind === "detect-mic" ? "radar" : "wand", title: title, text: text, progress: j.progress, meter: true,
-      actions: [["Annuler", function () { post("job-cancel"); }]]});
+      actions: [["Annuler", function () { postModule("goxlr-mini", "job-cancel"); }]]});
     return;
   }
   if (j.error) { sheet({icon: "warn", title: "Analyse interrompue", text: j.error, actions: [["OK", null]]}); return; }
@@ -2482,7 +2697,7 @@ function showJob(j) {
     } else {
       sheet({icon: "ok", title: r.message, text: "Je te conseille : <b>" + MIC_TYPE_LABELS[r.detected] + "</b>, gain <b>" + r.recommended_gain + " dB</b> et le préréglage <b>" + frLabel(S.meta.mic_presets[r.recommended_preset].label) + "</b>.",
         actions: [["Plus tard", null], ["Appliquer", function () {
-          post("mic", {type: r.detected, gain_db: r.recommended_gain}).then(function (x) { return x ? post("mic-preset", {name: r.recommended_preset}) : null; }).then(function (x) { if (x) { toast("Micro configuré"); refresh(); } });
+          postModule("goxlr-mini", "mic", {type: r.detected, gain_db: r.recommended_gain}).then(function (x) { return x ? postModule("goxlr-mini", "mic-preset", {name: r.recommended_preset}) : null; }).then(function (x) { if (x) { toast("Micro configuré"); refresh(); } });
         }, "primary"]]});
     }
   } else {
@@ -2510,7 +2725,7 @@ var VOICE_PHASE = {
 var MIC_TYPE_LONG = {condenser: "Statique · 48 V", dynamic: "Dynamique", jack: "Jack 3,5 mm"};
 function voiceIntro() {
   if (!S || !S.connected) { toast("Branche la GoXLR pour régler ta voix"); return; }
-  if (S.state.mutes.Mic) { toast("Ton micro est coupé", "Réactiver", function () { post("mute", {channel: "Mic", muted: false}).then(refresh); }); return; }
+  if (S.state.mutes.Mic) { toast("Ton micro est coupé", "Réactiver", function () { postModule("goxlr-mini", "mute", {channel: "Mic", muted: false}).then(refresh); }); return; }
   var body = h("div");
   body.innerHTML = '<div class="ring soft"><div class="ico">' + svg("sparkles") + "</div></div><h2>Régler ma voix</h2>" +
     "<p>Vingt secondes : je trouve ton micro, j\u2019écoute ta voix puis le silence de ta pièce. Ensuite je règle le gain pour toi. Aucun traitement n\u2019est allumé : tu choisis ensuite ceux que tu veux.</p>" +
@@ -2530,7 +2745,7 @@ function showVoiceJob(j) {
       '<div class="ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="none" stroke="rgba(0,0,0,.08)" stroke-width="7"/><circle id="ring-p" cx="50" cy="50" r="44" fill="none" stroke="#0071E3" stroke-width="7" stroke-linecap="round" stroke-dasharray="276.5" stroke-dashoffset="276.5" style="transition:stroke-dashoffset .2s"/></svg><div class="ico" id="vs-ico"></div></div>' +
       '<h2 id="vs-title"></h2><p id="vs-help"></p><div class="vs-read" id="vs-read">' + VOICE_READ + "</div>" +
       '<div class="sheet-meter"><div class="meter" id="sheet-meter">' + new Array(35).join("<i></i>") + '</div></div><div class="vs-status" id="vs-status"></div>';
-    sheet({job: true, voice: true, body: body, actions: [["Annuler", function () { post("job-cancel"); }]]});
+    sheet({job: true, voice: true, body: body, actions: [["Annuler", function () { postModule("goxlr-mini", "job-cancel"); }]]});
   }
   var idx = ph === "apply" ? 3 : VOICE_STEPS.map(function (s) { return s[0]; }).indexOf(ph);
   document.querySelectorAll("#vs-steps span").forEach(function (e, i) {
@@ -2570,7 +2785,7 @@ function showVoiceResult(r) {
     if (n.fix) {
       var btn = h("button", {"class": "pill"}, esc(n.fix.label));
       btn.addEventListener("click", function () {
-        post(n.fix.action, n.fix.body).then(function (x) { if (x && x.ok) { btn.disabled = true; btn.innerHTML = svg("check") + "Corrigé"; refresh(); } });
+        postModule("goxlr-mini", n.fix.action, n.fix.body).then(function (x) { if (x && x.ok) { btn.disabled = true; btn.innerHTML = svg("check") + "Corrigé"; refresh(); } });
       });
       b.appendChild(btn);
     }
@@ -2584,11 +2799,11 @@ function showVoiceResult(r) {
 var LISTEN_LEVEL = 191, REC_SECONDS = 8, lsn = null;
 function micBlocked() {
   if (!S || !S.connected) { toast("Branche la GoXLR pour t\u2019écouter"); return true; }
-  if (S.state.mutes.Mic) { toast("Ton micro est coupé", "Réactiver", function () { post("mute", {channel: "Mic", muted: false}).then(refresh); }); return true; }
+  if (S.state.mutes.Mic) { toast("Ton micro est coupé", "Réactiver", function () { postModule("goxlr-mini", "mute", {channel: "Mic", muted: false}).then(refresh); }); return true; }
   return false;
 }
 function listenSheet() {
-  if (L && L.listening > 0) { post("mic-listen", {seconds: 0}); return; }     // retour en direct en cours : l'arreter
+  if (L && L.listening > 0) { postModule("goxlr-mini", "mic-listen", {seconds: 0}); return; }     // retour en direct en cours : l'arreter
   if (micBlocked()) return;
   var body = h("div");
   lsn = {body: body, mode: "idle"};
@@ -2603,7 +2818,7 @@ function stopListen(o) {
   if (o.mr && o.mr.state !== "inactive") try { o.mr.stop(); } catch (e) {}
   if (o.stream) o.stream.getTracks().forEach(function (t) { t.stop(); });
   if (o.audio) { o.audio.pause(); o.audio = null; }
-  if (o.mode === "live" && L && L.listening > 0) post("mic-listen", {seconds: 0});
+  if (o.mode === "live" && L && L.listening > 0) postModule("goxlr-mini", "mic-listen", {seconds: 0});
   if (o.url) URL.revokeObjectURL(o.url);
   if (o === lsn) lsn = null;
 }
@@ -2639,9 +2854,9 @@ function paintListen(msg) {
     var f = h("div", {"class": "field ls-field"}, '<div class="field-top">Volume du retour<span id="ls-vol"></span></div>');
     var sl = Slider({label: "Volume du retour micro", format: function (v) { return pct(v) + " %"; }, min: 64, max: 255, step: 1, value: o.level, colour: "#FF6961",
       onInput: function (v) { o.level = v; $("ls-vol").textContent = pct(v) + " %"; },
-      onCommit: function (v) { o.level = v; post("mic-listen", {seconds: Math.max(1, (L && L.listening) || 30), level: v}); }});
+      onCommit: function (v) { o.level = v; postModule("goxlr-mini", "mic-listen", {seconds: Math.max(1, (L && L.listening) || 30), level: v}); }});
     f.appendChild(sl.el); b.appendChild(f);
-    b.appendChild(lsButtons([["Arrêter", function () { post("mic-listen", {seconds: 0}); lsn.mode = "idle"; paintListen(); }, "primary"]]));
+    b.appendChild(lsButtons([["Arrêter", function () { postModule("goxlr-mini", "mic-listen", {seconds: 0}); lsn.mode = "idle"; paintListen(); }, "primary"]]));
     $("ls-vol").textContent = pct(o.level) + " %";
   }
 }
@@ -2649,7 +2864,7 @@ function startLive() {
   if (micBlocked() || !lsn) return;
   lsn.mode = "live"; lsn.level = lsn.level || LISTEN_LEVEL; lsn.liveSeen = false;
   paintListen();
-  post("mic-listen", {seconds: 30, level: lsn.level});
+  postModule("goxlr-mini", "mic-listen", {seconds: 30, level: lsn.level});
 }
 function chatMicStream() {
   var md = navigator.mediaDevices;
@@ -2862,11 +3077,20 @@ function paintUpdateSheet() {
 /* ---------- rendu ---------- */
 function render() {
   if (!S) return;
-  var key = JSON.stringify([S.meta.outputs, S.meta.channels]);
+  if (activeModule && !installedModule(activeModule)) { go("devices", true); return; }
+  var meta = S.meta || {}, key = JSON.stringify([meta.outputs, meta.channels]);
   if (key !== metaKey) { built = {}; metaKey = key; }
+  rememberDetected(); renderModuleNav();
   var showSim = S.sim && !/[?&]capture/.test(location.search);       // captures de la documentation : sans le badge
-  $("conn-fw").innerHTML = (S.firmware ? "Firmware " + esc(S.firmware) : "") + (showSim ? '<br><span class="sim-badge">APPAREIL SIMULÉ</span>' : "");
+  $("conn-fw").innerHTML = activeModule === "goxlr-mini" ? (S.firmware ? "Firmware " + esc(S.firmware) : "") + (showSim ? '<br><span class="sim-badge">APPAREIL SIMULÉ</span>' : "") : "";
   renderUpdate();
+  $("hdr-mic").hidden = activeModule !== "goxlr-mini";
+  if (page === "devices") renderDevices();
+  if (page === "modules") renderLibrary();
+  if (page === "device") renderDeviceOverview();
+  var m = installedModule(activeModule);
+  $("h-eye").textContent = m ? m.name : page === "modules" ? "À chaque matériel son module" : "Ton espace personnel";
+  if (activeModule === "goxlr-mini") {
   var mm = $("hdr-mic"), mms = muteState("Mic");
   mm.innerHTML = svg(mms ? "micOff" : "Mic") + (mms ? (mms === "all" ? "Micro coupé" : "Micro " + MUTED_TXT[mms].toLowerCase()) : "Micro actif");
   mm.classList.toggle("danger", mms === "all");
@@ -2876,14 +3100,14 @@ function render() {
   if (page === "hp") renderHp();
   if (page === "routing") renderRouting();
   if (page === "light") renderLight();
-  if (page === "library") renderLibrary();
   if (page === "scenes") renderScenes(); else renderAdvice();
   var sn = S.state.scene;
-  $("h-eye").textContent = (showSim ? "Appareil simulé · " : "") + (sn && sn !== "custom" ? "Scène " + sceneLabel(sn) : "Réglage personnalisé");
+  $("h-eye").textContent = m.name + " · " + (showSim ? "Appareil simulé · " : "") + (sn && sn !== "custom" ? "Scène " + sceneLabel(sn) : "Réglage personnalisé");
+  }
 }
 var lastDev = 0;
 function frame(t) {
-  if (L && S) {
+  if (L && S && activeModule === "goxlr-mini") {
     var target = L.live.mic_db == null ? -72.2 : L.live.mic_db;
     meterShown = target > meterShown ? target : meterShown + (target - meterShown) * 0.12;
     if (target > meterPeak || t - peakT > 1200) { meterPeak = target; peakT = t; }
@@ -2906,13 +3130,13 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 function init() {
-  document.querySelectorAll("nav button").forEach(function (b) {
+  document.querySelectorAll("#main-nav button").forEach(function (b) {
     b.insertAdjacentHTML("afterbegin", svg(b.dataset.i));
     b.addEventListener("click", function () { go(b.dataset.p); });
   });
   $("fab").innerHTML = svg("more");
   $("fab").addEventListener("click", function () { if (popEl) closePop(); else openMenu(); });
-  $("hdr-mic").addEventListener("click", function () { if (!S) return; toggleMute("Mic", "all"); });
+  $("hdr-mic").addEventListener("click", function () { if (!S || activeModule !== "goxlr-mini") return; toggleMute("Mic", "all"); });
   $("offline-diag").addEventListener("click", openDiag);
   document.querySelector("main").addEventListener("scroll", closePop, {passive: true});
   $("ver-check").innerHTML = svg("refresh");
@@ -2921,13 +3145,14 @@ function init() {
   $("ver-state").addEventListener("click", function () { if (S && S.update && S.update.status === "available") openUpdateSheet(); });
   $("import-file").addEventListener("change", function (e) {
     var f = e.target.files[0]; if (!f) return;
-    f.text().then(function (t) { var p = JSON.parse(t); return withUndo("Configuration importée", function () { return post("profile", p).then(refresh); }); })
+    f.text().then(function (t) { var p = JSON.parse(t); return withUndo("Configuration importée", function () { return postModule("goxlr-mini", "profile", p).then(refresh); }); })
       .catch(function () { toast("Fichier illisible"); });
     e.target.value = "";
   });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closePop(); if (sheetState && !sheetState.job) closeSheet(); } });
   document.addEventListener("contextmenu", function (e) { if (e.target.tagName !== "INPUT") e.preventDefault(); });
-  refresh().then(function () { go(location.hash.slice(1) || "mixer"); });
+  window.addEventListener("hashchange", function () { go(location.hash.slice(1), true); });
+  refresh().then(function () { go(location.hash.slice(1) || "devices", true); });
   winInit();
   liveLoop();
   requestAnimationFrame(frame);

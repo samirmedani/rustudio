@@ -32,6 +32,7 @@ impl Ctl {
     pub fn live_snapshot(&self, want_level: bool) -> Value {
         let brief = self.updater.brief();
         let v = self.version();
+        let firmware = self.dev_info.lock().unwrap().firmware.clone();
         let mut g = self.lock();
         if want_level {
             g.level_until = Some(Instant::now() + Duration::from_secs(3));
@@ -41,6 +42,7 @@ impl Ctl {
         json!({"v": v, "boot": self.boot_id, "connected": g.connected, "live": live_json(&g.live),
                "job": g.job.clone().map(Value::Object), "mic": {"muted": s.muted("Mic"), "partial": s.partial_of("Mic")},
                "health": self.health_status(&g), "sim": self.simulated(), "osd": s.prefs.osd, "scene": s.scene,
+               "modules": {"devices": self.module_devices_locked(&g, firmware)},
                "app_version": VERSION, "update": brief, "usb": g.usb, "listening": listening,
                "sound_test": g.sound_test_until.is_some()})
     }
@@ -85,6 +87,7 @@ impl Ctl {
             "job": g.job.clone().map(Value::Object),
             "blink": g.blink.iter().filter(|(_, v)| **v).map(|(k, v)| (k.clone(), json!(v))).collect::<Map<_, _>>(),
             "auto": {"active": auto_active, "note": g.auto_note},
+            "modules": {"installed": rustudio_core::modules::installed(), "devices": self.module_devices_locked(&g, info.firmware.clone())},
             "meta": meta(&g.state, mix2),
         })
     }
@@ -92,6 +95,7 @@ impl Ctl {
 
 pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
     let map = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), json!(v))).collect::<Map<_, _>>();
+    let device = rustudio_core::modules::GOXLR_MINI;
     json!({
         "channels": CHANNELS, "faders": FADERS, "inputs": INPUTS.iter().map(|(n, _, _)| *n).collect::<Vec<_>>(),
         "outputs": OUTPUTS.iter().map(|(n, _, _)| *n).filter(|o| mix2 || *o != "StreamMix2").collect::<Vec<_>>(),
@@ -111,6 +115,6 @@ pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
         "hp_bands": HP_BANDS, "hp_q": HP_Q, "hp_channels": HP_CHANNELS,
         "hp_styles": HP_STYLES.iter().map(|s| (s.key.to_string(), json!({"label": s.label, "desc": s.desc, "bands": s.bands}))).collect::<Map<_, _>>(),
         "headphones": HEADPHONES.iter().map(|(n, f)| (n.to_string(), json!(f.iter().map(|(k, f0, g, q)| json!([k, f0, g, q])).collect::<Vec<_>>()))).collect::<Map<_, _>>(),
-        "device": {"id": "goxlr-mini", "name": "GoXLR Mini", "vendor": "TC-Helicon", "module": "goxlr-mini", "official": true},
+        "device": {"id": device.id, "name": device.name, "vendor": device.vendor, "module": device.id, "official": true},
     })
 }

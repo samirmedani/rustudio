@@ -24,6 +24,7 @@ jobs:
       - name: Interactions et diagnostic de l’interface
         run: |
           node scripts/ui-interactions-test.mjs
+          node scripts/modules-ui-test.mjs
           node scripts/diagnostic-ui-test.mjs
       - name: Le tag correspond à la version
         shell: pwsh

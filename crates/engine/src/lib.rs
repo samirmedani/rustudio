@@ -9,6 +9,7 @@ pub mod http;
 pub mod jobs;
 pub mod library;
 pub mod log;
+pub mod modules;
 pub mod net;
 #[cfg(windows)]
 pub mod service;

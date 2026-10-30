@@ -81,6 +81,7 @@ function harness() {
   const context = {
     document, performance: {now: () => 1000}, pending: 0, V: 1, S: {state: {name: "avant"}}, built: {}, sc: {},
     toast: (message, action, fn) => messages.push({message, action, fn}),
+    installedModule: id => context.S?.modules?.installed?.find(m => m.id === id) || null,
     render() {}, setOnline() {}, svg: () => "", chipIco: () => "", clamp: (v, a, b) => Math.max(a, Math.min(b, v)),
     setTimeout() {}, requestAnimationFrame: fn => frames.push(fn),
     fetch: async (path, options) => {
@@ -107,11 +108,14 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 
 for (const failure of ["HTTP", "réseau"]) {
   const h = harness(), c = h.context;
-  c.fetch = async () => {
+  c.S.modules = {installed: [{id: "goxlr-mini", actions: ["scene", "scene-save", "hp-eq-save", "profile"]}]};
+  const paths = [];
+  c.fetch = async path => {
+    paths.push(path);
     if (failure === "réseau") throw new Error("hors ligne");
     return {ok: false, json: async () => ({error: "Nom refusé"})};
   };
-  assert.equal(await c.withUndo("Scène appliquée", () => c.post("scene", {}).then(c.refresh)), null);
+  assert.equal(await c.withUndo("Scène appliquée", () => c.postModule("goxlr-mini", "scene", {}).then(c.refresh)), null);
   assert.equal(c.pending, 0);
   assert.ok(h.messages.length && h.messages.every(m => !m.action && !m.message.includes("appliquée")), `${failure} : aucune fausse confirmation ni annulation`);
   assert.equal(c.V, -1, "une prochaine lecture du moteur corrige l'état optimiste");
@@ -125,6 +129,46 @@ for (const failure of ["HTTP", "réseau"]) {
   assert.equal(c.sheetState, current, `${failure} : la fenêtre du profil reste ouverte`);
   assert.equal(input.value, "Mon casque");
   assert.ok(h.messages.every(m => !m.message.includes("enregistré")), `${failure} : aucune fausse sauvegarde`);
+  assert.ok(paths.length >= 3 && paths.every(path => path.startsWith("/api/modules/goxlr-mini/")), `${failure} : aucune commande audio ne retombe sur la route globale`);
+}
+
+{
+  const h = harness(), c = h.context;
+  c.S.modules = {installed: [{id: "goxlr-mini", actions: ["volume", "profile"]}, {id: "future-mouse", actions: ["dpi"]}]};
+  await c.postModule("goxlr-mini", "volume", {channel: "Music", value: 42});
+  assert.equal(h.requests.at(-1).path, "/api/modules/goxlr-mini/volume");
+  assert.equal(h.requests.at(-1).options.headers["X-Rustudio"], "1", "le namespace conserve la protection des commandes");
+  assert.deepEqual(JSON.parse(h.requests.at(-1).options.body), {channel: "Music", value: 42});
+  await c.postModule("future-mouse", "dpi", {value: 800});
+  assert.equal(h.requests.at(-1).path, "/api/modules/future-mouse/dpi", "un futur composant cible son propre module");
+  for (const action of ["update-install", "library-refresh", "restart-engine"]) {
+    await c.post(action, {}); assert.equal(h.requests.at(-1).path, "/api/" + action, "les commandes globales restent globales");
+  }
+  const count = h.requests.length;
+  c.S.modules.installed[0].actions.push("update-install");
+  assert.equal(await c.postModule("goxlr-mini", "update-install"), null, "un module ne prend pas le contrôle des mises à jour");
+  assert.equal(await c.postModule("future-mouse", "volume"), null);
+  assert.equal(await c.postModule("inconnu", "volume"), null);
+  assert.equal(h.requests.length, count, "module ou commande refusés avant toute requête");
+  let delayed;
+  c.throttle = fn => (...args) => { delayed = () => fn(...args); };
+  runInNewContext(section("var strips =", "function buildMixer()"), c);
+  c.volumeSender("Music")(23); c.activeModule = "future-mouse"; delayed(); await settle();
+  assert.equal(h.requests.at(-1).path, "/api/modules/goxlr-mini/volume", "une commande différée reste liée à son appareil après navigation");
+  assert.equal(c.pending, 0);
+}
+
+{
+  const h = harness(), c = h.context;
+  c.S.modules = {installed: [{id: "goxlr-mini"}]};
+  await c.postModule("goxlr-mini", "volume", {value: 1});
+  assert.equal(h.requests.at(-1).path, "/api/volume", "compatibilité avec un descriptor antérieur sans actions");
+  c.S.modules.installed[0].actions = ["volume"];
+  const paths = [];
+  c.fetch = async path => { paths.push(path); return {ok: false, json: async () => ({error: "Commande refusée"})}; };
+  assert.equal(await c.withUndo("Volume appliqué", () => c.postModule("goxlr-mini", "volume", {}).then(c.refresh)), null);
+  assert.deepEqual(paths, ["/api/modules/goxlr-mini/volume"], "un refus du namespace ne déclenche aucun repli global");
+  assert.ok(h.messages.every(m => m.message !== "Volume appliqué" && !m.action));
 }
 
 {
@@ -181,4 +225,4 @@ for (const failure of ["HTTP", "réseau"]) {
   assert.equal(app.inert, false); assert.equal(h.ids.get("sheet").inert, true);
   assert.equal(h.document.activeElement, opener, "le remplacement d'une fenêtre conserve son point de retour");
 }
-console.log("Interactions UI : erreurs sans faux succès, saisies conservées, annulation, curseurs clavier, molette ciblée et focus des fenêtres vérifiés.");
+console.log("Interactions UI : API par module et compatibilité, erreurs sans faux succès, saisies conservées, annulation, clavier, molette ciblée et focus vérifiés.");

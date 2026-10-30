@@ -3,6 +3,7 @@ pub mod consts;
 pub mod dsp;
 pub mod hpeq;
 pub mod lighting;
+pub mod modules;
 pub mod release;
 pub mod routing;
 pub mod scenes;

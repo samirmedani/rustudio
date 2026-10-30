@@ -73,6 +73,11 @@ fn host_ok(req: &Request) -> bool {
     h == "127.0.0.1" || h == "localhost"
 }
 
+fn module_route(path: &str) -> Option<(&str, &str)> {
+    let (id, resource) = path.strip_prefix("/api/modules/")?.split_once('/')?;
+    (!id.is_empty() && !resource.is_empty() && !resource.contains('/')).then_some((id, resource))
+}
+
 pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
     if !host_ok(&req) {
         return json_resp(req, &json!({"error": "hôte refusé"}), 403);
@@ -88,6 +93,7 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                 "/icon.png" => return respond(req, ICON_PNG, "image/png", 200),
                 "/api/live" => ctl.live_snapshot(query.split('&').any(|q| q == "level=1")),
                 "/api/state" | "/status" => ctl.snapshot(),
+                "/api/modules" => ctl.modules_snapshot(),
                 "/api/health" => ctl.health(),
                 "/api/update" => ctl.update_snapshot(),
                 "/api/usb" => crate::usbmap::query(),
@@ -108,7 +114,13 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                     rustudio_core::state::normalize_state(&p).to_value()
                 }
                 "/api/sim/device" if ctl.sim.is_some() => ctl.sim.as_ref().unwrap().describe(),
-                _ => return json_resp(req, &json!({"error": "introuvable"}), 404),
+                _ => match module_route(&path) {
+                    Some((id, "state")) => match ctl.module_state_snapshot(id) {
+                        Ok(v) => v,
+                        Err(e) => return json_resp(req, &json!({"error": e.msg}), e.status),
+                    },
+                    _ => return json_resp(req, &json!({"error": "introuvable"}), 404),
+                },
             };
             json_resp(req, &v, 200)
         }
@@ -139,14 +151,18 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                     },
                 };
             }
-            let name = if name == "mic-gain" { "mic" } else { name };
-            if !ACTIONS.contains(&name) {
-                return json_resp(req, &json!({"error": "action inconnue"}), 404);
-            }
-            let r = match name {
-                "library-refresh" => Ok(crate::library::refresh()),
-                "echo-check" => Ok(crate::library::echo_check(ctl)),
-                _ => ctl.act(name, &p),
+            let r = if let Some((id, action)) = module_route(&path) {
+                ctl.module_act(id, action, &p)
+            } else {
+                let name = if name == "mic-gain" { "mic" } else { name };
+                if !ACTIONS.contains(&name) {
+                    return json_resp(req, &json!({"error": "action inconnue"}), 404);
+                }
+                match name {
+                    "library-refresh" => Ok(crate::library::refresh()),
+                    "echo-check" => Ok(crate::library::echo_check(ctl)),
+                    _ => ctl.act(name, &p),
+                }
             };
             match r {
                 Ok(v) => json_resp(req, &v, 200),

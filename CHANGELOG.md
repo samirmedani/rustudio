@@ -1,5 +1,23 @@
 # Nouveautés
 
+## 5.4.0
+
+**Nouveau**
+- Rustudio s’ouvre sur **Mes appareils** : retrouve ton matériel, son état de connexion et ses réglages au même endroit.
+  Les appareils détectés sont ajoutés à ton espace ; tu peux aussi les ajouter ou les retirer depuis les modules.
+- Chaque module possède son propre espace. La GoXLR Mini regroupe son mixeur, son micro, son casque, son routage,
+  son éclairage et ses scènes. La navigation se construit à partir des pages déclarées par le module.
+- Le catalogue **Modules** distingue les modules livrés avec Rustudio et ceux encore à contribuer. La GoXLR Mini
+  est le premier module livré ; les autres appareils ne sont pas présentés comme déjà compatibles.
+
+**Amélioré**
+- L’état connecté, débranché ou en erreur est affiché sur la carte de l’appareil concerné. L’accueil reste utilisable
+  sans GoXLR ; le micro et les outils audio se trouvent dans son espace.
+- L’accueil et le catalogue lisent le moteur quatre fois par seconde, au lieu de vingt. Les faders conservent leur
+  suivi rapide dans l’espace GoXLR.
+- Le menu près de l’horloge donne accès aux appareils et aux modules ; les raccourcis audio sont regroupés sous
+  GoXLR Mini. Les réglages audio et les anciennes adresses des pages sont conservés.
+
 ## 5.3.0
 
 **Nouveau**
