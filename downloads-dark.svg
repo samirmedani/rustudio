@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640" role="img" aria-labelledby="titre desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" style="font-variant-numeric: tabular-nums">
+<title id="titre">Téléchargements de Rustudio</title><desc id="desc">197 téléchargements de Rustudio, 21 versions, 0 étoiles.</desc>
+<defs><linearGradient id="aire" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#409cff" stop-opacity="0.30"/><stop offset="1" stop-color="#409cff" stop-opacity="0"/></linearGradient></defs>
+<rect x="0.5" y="0.5" width="959" height="639" rx="16" fill="#0d1117" stroke="#3d444d"/>
+<text x="32.0" y="58.0" font-size="15" font-weight="600" fill="#9198a1" text-anchor="start">Téléchargements</text>
+<text x="30.0" y="114.0" font-size="54" font-weight="700" fill="#f0f6fc" text-anchor="start">197</text>
+<text x="32.0" y="142.0" font-size="13" font-weight="400" fill="#9198a1" text-anchor="start">Installeur et mises à jour, toutes versions confondues</text>
+<rect x="458" y="36" width="150" height="70" rx="12" fill="#151b23" stroke="#3d444d"/>
+<text x="474.0" y="62.0" font-size="12" font-weight="500" fill="#9198a1" text-anchor="start">Version v5.6.11</text>
+<text x="474.0" y="91.0" font-size="23" font-weight="700" fill="#f0f6fc" text-anchor="start">5</text>
+<rect x="618" y="36" width="150" height="70" rx="12" fill="#151b23" stroke="#3d444d"/>
+<text x="634.0" y="62.0" font-size="12" font-weight="500" fill="#9198a1" text-anchor="start">Depuis le 31 oct.</text>
+<text x="634.0" y="91.0" font-size="23" font-weight="700" fill="#f0f6fc" text-anchor="start">+0</text>
+<rect x="778" y="36" width="150" height="70" rx="12" fill="#151b23" stroke="#3d444d"/>
+<text x="794.0" y="62.0" font-size="12" font-weight="500" fill="#9198a1" text-anchor="start">Étoiles GitHub</text>
+<text x="794.0" y="91.0" font-size="23" font-weight="700" fill="#f0f6fc" text-anchor="start">★ 0</text>
+<text x="32.0" y="196.0" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="start">Au fil du temps</text>
+<line x1="72" y1="372.0" x2="928" y2="372.0" stroke="#3d444d"/>
+<text x="60.0" y="376.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">0</text>
+<line x1="72" y1="333.0" x2="928" y2="333.0" stroke="#3d444d" stroke-dasharray="3 5"/>
+<text x="60.0" y="337.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">50</text>
+<line x1="72" y1="294.0" x2="928" y2="294.0" stroke="#3d444d" stroke-dasharray="3 5"/>
+<text x="60.0" y="298.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">100</text>
+<line x1="72" y1="255.0" x2="928" y2="255.0" stroke="#3d444d" stroke-dasharray="3 5"/>
+<text x="60.0" y="259.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">150</text>
+<line x1="72" y1="216.0" x2="928" y2="216.0" stroke="#3d444d" stroke-dasharray="3 5"/>
+<text x="60.0" y="220.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">200</text>
+<circle cx="928.0" cy="218.3" r="5" fill="#409cff" stroke="#0d1117" stroke-width="2.5"/>
+<text x="918.0" y="206.3" font-size="13" font-weight="700" fill="#f0f6fc" text-anchor="end">197</text>
+<text x="500.0" y="294.0" font-size="13" font-weight="400" fill="#9198a1" text-anchor="middle" stroke="#0d1117" stroke-width="8" stroke-linejoin="round" paint-order="stroke">La courbe se trace au fil des relevés, faits toutes les heures.</text>
+<text x="32.0" y="432.0" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="start">Par version</text>
+<text x="928.0" y="432.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">20 dernières versions sur 21</text>
+<line x1="72" y1="572" x2="928" y2="572" stroke="#3d444d"/>
+<rect x="80.6" y="495.5" width="25.7" height="76.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="93.4" y="488.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">9</text>
+<text x="93.4" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.1.0</text>
+<rect x="123.4" y="504.0" width="25.7" height="68.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="136.2" y="497.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">8</text>
+<text x="136.2" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.2.0</text>
+<rect x="166.2" y="487.0" width="25.7" height="85.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="179.0" y="480.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">10</text>
+<text x="179.0" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.2.1</text>
+<rect x="209.0" y="478.5" width="25.7" height="93.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="221.8" y="471.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">11</text>
+<text x="221.8" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.2.2</text>
+<rect x="251.8" y="478.5" width="25.7" height="93.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="264.6" y="471.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">11</text>
+<text x="264.6" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.2.3</text>
+<rect x="294.6" y="470.0" width="25.7" height="102.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="307.4" y="463.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">12</text>
+<text x="307.4" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.2.4</text>
+<rect x="337.4" y="470.0" width="25.7" height="102.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="350.2" y="463.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">12</text>
+<text x="350.2" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.3.0</text>
+<rect x="380.2" y="487.0" width="25.7" height="85.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="393.0" y="480.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">10</text>
+<text x="393.0" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.4.0</text>
+<rect x="423.0" y="478.5" width="25.7" height="93.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="435.8" y="471.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">11</text>
+<text x="435.8" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.4.1</text>
+<rect x="465.8" y="504.0" width="25.7" height="68.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="478.6" y="497.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">8</text>
+<text x="478.6" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.4.2</text>
+<rect x="508.6" y="470.0" width="25.7" height="102.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="521.4" y="463.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">12</text>
+<text x="521.4" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.5.0</text>
+<rect x="551.4" y="504.0" width="25.7" height="68.0" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="564.2" y="497.0" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">8</text>
+<text x="564.2" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.0</text>
+<rect x="594.2" y="495.5" width="25.7" height="76.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="607.0" y="488.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">9</text>
+<text x="607.0" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.1</text>
+<rect x="637.0" y="495.5" width="25.7" height="76.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="649.8" y="488.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">9</text>
+<text x="649.8" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.3</text>
+<rect x="679.8" y="512.5" width="25.7" height="59.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="692.6" y="505.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">7</text>
+<text x="692.6" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.4</text>
+<rect x="722.6" y="512.5" width="25.7" height="59.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="735.4" y="505.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">7</text>
+<text x="735.4" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.7</text>
+<rect x="765.4" y="495.5" width="25.7" height="76.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="778.2" y="488.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">9</text>
+<text x="778.2" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.8</text>
+<rect x="808.2" y="512.5" width="25.7" height="59.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="821.0" y="505.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">7</text>
+<text x="821.0" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.9</text>
+<rect x="851.0" y="495.5" width="25.7" height="76.5" rx="4.0" fill="#409cff" fill-opacity="0.5"/>
+<text x="863.8" y="488.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">9</text>
+<text x="863.8" y="592.0" font-size="11.5" font-weight="400" fill="#9198a1" text-anchor="middle">5.6.10</text>
+<rect x="893.8" y="529.5" width="25.7" height="42.5" rx="4.0" fill="#409cff" fill-opacity="1"/>
+<text x="906.6" y="522.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">5</text>
+<text x="906.6" y="592.0" font-size="11.5" font-weight="600" fill="#f0f6fc" text-anchor="middle">5.6.11</text>
+<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 31 oct. 2026 à 15 h 56 (heure de Paris)</text>
+</svg>
