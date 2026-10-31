@@ -1,6 +1,6 @@
 //! Tests du coeur (aucun appareil).
 use rustudio_core::dsp::{self, fit_dsp, gate_attenuation, Fx, RESIDUAL_NOISE_DB};
-use rustudio_core::hpeq::{config_text, hp_filters, normalize_hp_eq, style};
+use rustudio_core::hpeq::{config_text, hp_filters, normalize_hp_eq, style, HEADPHONES, HP_STYLES};
 use rustudio_core::release::{parse_release, Names};
 use rustudio_core::state::{self, normalize_cal, normalize_state, MicCal};
 use rustudio_core::{lighting, routing, semver};
@@ -168,4 +168,23 @@ fn fichier_equalizer_apo() {
     assert!(t.trim_end().ends_with("Device: all"));
     assert!(!config_text(&eq, false, "live").contains("Filter"));
     assert_eq!(style("basses").unwrap().bands[0], 4);
+}
+
+#[test]
+fn aucun_style_ne_declenche_l_alerte_de_saturation() {
+    // La page Casque previent au-dela de +12 dB de courbe totale (correction + style) : un mode tout pret ne doit
+    // jamais y arriver, avec chaque casque pour un style general, avec son casque pour un mode dedie.
+    for s in HP_STYLES {
+        let casques: Vec<Option<&str>> = match s.headphone {
+            Some(h) => vec![Some(h)],
+            None => std::iter::once(None).chain(HEADPHONES.iter().map(|(n, _)| Some(*n))).collect(),
+        };
+        for h in casques {
+            let eq = normalize_hp_eq(&json!({"headphone": h, "bands": s.bands}), None);
+            let boost = -hp_filters(&eq).1 - 0.3;
+            assert!(boost <= 12.0, "{} avec {:?} : +{boost:.1} dB", s.key, h);
+        }
+    }
+    assert!(HP_STYLES.iter().filter(|s| s.headphone == Some("Sennheiser HD 560S")).count() >= 5);
+    assert!(HP_STYLES.iter().filter_map(|s| s.headphone).all(|h| HEADPHONES.iter().any(|(n, _)| *n == h)));
 }

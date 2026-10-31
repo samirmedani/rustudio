@@ -4,8 +4,10 @@
 /* ---------- casque (egaliseur Equalizer APO) ---------- */
 var hp = {};
 var HP_CH_LABELS = {Game: "Jeu", Music: "Musique", System: "Système", Chat: "Chat", Sample: "Samples"};
-var HP_STYLE_ICONS = {neutre: "circle", basses: "speaker", jeu: "Game", voix: "Chat", film: "BroadcastMix", musique: "Music", doux: "leaf"};
-var HP_STYLE_COLOURS = {neutre: "#8E8E93", basses: "#FF375F", jeu: "#30D158", voix: "#5E5CE6", film: "#FF9F0A", musique: "#BF5AF2", doux: "#64D2FF"};
+var HP_STYLE_ICONS = {neutre: "circle", basses: "speaker", basses_plus: "speaker", jeu: "Game", voix: "Chat", film: "BroadcastMix", musique: "Music", rap: "micVocal", doux: "leaf",
+  hd560s_impact: "speaker", hd560s_competitif: "radar", hd560s_immersion: "sparkles", hd560s_chaleur: "Music", hd560s_detente: "ear"};
+var HP_STYLE_COLOURS = {neutre: "#8E8E93", basses: "#FF375F", basses_plus: "#D70015", jeu: "#30D158", voix: "#5E5CE6", film: "#FF9F0A", musique: "#BF5AF2", rap: "#E8590C", doux: "#64D2FF",
+  hd560s_impact: "#FF375F", hd560s_competitif: "#30D158", hd560s_immersion: "#5E5CE6", hd560s_chaleur: "#FF9F0A", hd560s_detente: "#64D2FF"};
 function hpBiquad(kind, f0, g, q) {
   var fs = 48000, a = Math.pow(10, g / 40), w0 = 2 * Math.PI * Math.min(f0, fs * .49) / fs, cw = Math.cos(w0), al = Math.sin(w0) / (2 * q), s = 2 * Math.sqrt(a) * al;
   if (kind === "PK") return [1 + al * a, -2 * cw, 1 - al * a, 1 + al / a, -2 * cw, 1 - al / a];
@@ -110,9 +112,9 @@ function buildHp() {
   eqb.appendChild(bands); c5.appendChild(eqb);
   var row = h("div", {"class": "btn-row"});
   row.appendChild(h("button", {"class": "pill", onclick: function () { postModule("goxlr-mini", "hp-eq", {style: "neutre"}).then(refresh); }}, svg("reset") + "Remettre à plat"));
-  row.appendChild(h("button", {"class": "pill primary", onclick: hpSaveSheet}, svg("save") + "Enregistrer comme profil"));
+  row.appendChild(h("button", {"class": "pill primary", onclick: hpSaveSheet}, svg("save") + "Créer un profil"));
   c5.appendChild(row);
-  right.appendChild(c5);
+  left.appendChild(c5); /* sous les options : les styles, plus nombreux, ont toute la colonne de droite */
   grid.appendChild(right);
   root.appendChild(grid);
   built.hp = true;
@@ -138,7 +140,7 @@ function hpSaveSheet() {
   setTimeout(function () { inp.focus(); }, 50);
 }
 function renderHpStyles() {
-  var eq = S.state.hp_eq, key = JSON.stringify([Object.keys(eq.custom), eq.style]);
+  var eq = S.state.hp_eq, key = JSON.stringify([Object.keys(eq.custom), eq.style, eq.headphone]);
   if (hp.stylesKey === key) return;
   hp.stylesKey = key; hp.styles.innerHTML = "";
   function card(id, label, desc, icon, colour, removable) {
@@ -151,8 +153,23 @@ function renderHpStyles() {
     }
     hp.styles.appendChild(b);
   }
-  Object.keys(S.meta.hp_styles).forEach(function (k) { var s = S.meta.hp_styles[k]; card(k, s.label, s.desc, HP_STYLE_ICONS[k] || "circle", HP_STYLE_COLOURS[k] || "#8E8E93"); });
-  Object.keys(eq.custom).forEach(function (n) { card("custom:" + n, n, "Ton profil.", "save", "#0071E3", true); });
+  function styleCard(k) { var s = S.meta.hp_styles[k]; card(k, s.label, s.desc, HP_STYLE_ICONS[k] || "circle", HP_STYLE_COLOURS[k] || "#8E8E93"); }
+  var keys = Object.keys(S.meta.hp_styles);
+  keys.filter(function (k) { return !S.meta.hp_styles[k].headphone; }).forEach(styleCard);
+  /* modes penses pour le casque choisi, par-dessus sa correction */
+  var own = keys.filter(function (k) { return eq.headphone && S.meta.hp_styles[k].headphone === eq.headphone; });
+  if (own.length) {
+    group("Headphones", "Modes " + eq.headphone.replace(/^Sennheiser /, ""), "Réglés pour ton casque, par-dessus sa correction.");
+    own.forEach(styleCard);
+  }
+  var mine = Object.keys(eq.custom);
+  if (mine.length) {
+    group("save", "Tes profils", "Enregistrés depuis le réglage fin.");
+    mine.forEach(function (n) { card("custom:" + n, n, "Ton profil.", "save", "#0071E3", true); });
+  }
+  function group(icon, title, sub) {
+    hp.styles.appendChild(h("div", {"class": "presets-group"}, svg(icon) + "<span><b>" + esc(title) + "</b><small>" + esc(sub) + "</small></span>"));
+  }
 }
 function hpPreText() {
   var pre = hpPreamp(S.state.hp_eq), boost = pre < 0 ? -pre - .3 : 0, key = Math.round(boost * 10);
@@ -226,7 +243,9 @@ function renderHp() {
   renderHpStyles();
   S.meta.hp_bands.forEach(function (b, i) { var e = hp.bands[i], v = eq.bands[i]; e.sl.set(v); if (!e.sl.busy()) e.lab.textContent = (v > 0 ? "+" : "") + v; });
   var styleName = eq.style && S.meta.hp_styles[eq.style] ? S.meta.hp_styles[eq.style].label : eq.style && eq.style.indexOf("custom:") === 0 ? eq.style.slice(7) : "Réglage perso";
-  $("hp-fine-hint").textContent = styleName + (eq.headphone ? " · correction " + eq.headphone : "");
+  var hint = $("hp-fine-hint");
+  hint.textContent = styleName + (eq.headphone ? " · " + eq.headphone.replace(/^Sennheiser /, "") : "");
+  hint.title = styleName + (eq.headphone ? " · correction " + eq.headphone : "");
   $("hp-style-hint").textContent = eq.style ? "" : "Réglage perso";
   hpPreText();
   drawHp();

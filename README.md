@@ -89,8 +89,8 @@ session : la fenêtre, l’icône d’état, la bulle à l’écran et les péri
       <br><b>Routage</b> · qui entend quoi : toi, ton stream, Discord, la VOD, les enceintes.
     </td>
     <td width="50%" align="center">
-      <img src="docs/captures/casque.jpg" alt="Casque : correction du casque, styles et égaliseur 10 bandes">
-      <br><b>Casque</b> · correction de 21 casques (AutoEq) et styles sur 10 bandes, par Equalizer APO.
+      <img src="docs/captures/casque.jpg" alt="Casque : réglage fin sur 10 bandes, styles et modes dédiés au Sennheiser HD 560S">
+      <br><b>Casque</b> · correction de 21 casques (AutoEq), neuf styles dont Basses ++, et des modes dédiés au HD 560S.
     </td>
   </tr>
   <tr>

@@ -16,15 +16,33 @@ pub struct Style {
     pub label: &'static str,
     pub desc: &'static str,
     pub bands: [i32; 10],
+    /// Mode pense pour un casque precis, par-dessus sa correction AutoEq ; l'interface ne le montre qu'avec ce casque.
+    pub headphone: Option<&'static str>,
 }
-pub const HP_STYLES: [Style; 7] = [
-    Style { key: "neutre", label: "Neutre", desc: "Le son tel quel, ou juste corrigé pour ton casque.", bands: [0; 10] },
-    Style { key: "basses", label: "Basses +", desc: "Des graves pleins et profonds, sans couvrir les voix.", bands: [4, 5, 3, 1, 0, 0, 0, 0, 0, 0] },
-    Style { key: "jeu", label: "Jeu", desc: "Pas, rechargements et directions plus nets.", bands: [-2, -1, -1, -1, 0, 1, 3, 3, 2, 0] },
-    Style { key: "voix", label: "Voix claire", desc: "Discord, podcasts et vidéos : les voix devant.", bands: [-4, -3, -1, 0, 1, 2, 3, 2, 0, -1] },
-    Style { key: "film", label: "Film", desc: "Grand et immersif : impacts et ambiance.", bands: [4, 4, 2, 0, -1, -1, 0, 2, 3, 3] },
-    Style { key: "musique", label: "Musique", desc: "Chaleureux et détaillé, pour l'écoute.", bands: [2, 3, 1, 0, -1, 0, 1, 1, 2, 2] },
-    Style { key: "doux", label: "Doux", desc: "Longues sessions : graves et aigus calmés.", bands: [-3, -2, -1, 0, 0, 1, 1, 0, -2, -3] },
+const fn any(key: &'static str, label: &'static str, desc: &'static str, bands: [i32; 10]) -> Style {
+    Style { key, label, desc, bands, headphone: None }
+}
+const HD_560S: &str = "Sennheiser HD 560S";
+const fn hd560s(key: &'static str, label: &'static str, desc: &'static str, bands: [i32; 10]) -> Style {
+    Style { key, label, desc, bands, headphone: Some(HD_560S) }
+}
+/// Styles a 10 bandes. Aucun ne monte la courbe totale au-dela de +12 dB avec les corrections connues (alerte de
+/// saturation de la page Casque) : les modes appuyes baissent un peu les mediums plutot que de pousser plus fort.
+pub const HP_STYLES: &[Style] = &[
+    any("neutre", "Neutre", "Le son tel quel, ou juste corrigé pour ton casque.", [0; 10]),
+    any("basses", "Basses +", "Des graves pleins et profonds, sans couvrir les voix.", [4, 5, 3, 1, 0, 0, 0, 0, 0, 0]),
+    any("basses_plus", "Basses ++", "Basses à fond, façon club : ça cogne. Les médiums reculent pour leur laisser la place.", [4, 6, 4, 1, -3, -4, -3, 0, 0, -1]),
+    any("jeu", "Jeu", "Pas, rechargements et directions plus nets.", [-2, -1, -1, -1, 0, 1, 3, 3, 2, 0]),
+    any("voix", "Voix claire", "Discord, podcasts et vidéos : les voix devant.", [-4, -3, -1, 0, 1, 2, 3, 2, 0, -1]),
+    any("film", "Film", "Grand et immersif : impacts et ambiance.", [4, 4, 2, 0, -1, -1, 0, 2, 3, 3]),
+    any("musique", "Musique", "Chaleureux et détaillé, pour l'écoute.", [2, 3, 1, 0, -1, 0, 1, 1, 2, 2]),
+    any("rap", "Rap / Hip-hop", "Sub-basses rondes et voix en avant, des 808 aux flows.", [4, 5, 2, 0, -2, -2, 1, 2, 1, 0]),
+    any("doux", "Doux", "Longues sessions : graves et aigus calmés.", [-3, -2, -1, 0, 0, 1, 1, 0, -2, -3]),
+    hd560s("hd560s_impact", "Impact", "Le punch d'un casque fermé, en gardant la scène ouverte du HD 560S.", [3, 5, 3, 1, 0, 0, 0, -1, 0, 0]),
+    hd560s("hd560s_competitif", "Compétitif", "Pas et directions au premier plan : moins de graves qui masquent, scène toujours aussi précise.", [-4, -3, -2, -1, 0, 1, 3, 4, 1, -1]),
+    hd560s("hd560s_immersion", "Immersion", "Jeux solo et films : graves profonds et aigus aérés, la scène paraît encore plus large.", [3, 3, 1, 0, -1, -1, 0, 1, 2, 3]),
+    hd560s("hd560s_chaleur", "Chaleureux", "Plus de corps aux voix et aux instruments, sans perdre le détail.", [2, 3, 3, 2, 0, -1, -1, -1, 0, 0]),
+    hd560s("hd560s_detente", "Détente", "Aigus adoucis, graves gardés : rien ne siffle ni ne fatigue, même après des heures.", [1, 1, 0, 0, 0, 0, -1, -2, -3, -2]),
 ];
 pub fn style(key: &str) -> Option<&'static Style> {
     HP_STYLES.iter().find(|s| s.key == key)

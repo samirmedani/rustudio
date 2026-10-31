@@ -1,5 +1,12 @@
 # Nouveautés
 
+## 5.6.13
+
+- **Casque : deux nouveaux styles.** « Basses ++ » pousse les basses à fond, façon club (environ deux fois plus marqué que « Basses + ») ; « Rap / Hip-hop » donne des sub-basses rondes et garde les voix en avant.
+- **Modes dédiés au Sennheiser HD 560S.** Quand ce casque est choisi, la page Casque propose cinq modes réglés pour lui, par-dessus sa correction : Impact, Compétitif, Immersion, Chaleureux et Détente.
+- Aucun style tout prêt ne pousse la courbe au point de faire grésiller le casque, quelle que soit la correction choisie.
+- Page Casque réorganisée : le réglage fin passe sous les options, les styles ont toute la colonne de droite et tes profils leur propre rubrique (« Créer un profil »). Les cartes de styles et de préréglages du micro s’alignent en haut, même quand leurs descriptions n’ont pas la même longueur.
+
 ## 5.6.12
 
 - **Historique des versions.** Clique sur le numéro de version en bas à gauche, ou menu ⋯ › Historique des versions : les nouveautés de chaque version, les trois plus récentes dépliées. Hors ligne, les notes intégrées à ta version restent lisibles.

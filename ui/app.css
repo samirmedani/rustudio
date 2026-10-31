@@ -174,7 +174,7 @@ header p{color:var(--text2);font-size:15px;margin-top:6px}
 @keyframes pagein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .card{border-radius:var(--r);padding:20px}
 .card h3{font-size:15px;font-weight:650;letter-spacing:-.01em;display:flex;align-items:center;gap:8px;margin-bottom:14px}
-.card h3 small{color:var(--text3);font-weight:500;margin-left:auto;font-size:12.5px;letter-spacing:0}
+.card h3 small{color:var(--text3);font-weight:500;margin-left:auto;font-size:12.5px;letter-spacing:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .muted-txt{color:var(--text2)}
 .chip-ico{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:none;
   background:linear-gradient(145deg,color-mix(in srgb,var(--c) 12%,#fff),color-mix(in srgb,var(--c) 20%,#fff));color:color-mix(in srgb,var(--c) 82%,#000)}
@@ -289,12 +289,17 @@ header p{color:var(--text2);font-size:15px;margin-top:6px}
 .btn-row{display:flex;gap:10px;margin-top:18px}
 .btn-row .pill{flex:1;height:40px}
 .presets{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
-.preset{position:relative;text-align:left;padding:14px;border-radius:16px;background:rgba(255,255,255,.6);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.03);transition:background .2s,box-shadow .2s,transform .2s var(--ease)}
+.preset{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;text-align:left;padding:14px;border-radius:16px;background:rgba(255,255,255,.6);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.03);transition:background .2s,box-shadow .2s,transform .2s var(--ease)}
 .preset:hover{background:#fff;transform:translateY(-1px);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.08),0 8px 22px rgba(17,24,39,.08)}
 .preset.on{background:#fff;box-shadow:inset 0 0 0 1.5px var(--accent),0 8px 22px rgba(0,113,227,.12)}
 .preset .chip-ico{width:34px;height:34px;margin-bottom:10px}
 .preset b{display:block;font-size:14px;font-weight:650}
 .preset p{color:var(--text2);font-size:12.5px;line-height:1.4;margin-top:3px}
+.presets-group{grid-column:1/-1;display:flex;align-items:flex-start;gap:10px;margin-top:10px;padding-top:14px;border-top:.5px solid rgba(0,0,0,.08)}
+.presets-group svg{flex:none;width:16px;height:16px;margin-top:1px;color:var(--accent)}
+.presets-group span{min-width:0}
+.presets-group b{display:block;font-size:13.5px;font-weight:650}
+.presets-group small{display:block;color:var(--text2);font-size:12.5px;line-height:1.4;margin-top:2px}
 .tag{position:absolute;top:12px;right:12px;font-size:10.5px;font-weight:700;height:20px;display:inline-flex;align-items:center;padding:0 8px;border-radius:999px;background:rgba(52,199,89,.14);color:#1e7e34;letter-spacing:.03em}
 .eq{position:relative;height:210px}
 .eq canvas{position:absolute;inset:0;width:100%;height:100%}
