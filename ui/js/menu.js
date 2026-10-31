@@ -114,8 +114,9 @@ function openSettingsSheet() {
 /* ---------- feuille et analyses ---------- */
 var sheetState = null, sheetReturnFocus = null;
 function sheetControls() {
+  // Hors de la tabulation (tabindex -1, comme les choix non retenus d'un groupe radio) : ni premier ni dernier arrêt.
   return Array.from($("sheet-box").querySelectorAll('button:not(:disabled),input:not(:disabled):not([type="hidden"]),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]'))
-    .filter(function (e) { return e.getClientRects().length && !e.closest("[inert]"); });
+    .filter(function (e) { return e.getAttribute("tabindex") !== "-1" && e.getClientRects().length && !e.closest("[inert]"); });
 }
 function focusSheet() {
   var b = $("sheet-box"), title = b.querySelector("h2");
@@ -171,6 +172,7 @@ function startJob(kind, params) {
   postModule("goxlr-mini", kind, params).then(function (r) { if (r && r.ok) { jobSeen = {kind: kind, id: r.job}; showJob({kind: kind, running: true, progress: 0, step: "Préparation…"}); } });
 }
 function showJob(j) {
+  if (j.kind === "voice-print") return showVoicePrintJob(j);
   if (j.kind === "voice-setup") return showVoiceJob(j);
   if (j.running) {
     var title = j.kind === "detect-mic" ? "Détection du micro" : "Réglage automatique du gain";

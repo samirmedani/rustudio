@@ -52,6 +52,22 @@ pub const EQ_BANDS: [(&str, u32, u32); 6] = [
     ("90", 0x40000, 0x40001), ("250", 0x40003, 0x40004), ("500", 0x40006, 0x40007), ("1000", 0x50000, 0x50001),
     ("3000", 0x50003, 0x50004), ("8000", 0x50006, 0x50007),
 ];
+/// Fréquences autorisées pour chaque bande de l'égaliseur de la Mini (Hz), comme l'appli officielle et
+/// goxlr-utility (profile/src/microphone/equalizer_mini.rs). Les plages ne se chevauchent pas.
+pub const EQ_RANGES: [(&str, f64, f64); 6] = [
+    ("90", 30.0, 90.0), ("250", 100.0, 300.0), ("500", 310.0, 800.0), ("1000", 800.0, 2500.0),
+    ("3000", 2600.0, 5000.0), ("8000", 5100.0, 18000.0),
+];
+/// Durées réelles derrière les index du noise gate (ms).
+pub const GATE_MS: [u32; 46] = [
+    10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 250, 300, 350, 400,
+    450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900,
+    2000,
+];
+/// Attaque et relâchement du compresseur (ms) selon leur index.
+pub const COMP_ATTACK_MS: [u32; 20] = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 23, 26, 30, 35, 40];
+pub const COMP_RELEASE_MS: [u32; 20] =
+    [15, 15, 25, 35, 45, 55, 65, 75, 85, 100, 115, 140, 170, 230, 340, 680, 1000, 1500, 2000, 3000];
 pub const RATIOS: [f64; 15] = [1.0, 1.1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.2, 4.0, 5.6, 8.0, 16.0, 32.0, 64.0];
 pub const GATE_ATTENUATION: [i32; 26] = [
     -6, -7, -8, -9, -10, -11, -12, -13, -14, -15, -16, -17, -18, -19, -20, -21, -22, -23, -24, -25, -26, -27, -28,
@@ -184,6 +200,14 @@ pub fn recommended_gain(t: &str) -> i32 {
 }
 pub fn is_eq_band(b: &str) -> bool {
     EQ_BANDS.iter().any(|(n, _, _)| *n == b)
+}
+/// Plage de fréquences d'une bande de l'égaliseur micro.
+pub fn eq_range(b: &str) -> Option<(f64, f64)> {
+    EQ_RANGES.iter().find(|(n, _, _)| *n == b).map(|(_, lo, hi)| (*lo, *hi))
+}
+/// Fréquence par défaut d'une bande : celle de son nom (90 Hz… 8 kHz), comme Rustudio l'a toujours envoyée.
+pub fn eq_default_freq(b: &str) -> f64 {
+    b.parse::<f64>().unwrap_or(1000.0)
 }
 pub fn fader_style(s: &str) -> Option<(bool, bool)> {
     FADER_STYLES.iter().find(|(n, _, _)| *n == s).map(|(_, g, m)| (*g, *m))

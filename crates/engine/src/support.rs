@@ -233,6 +233,12 @@ pub fn support(ctl: &Ctl) -> Value {
         .collect();
     let drops = &h["usb_drops"];
     let stats = &h["stats"];
+    let micro = {
+        let g = ctl.lock();
+        let s = &g.state;
+        json!({"type": s.mic.kind, "modele": s.mic.model, "gain_db": s.mic.gain_db, "preregle": s.mic_preset,
+               "traitements": s.fx, "empreinte_vocale": s.voice_print.is_some(), "empreinte_valide": s.voice_for_mic().is_some()})
+    };
     let report = json!({
         "rustudio": VERSION,
         "compilation": if ctl.updater.release_build { "release" } else { "développement" },
@@ -240,6 +246,7 @@ pub fn support(ctl: &Ctl) -> Value {
         "moteur": {"etat": h["status"], "lance_depuis_s": h["engine_uptime_s"], "relances": h["engine_restarts"],
                    "surveille": h["supervised"], "simule": h["simulated"]},
         "appareils": devices,
+        "micro": micro,
         "goxlr_mini": {"connectee": h["connected"], "presente": h["present"], "firmware": h["firmware"],
                         "connectee_depuis_s": h["device_uptime_s"], "reconnexions": h["reconnects"], "port_usb": h["usb"],
                         "commandes": stats["commands"], "resynchros": stats["resyncs"], "remises_a_zero": stats["index_resets"],

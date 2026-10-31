@@ -14,6 +14,9 @@ pub struct Mic {
     #[serde(rename = "type")]
     pub kind: String,
     pub gain_db: i32,
+    /// modèle choisi dans le catalogue des micros (crates/core/src/mics.rs), s'il est connu
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Voix mesuree par l'assistant « Régler ma voix » (niveaux d'entree en dB au gain indique).
@@ -28,6 +31,21 @@ pub struct MicCal {
     pub voice_low_db: f64,
     pub voice_db: f64,
     pub voice_peak_db: f64,
+    /// crête de la phrase forte de l'empreinte vocale, au même gain
+    #[serde(default)]
+    pub loud_peak_db: Option<f64>,
+}
+
+/// Empreinte vocale gardée : l'analyse de l'enregistrement, et le micro avec lequel elle a été faite.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VoiceRecord {
+    #[serde(flatten)]
+    pub print: crate::voice::VoicePrint,
+    /// date de l'enregistrement (epoch, s)
+    pub t: f64,
+    pub mic_type: String,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -95,6 +113,7 @@ pub struct State {
     pub scene: Option<String>,
     pub user_scenes: IndexMap<String, Value>,
     pub hp_eq: HpEq,
+    pub voice_print: Option<VoiceRecord>,
 }
 
 impl State {
@@ -126,6 +145,12 @@ impl State {
         let k = kind.unwrap_or(&self.mic.kind);
         self.mic_cal.as_ref().filter(|c| c.kind == k)
     }
+    /// Empreinte vocale faite avec le micro branché aujourd'hui (même type, même modèle s'il est connu).
+    pub fn voice_for_mic(&self) -> Option<&VoiceRecord> {
+        self.voice_print.as_ref().filter(|v| {
+            v.mic_type == self.mic.kind && (v.model.is_none() || self.mic.model.is_none() || v.model == self.mic.model)
+        })
+    }
 }
 
 pub fn default_state() -> State {
@@ -137,7 +162,7 @@ pub fn default_state() -> State {
         partial: CHANNELS.iter().map(|c| (c.to_string(), None)).collect(),
         routing: scenes::routing(&[]),
         colours: COLOUR_TARGETS.iter().map(|(t, _, _)| (t.to_string(), vec!["00FFFF".into(), "FFFFFF".into()])).collect(),
-        mic: Mic { kind: "dynamic".into(), gain_db: 30 },
+        mic: Mic { kind: "dynamic".into(), gain_db: 30, model: None },
         dsp: dsp::preset_dsp("naturel"),
         fx: Fx::default(),
         mic_preset: "brut".into(),
@@ -159,6 +184,7 @@ pub fn default_state() -> State {
         scene: None,
         user_scenes: IndexMap::new(),
         hp_eq: hpeq::normalize_hp_eq(&Value::Null, None),
+        voice_print: None,
     }
 }
 
@@ -191,7 +217,27 @@ pub fn normalize_cal(src: &Value) -> Option<MicCal> {
         voice_low_db: lvl("voice_low_db")?,
         voice_db: lvl("voice_db")?,
         voice_peak_db: lvl("voice_peak_db")?,
+        loud_peak_db: lvl("loud_peak_db"),
     })
+}
+
+/// Empreinte vocale relue de façon tolérante : illisible ou incohérente, elle est ignorée.
+pub fn normalize_voice(src: &Value) -> Option<VoiceRecord> {
+    if !src.is_object() {
+        return None;
+    }
+    let v: VoiceRecord = serde_json::from_value(src.clone()).ok()?;
+    let n = v.print.bands.len();
+    let finite = |a: &[f64]| a.iter().all(|x| x.is_finite());
+    (is_mic_type(&v.mic_type)
+        && n >= 12
+        && v.print.voice_db.len() == n
+        && v.print.noise_db.len() == n
+        && finite(&v.print.bands)
+        && finite(&v.print.voice_db)
+        && finite(&v.print.noise_db)
+        && v.t.is_finite())
+    .then(|| VoiceRecord { model: v.model.clone().filter(|m| crate::mics::model(m).is_some()), ..v })
 }
 
 pub fn norm_app(name: &str) -> String {
@@ -363,6 +409,8 @@ pub fn normalize_state(src: &Value) -> State {
             st.mic.gain_db = g;
         }
     }
+    st.mic.model = get(mic, "model").as_str().filter(|m| crate::mics::model(m).is_some()).map(String::from);
+    st.voice_print = normalize_voice(get(src, "voice_print"));
     if truthy(get(src, "dsp")) {
         st.dsp = dsp::normalize_dsp(get(src, "dsp"), None);
     }

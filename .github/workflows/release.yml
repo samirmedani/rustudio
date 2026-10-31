@@ -36,6 +36,7 @@ jobs:
           node scripts/modules-ui-test.mjs
           node scripts/mouse-ui-test.mjs
           node scripts/support-ui-test.mjs
+          node scripts/voice-ui-test.mjs
           node scripts/diagnostic-ui-test.mjs
       - name: Le tag correspond à la version
         shell: pwsh

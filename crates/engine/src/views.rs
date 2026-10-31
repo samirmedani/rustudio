@@ -44,7 +44,8 @@ impl Ctl {
                "health": self.health_status(&g), "sim": self.simulated(), "osd": s.prefs.osd, "scene": s.scene,
                "modules": {"devices": self.module_devices_locked(&g, firmware)},
                "app_version": VERSION, "update": brief, "usb": g.usb, "listening": listening,
-               "sound_test": g.sound_test_until.is_some()})
+               "sound_test": g.sound_test_until.is_some(),
+               "ab": g.ab_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0)})
     }
 
     pub fn health(&self) -> Value {
@@ -113,6 +114,9 @@ pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
         "eq_bands": EQ_BANDS.iter().map(|(k, _, _)| *k).collect::<Vec<_>>(), "ratios": RATIOS,
         "known_apps": KNOWN_APPS.iter().map(|(k, v)| (k.to_string(), json!(v))).collect::<Map<_, _>>(),
         "hp_bands": HP_BANDS, "hp_q": HP_Q, "hp_channels": HP_CHANNELS,
+        "mic_models": rustudio_core::mics::catalog_json(),
+        "eq_ranges": rustudio_core::voicefit::eq_ranges_json(),
+        "eq_model": rustudio_core::voicefit::eq_model_json(),
         "hp_styles": HP_STYLES.iter().map(|s| (s.key.to_string(), json!({"label": s.label, "desc": s.desc, "bands": s.bands, "headphone": s.headphone}))).collect::<Map<_, _>>(),
         "headphones": HEADPHONES.iter().map(|(n, f)| (n.to_string(), json!(f.iter().map(|(k, f0, g, q)| json!([k, f0, g, q])).collect::<Vec<_>>()))).collect::<Map<_, _>>(),
         "device": {"id": device.id, "name": device.name, "vendor": device.vendor, "module": device.id, "official": true},

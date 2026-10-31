@@ -8,12 +8,12 @@ use std::io::Read;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Request, Response, Server};
 
-pub const ACTIONS: [&str; 38] = [
+pub const ACTIONS: [&str; 42] = [
     "volume", "mute", "fader", "route", "colour", "mic", "raw", "profile", "dsp", "mic-preset", "scene", "scene-save",
     "scene-delete", "theme", "lighting", "detect-mic", "auto-gain", "voice-setup", "mic-listen", "job-cancel", "settings",
     "auto-scenes", "reconnect", "restart-engine", "fx", "hp-eq", "hp-eq-save", "hp-eq-delete", "hp-eq-setup",
     "hp-eq-remove", "update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh",
-    "echo-check", "sound-test",
+    "echo-check", "sound-test", "mic-model", "voice-print", "mic-ab", "voice-forget",
 ];
 
 pub const UI_HTML: &str = include_str!("../../../ui/index.html");
@@ -42,6 +42,7 @@ ui_assets!(
     "js/modules.js",
     "js/menu.js",
     "js/goxlr/voix.js",
+    "js/goxlr/empreinte.js",
     "js/mises-a-jour.js",
     "js/aide.js",
     "js/demarrage.js",
@@ -162,6 +163,7 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                         Ok(v) => v,
                         Err(e) => return json_resp(req, &json!({"error": e.msg}), e.status),
                     },
+                    Some(("goxlr-mini", "voice")) => rustudio_core::voicefit::voice_view(&ctl.lock().state),
                     _ => return json_resp(req, &json!({"error": "introuvable"}), 404),
                 },
             };
@@ -170,6 +172,20 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
         Method::Post => {
             if hdr(&req, API_HEADER) != Some("1") {
                 return json_resp(req, &json!({"error": "requête refusée"}), 403);
+            }
+            if module_route(&path) == Some(("goxlr-mini", "voice-audio")) {
+                // audio de l'empreinte vocale : Int16 mono brut, jamais écrit sur le disque
+                let mut body = Vec::new();
+                if req.as_reader().take(crate::jobs::VOICE_AUDIO_MAX as u64 + 1).read_to_end(&mut body).is_err() {
+                    return json_resp(req, &json!({"error": "corps illisible"}), 400);
+                }
+                if body.len() > crate::jobs::VOICE_AUDIO_MAX {
+                    return json_resp(req, &json!({"error": "enregistrement trop long"}), 413);
+                }
+                return match crate::jobs::voice_audio(ctl, query, &body) {
+                    Ok(v) => json_resp(req, &v, 200),
+                    Err(ApiError { status, msg }) => json_resp(req, &json!({"error": msg}), status),
+                };
             }
             let mut body = String::new();
             if req.as_reader().take(4_000_000).read_to_string(&mut body).is_err() {

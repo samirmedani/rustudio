@@ -84,6 +84,12 @@ pub struct Inner {
     pub listen_until: Option<Instant>,
     /// test « son qui crépite » : la voie Sample part seulement vers le Stream Mix jusqu'à cet instant
     pub sound_test_until: Option<Instant>,
+    /// écoute Avant/Après : tous les traitements du micro contournés jusqu'à cet instant
+    pub ab_until: Option<Instant>,
+    /// empreinte vocale en cours : traitements neutres, micro seul vers Chat Mic, volume du micro au maximum
+    pub voice_capture: bool,
+    /// dernière empreinte enregistrée, en attente de l'audio de l'appli (déroulé et mesures du moteur)
+    pub voice_take: Option<crate::jobs::VoiceTake>,
     pub listen_level: i32,
     pub force_reconnect: bool,
     pub usb: Option<String>,
@@ -149,11 +155,17 @@ impl Inner {
     pub fn listening(&self) -> bool {
         self.listen_until.is_some()
     }
+    /// Traitements du micro contournés : écoute « Avant » ou enregistrement de l'empreinte vocale.
+    pub fn dsp_bypassed(&self) -> bool {
+        self.ab_until.is_some() || self.voice_capture
+    }
     pub fn cal_for(&self) -> Option<&state::MicCal> {
         self.state.cal_for(None)
     }
+    /// Réglages d'un préréglage : sur mesure avec une empreinte vocale du micro branché, sinon corrigés pour le
+    /// modèle de micro choisi, sinon calés sur la voix mesurée par « Régler ma voix ».
     pub fn preset_dsp(&self, name: &str) -> dsp::Dsp {
-        dsp::fit_dsp(name, self.cal_for(), Some(self.state.mic.gain_db))
+        rustudio_core::voicefit::profile_dsp(name, &self.state)
     }
     /// Reglages du preregle courant recales sur la voix mesuree ; « Naturel » garde des reglages doux prets.
     pub fn refit(&self) -> dsp::Dsp {
@@ -168,6 +180,10 @@ impl Inner {
                 *on = out == "BroadcastMix";
             }
             r.insert("BroadcastMix".into(), true);
+        }
+        if self.voice_capture {
+            // empreinte vocale : « Chat Mic » ne porte que ta voix pendant l'enregistrement
+            r.insert("ChatMic".into(), input == "Microphone");
         }
         r
     }
@@ -199,7 +215,8 @@ impl Inner {
 
     pub fn dsp_lists(&self) -> (Vec<(u32, [u8; 4])>, Vec<(u32, i32)>) {
         let s = &self.state;
-        let d = dsp::effective_dsp(&s.dsp, &s.fx);
+        let fx = if self.dsp_bypassed() { dsp::Fx::default() } else { s.fx };
+        let d = dsp::effective_dsp(&s.dsp, &fx);
         let (g, c) = (&d.gate, &d.comp);
         let thr = if g.enabled { g.threshold } else { -59 };
         let att = dsp::gate_attenuation(if g.enabled { g.attenuation } else { 0 });
@@ -211,7 +228,8 @@ impl Inner {
             (0x70100, f32_bytes(s.bleep_db as f64 * 65536.0)),
         ];
         for (band, kf, kg) in EQ_BANDS {
-            params.push((kf, f32_bytes(band.parse::<f64>().unwrap_or(0.0))));
+            let f = d.eq_freq.get(band).copied().map(|f| dsp::eq_freq_in_range(band, f)).unwrap_or_else(|| eq_default_freq(band));
+            params.push((kf, f32_bytes(f)));
             params.push((kg, f32_bytes(*d.eq.get(band).unwrap_or(&0) as f64)));
         }
         let effects = vec![
@@ -235,7 +253,12 @@ impl Inner {
         let mon = if self.listening() { self.listen_level } else { s.volume("MicMonitor") };
         for (i, c) in CHANNELS.iter().enumerate() {
             if has(Key::Volume(i)) {
-                ops.push(Op::Volume(i, if *c == "MicMonitor" { mon } else { s.volume(c) }));
+                let v = match *c {
+                    "MicMonitor" => mon,
+                    "Mic" if self.voice_capture => 255, // empreinte : le niveau enregistré est celui de l'entrée
+                    _ => s.volume(c),
+                };
+                ops.push(Op::Volume(i, v));
             }
         }
         if has(Key::Submix) && self.submixes {
@@ -382,7 +405,8 @@ impl Ctl {
             live: Live::default(), version: 1, job: None, fast_level: false, level_until: None, dirty: HashSet::new(),
             want: 0, done: 0, save_dirty: first_run, prev_mask: 0, prev_pos: None, pos_history: [[0; 2]; 4],
             faders_seen: false, btn: HashMap::new(), bleep: false, blink: HashMap::new(), gain_override: None,
-            listen_until: None, sound_test_until: None, listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
+            listen_until: None, sound_test_until: None, ab_until: None, voice_capture: false, voice_take: None,
+            listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
             errors: VecDeque::new(), connects: 0, reconnects: 0, fail_streak: 0, auto_active: AutoActive::Off,
             auto_note: None, auto_seen: false, mix2: false, submixes: false, wake: wake.clone(),
         };
@@ -624,6 +648,10 @@ impl Ctl {
                 g.sound_test_until = None;
                 g.mark(&[Key::Route(inp("Samples"))], false);
             }
+            if matches!(g.ab_until, Some(t) if Instant::now() > t) {
+                g.ab_until = None;
+                g.mark(&[Key::Dsp], false);
+            }
         }
         self.run_calls(dev)?;
         self.flush(dev)?;
@@ -855,7 +883,7 @@ impl Ctl {
                 });
                 return Ok(json!({ "ok": true }));
             }
-            "detect-mic" | "auto-gain" | "voice-setup" => {
+            "detect-mic" | "auto-gain" | "voice-setup" | "voice-print" => {
                 let started = crate::jobs::start_job(self, action, p.clone())?;
                 let mut g = self.lock();
                 g.version += 1;

@@ -6,6 +6,7 @@ use crate::logf;
 use rustudio_core::consts::*;
 use rustudio_core::dsp::{self, mic_type_preset};
 use rustudio_core::state::{self, MicCal};
+use rustudio_core::voice::{self, Phase, Segment};
 use rustudio_core::value::{clamp_f, get, num, parse_bool, truthy};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -154,6 +155,7 @@ fn run_job(ctl: &Arc<Ctl>, kind: &str, p: &Value) {
     let r = match kind {
         "detect-mic" => detect_mic(ctl, parse_bool(get(p, "phantom"))),
         "voice-setup" => voice_setup(ctl, p),
+        "voice-print" => voice_print(ctl, p),
         _ => auto_gain(ctl, num(get(p, "target_db")).unwrap_or(VOICE_TARGET_DB), num(get(p, "seconds")).unwrap_or(6.0)),
     };
     match r {
@@ -168,6 +170,12 @@ fn run_job(ctl: &Arc<Ctl>, kind: &str, p: &Value) {
     g.fast_level = false;
     g.gain_override = None;
     g.mark(&[Key::Mic], true);
+    if std::mem::replace(&mut g.voice_capture, false) {
+        // fin de l'empreinte (réussie, annulée ou en erreur) : traitements, routage et volume du micro reviennent
+        let mut keys = vec![Key::Dsp, Key::Volume(crate::controller::ch("Mic"))];
+        keys.extend((0..INPUTS.len()).map(Key::Route));
+        g.mark(&keys, false);
+    }
 }
 
 fn detect_mic(ctl: &Ctl, phantom: bool) -> JR<Value> {
@@ -341,7 +349,8 @@ fn voice_setup(ctl: &Ctl, p: &Value) -> JR<Value> {
     let apply = p.get("apply").map(truthy).unwrap_or(false);
     let (gen, d, fx) = {
         let mut g = ctl.lock();
-        g.state.mic = state::Mic { kind: mtype.clone(), gain_db: new_gain };
+        let model = g.state.mic.model.clone().filter(|m| rustudio_core::mics::model(m).map(|x| x.kind == mtype).unwrap_or(false));
+        g.state.mic = state::Mic { kind: mtype.clone(), gain_db: new_gain, model };
         g.state.mic_cal = Some(cal.clone());
         if !(apply || g.state.fx.any()) {
             style = "naturel".into(); // rien d'actif : des reglages doux, prets
@@ -404,4 +413,251 @@ fn voice_notes(ctl: &Ctl, mtype: &str, gain: i32, cal: &MicCal) -> Vec<Value> {
             (s.volume("MicMonitor") as f64 * 100.0 / 255.0).round() as i32)}));
     }
     notes
+}
+
+
+// ---------- empreinte vocale ----------
+
+/// Ce que le moteur a mesuré pendant l'empreinte vocale, en attendant l'audio enregistré par l'appli.
+#[derive(Clone, Debug)]
+pub struct VoiceTake {
+    pub done_at: Instant,
+    /// étapes : phase, début et fin (epoch, s), gain du micro
+    pub timeline: Vec<(Phase, f64, f64, i32)>,
+    pub mic_type: String,
+    pub model: Option<String>,
+}
+
+/// L'audio doit arriver dans ce délai après la fin de l'enregistrement.
+const TAKE_TTL: Duration = Duration::from_secs(900);
+/// Taille maximale de l'audio reçu (Int16 mono) : 8 Mo, soit plus de 80 s à 48 kHz.
+pub const VOICE_AUDIO_MAX: usize = 8_000_000;
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Silence => "silence",
+        Phase::Reading => "reading",
+        Phase::Loud => "loud",
+    }
+}
+
+fn set_phase(ctl: &Ctl, phase: &str, seconds: f64, step_txt: &str) {
+    update(ctl, &[("phase", json!(phase)), ("phase_end", json!(now_epoch() + seconds)), ("step", json!(step_txt))]);
+}
+
+/// Simulateur : la fausse GoXLR parle pendant la lecture et la phrase forte, et se tait sinon.
+struct SimVoice<'a>(&'a Ctl, Option<f64>);
+impl<'a> SimVoice<'a> {
+    fn new(ctl: &'a Ctl, mtype: &str) -> SimVoice<'a> {
+        let base = ctl.sim.as_ref().map(|s| {
+            let mut g = s.lock();
+            g.dev.mic_input = Some(mtype.to_string());
+            g.dev.voice_db
+        });
+        SimVoice(ctl, base)
+    }
+    fn talk(&self, on: bool, louder_db: f64) {
+        if let (Some(s), Some(base)) = (self.0.sim.as_ref(), self.1) {
+            let mut g = s.lock();
+            g.dev.talking = on;
+            g.dev.voice_db = base + louder_db;
+        }
+    }
+}
+impl Drop for SimVoice<'_> {
+    fn drop(&mut self) {
+        self.talk(false, 0.0);
+    }
+}
+
+/// Empreinte vocale, côté moteur : silence, lecture, phrase forte, avec des traitements neutres et « Chat Mic » ne
+/// portant que ta voix. Le moteur mesure les niveaux (gain, bruit, crêtes) ; l'appli enregistre « Chat Mic » et
+/// envoie l'audio ensuite (voice_audio). Si ta voix sature pendant la lecture : 10 dB de gain en moins, on relit.
+fn voice_print(ctl: &Ctl, p: &Value) -> JR<Value> {
+    let silence_s = num(get(p, "silence_s")).unwrap_or(5.0).clamp(1.5, 10.0);
+    let reading_s = num(get(p, "reading_s")).unwrap_or(16.0).clamp(3.0, 30.0);
+    let loud_s = num(get(p, "loud_s")).unwrap_or(5.0).clamp(1.5, 10.0);
+    let (mtype, model, old_gain) = {
+        let g = ctl.lock();
+        if g.state.muted("Mic") || g.state.partial_of("Mic") == Some("chat") {
+            return Err("Ton micro est coupé : réactive-le, puis recommence.".to_string().into());
+        }
+        (g.state.mic.kind.clone(), g.state.mic.model.clone(), g.state.mic.gain_db)
+    };
+    let sim = SimVoice::new(ctl, &mtype);
+    let mut gain = old_gain;
+    let mut timeline: Vec<(Phase, f64, f64, i32)> = vec![];
+    // 1. préparation : traitements neutres, ta voix seule vers Chat Mic, volume du micro au maximum
+    set_phase(ctl, "prepare", 1.2, "Je prépare l’enregistrement…");
+    let gen = {
+        let mut g = ctl.lock();
+        g.voice_capture = true;
+        g.ab_until = None;
+        g.gain_override = Some((mtype.clone(), gain));
+        let mut keys = vec![Key::Dsp, Key::Mic, Key::Volume(crate::controller::ch("Mic"))];
+        keys.extend((0..INPUTS.len()).map(Key::Route));
+        g.mark(&keys, false)
+    };
+    wait_applied(ctl, gen, Duration::from_secs(4))?;
+    sample(ctl, 0.9, 0.0, 0.04)?;
+    let total = silence_s + reading_s + loud_s;
+    let (a, b) = (0.04, 0.04 + 0.9 * silence_s / total);
+    // 2. silence : le bruit de ta pièce
+    set_phase(ctl, "silence", silence_s, "Silence…");
+    let t0 = now_epoch();
+    sample(ctl, 0.3_f64.min(silence_s / 4.0), a, a + 0.01)?;
+    let mut quiet = sorted(sample(ctl, silence_s - 0.3_f64.min(silence_s / 4.0), a + 0.01, b)?);
+    timeline.push((Phase::Silence, t0, now_epoch(), gain));
+    if quiet.is_empty() {
+        quiet.push(-72.2);
+    }
+    let (noise, noise_peak, noise_gain) = (pct(&quiet, 0.5), pct(&quiet, 0.95), gain);
+    // 3. lecture
+    let (c, d) = (b, b + 0.9 * reading_s / total);
+    let mut vals = vec![];
+    for attempt in 0..3 {
+        update(ctl, &[("retry", json!(attempt))]);
+        let why = if attempt == 0 {
+            "Lis le texte à voix haute".to_string()
+        } else {
+            format!("Ta voix saturait : gain baissé à {gain} dB. Relis le texte, même voix.")
+        };
+        set_phase(ctl, "reading", reading_s, &why);
+        sim.talk(true, 0.0);
+        let t0 = now_epoch();
+        let (v, clipped) = sample_voice(ctl, reading_s, c, d)?;
+        timeline.push((Phase::Reading, t0, now_epoch(), gain));
+        sim.talk(false, 0.0);
+        vals = v;
+        if !(clipped && attempt < 2 && gain > 0) {
+            break;
+        }
+        gain = (gain - 10).max(0);
+        set_gain_and_wait(ctl, &mtype, gain)?;
+        step(ctl, &format!("Ta voix saturait : gain baissé à {gain} dB. Relis le texte, même voix."));
+        sample(ctl, 0.8, c, c)?;
+    }
+    // 4. phrase forte : la marge avant saturation
+    set_phase(ctl, "loud", loud_s, "Plus fort !");
+    sim.talk(true, 8.0);
+    let t0 = now_epoch();
+    let loud = sorted(sample(ctl, loud_s, d, 0.97)?);
+    timeline.push((Phase::Loud, t0, now_epoch(), gain));
+    sim.talk(false, 0.0);
+    drop(sim);
+    // 5. niveaux : ta voix sans ses pauses, ses crêtes, et le gain qui les place vers -12 dB sans saturer en criant
+    let pauses = if vals.is_empty() { -72.2 } else { pct(&sorted(vals.clone()), 0.1) };
+    let heard = sorted(vals.iter().copied().filter(|v| *v > (pauses + 10.0).max(-66.0)).collect());
+    if (heard.len() as f64) < 10f64.max(vals.len() as f64 * 0.25) {
+        return Err("Je ne t’ai pas assez entendu. Parle plus près du micro (10 à 15 cm) et recommence.".to_string().into());
+    }
+    let peak = pct(&heard, 0.95);
+    let loud_peak = loud.last().copied().filter(|l| *l > peak);
+    let mut new_gain = clamp_f(gain as f64 + VOICE_TARGET_DB - peak, 0, 72);
+    if let Some(lp) = loud_peak {
+        new_gain = new_gain.min((gain as f64 + CLIP_DB - 3.0 - lp).floor().max(0.0) as i32);
+    }
+    let shift = (new_gain - gain) as f64;
+    let noise_shift = (new_gain - noise_gain) as f64;
+    let mut voiced = sorted(vals.iter().copied().filter(|v| *v > (noise_peak + (gain - noise_gain) as f64 + 6.0).max(-66.0)).collect());
+    if voiced.is_empty() {
+        voiced = heard.clone();
+    }
+    let (low, med) = (pct(&voiced, 0.15), pct(&voiced, 0.5));
+    let cal = state::normalize_cal(&json!({"type": mtype, "gain_db": new_gain, "t": now_epoch(), "noise_db": noise + noise_shift,
+        "noise_peak_db": noise_peak + noise_shift, "voice_low_db": low + shift, "voice_db": med + shift,
+        "voice_peak_db": peak + shift, "loud_peak_db": loud_peak.map(|l| l + shift)}))
+    .ok_or_else(|| JobErr::Msg("Mesure illisible".into()))?;
+    update(ctl, &[("phase", json!("analyse")), ("step", json!("J’attends l’enregistrement…")), ("progress", json!(0.98))]);
+    let gen = {
+        let mut g = ctl.lock();
+        g.state.mic = state::Mic { kind: mtype.clone(), gain_db: new_gain, model: model.clone() };
+        g.state.mic_cal = Some(cal.clone());
+        g.voice_take = Some(VoiceTake { done_at: Instant::now(), timeline: timeline.clone(), mic_type: mtype.clone(), model });
+        g.mark(&[Key::Mic], true)
+    };
+    wait_applied(ctl, gen, Duration::from_secs(4))?;
+    let mut notes = vec![];
+    if gain != old_gain {
+        notes.push(json!({"lvl": "warn", "t": format!("Ta voix saturait : gain baissé de {old_gain} à {gain} dB pendant l’enregistrement.")}));
+    }
+    if new_gain != gain {
+        notes.push(json!({"lvl": "ok", "t": format!("Gain réglé à {new_gain} dB : tes crêtes arrivent vers \u{2212}12 dB, sans saturer quand tu cries.")}));
+    }
+    logf!(
+        "Empreinte vocale : micro {mtype}, gain {old_gain} → {new_gain} dB, bruit {:.1} dB, voix {:.1} dB (crêtes {:.1}, fort {:?})",
+        cal.noise_peak_db, cal.voice_db, cal.voice_peak_db, cal.loud_peak_db
+    );
+    Ok(json!({"gain_db": new_gain, "old_gain_db": old_gain, "cal": cal,
+        "timeline": timeline.iter().map(|(ph, a, b, g)| json!({"phase": phase_name(*ph), "start": a, "end": b, "gain_db": g})).collect::<Vec<_>>(),
+        "notes": notes, "audio": "wanted"}))
+}
+
+fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
+}
+
+/// Audio de l'empreinte (POST /api/modules/goxlr-mini/voice-audio?rate=48000&t0=<epoch ms>&format=s16, Int16 mono) :
+/// analyse, empreinte gardée avec le micro, préréglage actif recalculé sur mesure. En simulation, ?synthetic=1 sans
+/// corps analyse une voix de synthèse.
+pub fn voice_audio(ctl: &Ctl, query: &str, body: &[u8]) -> Result<Value, ApiError> {
+    let take = ctl.lock().voice_take.clone().filter(|t| t.done_at.elapsed() < TAKE_TTL)
+        .ok_or_else(|| ApiError::bad("Aucun enregistrement en attente : refais l’empreinte."))?;
+    let first = take.timeline.first().map(|t| t.1).unwrap_or_else(now_epoch);
+    let (samples, rate, t0) = if query_value(query, "synthetic") == Some("1") {
+        if ctl.sim.is_none() {
+            return Err(ApiError::bad("La voix de démonstration n’existe qu’en simulation."));
+        }
+        let t0 = first - 0.5;
+        let segs = segments(&take, t0, f64::MAX);
+        let seed = (now_epoch() * 1000.0) as u64;
+        (voice::synth_speech(48_000, &segs, 118.0, seed), 48_000u32, t0)
+    } else {
+        if query_value(query, "format").unwrap_or("s16") != "s16" {
+            return Err(ApiError::bad("format audio non pris en charge (s16 attendu)"));
+        }
+        let rate: u32 = query_value(query, "rate").and_then(|r| r.parse().ok()).filter(|r| (16_000..=96_000).contains(r))
+            .ok_or_else(|| ApiError::bad("fréquence d’échantillonnage invalide"))?;
+        let t0 = query_value(query, "t0").and_then(|t| t.parse::<f64>().ok()).filter(|t| t.is_finite() && *t > 0.0)
+            .ok_or_else(|| ApiError::bad("début de l’enregistrement inconnu (t0)"))? / 1000.0;
+        if body.len() < 2 || body.len() % 2 != 0 || body.len() > VOICE_AUDIO_MAX {
+            return Err(ApiError::bad("enregistrement vide ou illisible"));
+        }
+        let x: Vec<f32> = body.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();
+        (x, rate, t0)
+    };
+    let dur = samples.len() as f64 / rate as f64;
+    let segs = segments(&take, t0, dur);
+    if !segs.iter().any(|s| s.phase == Phase::Reading) {
+        return Err(ApiError::bad("L’enregistrement ne couvre pas la lecture : refais l’empreinte."));
+    }
+    let print = voice::analyze(&samples, rate, &segs).map_err(|e| ApiError::bad(format!("Analyse impossible : {e}")))?;
+    if print.speech_s < 4.0 || print.warnings.iter().any(|w| w == "too_short" || w == "too_quiet") {
+        return Err(ApiError::bad("Je ne t’ai pas assez entendu dans l’enregistrement. Parle plus près du micro et refais l’empreinte."));
+    }
+    let mut g = ctl.lock();
+    logf!(
+        "Empreinte analysée : {:.1} s de parole, fondamentale {:?} Hz, sifflantes {:.1} dB, {} plosive(s), pièce {:?} ms",
+        print.speech_s, print.f0_hz.map(|f| f.round()), print.sibilance.excess_db, print.plosives.count, print.room.rt60_ms.map(|r| r.round())
+    );
+    g.state.voice_print = Some(state::VoiceRecord { print, t: now_epoch(), mic_type: take.mic_type, model: take.model });
+    g.voice_take = None;
+    if dsp::is_preset(&g.state.mic_preset) {
+        g.state.dsp = g.refit(); // le préréglage actif devient sur mesure
+        g.mark(&[Key::Dsp], true);
+    }
+    g.version += 1;
+    g.save_dirty = true;
+    let mut v = rustudio_core::voicefit::voice_view(&g.state);
+    v["ok"] = json!(true);
+    Ok(v)
+}
+
+/// Étapes de l'empreinte en secondes depuis le premier échantillon (t0), bornées à la durée enregistrée.
+fn segments(take: &VoiceTake, t0: f64, dur: f64) -> Vec<Segment> {
+    take.timeline
+        .iter()
+        .map(|(phase, a, b, g)| Segment { phase: *phase, start_s: (a - t0).max(0.0), end_s: (b - t0).min(dur), gain_db: *g })
+        .filter(|s| s.end_s - s.start_s >= 0.5)
+        .collect()
 }

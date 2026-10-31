@@ -79,8 +79,8 @@ session : la fenêtre, l’icône d’état, la bulle à l’écran et les péri
       <br><b>Mixeur</b> · les quatre faders et toutes les voies, suivis pendant le mouvement des faders physiques.
     </td>
     <td width="50%" align="center">
-      <img src="docs/captures/mic.jpg" alt="Micro : entrée, type de micro, gain, traitements et préréglages">
-      <br><b>Micro</b> · ta voix naturelle par défaut ; « Régler ma voix » cale le gain en 20 secondes.
+      <img src="docs/captures/mic.jpg" alt="Micro : ton modèle de micro, ton empreinte vocale et des préréglages calculés sur ta voix">
+      <br><b>Micro</b> · ton modèle de micro, ton empreinte vocale en 30 s et des préréglages calculés sur ta voix.
     </td>
   </tr>
   <tr>
@@ -120,6 +120,12 @@ session : la fenêtre, l’icône d’état, la bulle à l’écran et les péri
 - **Voix naturelle par défaut** : égaliseur, noise gate, compresseur et de-esser ont chacun leur interrupteur. Aucun
   traitement ni retour micro ne s’allume sans ton choix. **« Régler ma voix »** trouve ton micro (48 V compris) et
   cale le gain ; **« M’écouter »** enregistre ta voix et te la fait réécouter.
+- **Ton micro, ta voix, tes réglages** : choisis ton micro (RØDE NT1-A, NT1, PodMic, AT2020, SM7B, SM58…) et crée
+  ton **empreinte vocale** en trente secondes. Rustudio mesure la hauteur et le timbre de ta voix, tes sifflantes, les
+  « p » qui soufflent, le bruit et l’écho de ta pièce, puis calcule chaque préréglage pour toi : les six bandes de
+  l’égaliseur (fréquences comprises, d’après le comportement réel de la Mini mesuré sur l’appareil), le de-esser, le
+  noise gate et le compresseur, chacun expliqué. Un graphique montre ta voix avant/après et « Écouter et comparer »
+  bascule en direct entre les deux. Comment ça marche : [docs/VOIX.md](docs/VOIX.md).
 - **Couper d’une seule sortie** : chaque bouton mute a son mode (partout, stream, Discord, casque, enceintes).
   Appui long : coupé partout, le bouton clignote.
 - **Faders physiques suivis** pendant leur mouvement, sans renvoyer d’anciennes valeurs au matériel. La Mini n’est
@@ -227,6 +233,8 @@ Une faille de sécurité ? Jamais dans un ticket public : voir [SECURITY.md](SEC
   cookie : la dernière release publiée, la liste des releases quand tu ouvres l’historique, le catalogue de modules,
   et le téléchargement d’une version que tu as acceptée.
 - 🧾 **Diagnostic anonyme, jamais envoyé** : tu le copies, tu le relis, tu le colles toi-même.
+- 🎙️ **Empreinte vocale sur ton PC** : l’enregistrement passe de l’appli au moteur local, il est analysé puis oublié,
+  jamais écrit sur le disque ni envoyé ; seule l’analyse (des niveaux par bande de fréquences) est gardée.
 - 💻 **Réglages sur ton PC**, dans `C:\ProgramData\Rustudio` ; ils restent après une désinstallation.
 - 🔒 **API locale fermée** : le moteur n’écoute que sur `127.0.0.1:14565` et refuse les actions venues d’une page web.
 
@@ -251,8 +259,9 @@ ne reprend pas l’appareil.
 
 ### Une voix propre, sans écho
 
-1. **Mes appareils › GoXLR Mini › Micro › Régler ma voix** : parle une dizaine de secondes, puis tais-toi. Le gain se
-   cale sur ta voix ; aucun traitement ne s’allume. Allume ensuite ceux qui t’aident et vérifie avec **M’écouter**.
+1. **Mes appareils › GoXLR Mini › Micro** : choisis ton micro, puis **Créer mon empreinte** (30 s : silence, un texte à
+   lire, une phrase plus forte). Le gain se cale sur ta voix ; aucun traitement ne s’allume. Choisis ensuite un
+   préréglage sur mesure et compare avec **Écouter et comparer**.
 2. **Anti-écho** (menu ⋯ ou page Micro) : Rustudio vérifie le routage et le micro que Windows donne à Discord et aux
    jeux (« Chat Mic », jamais « Broadcast Stream Mix »), puis mesure l’écho pour de vrai.
 3. **Discord** : micro « Chat Mic », sortie « Chat ». Avec un casque, coupe l’annulation d’écho et le réglage

@@ -1,5 +1,13 @@
 # Nouveautés
 
+## 5.6.14
+
+- **Empreinte vocale.** Page Micro › « Créer mon empreinte » : en trente secondes, un court silence, un texte à lire puis une phrase plus forte. Rustudio mesure ta voix : sa hauteur, son timbre, tes sifflantes, les « p » et « b » qui soufflent dans le micro, le bruit et l’écho de ta pièce, ta marge avant saturation. Il cale ton gain, puis calcule chaque préréglage sur mesure. L’enregistrement est analysé sur ton PC puis oublié : seule l’analyse est gardée.
+- **Préréglages sur mesure.** Léger, Studio, Broadcast, Stream, Podcast et Anti-clavier se recalculent sur ta voix et ton micro : les six bandes de l’égaliseur, fréquences comprises, le de-esser, le noise gate et le compresseur. Un graphique montre ta voix avant et après, chaque réglage est expliqué, et « Écouter et comparer » bascule en direct entre ta voix traitée et ta voix brute.
+- **Ton micro.** Choisis ton modèle : RØDE NT1-A, NT1 (5ᵉ génération) ou PodMic, Audio-Technica AT2020, Shure SM7B ou SM58, ou un micro générique. Rustudio règle le type (48 V pour un micro statique), part du bon gain, donne les bons gestes de placement et tient compte des défauts connus du micro, comme les aigus brillants du NT1-A.
+- **Égaliseur du micro plus précis.** Chaque bande peut changer de fréquence dans sa plage. La courbe affichée suit le comportement réel de l’égaliseur de la GoXLR Mini, mesuré sur l’appareil.
+- « Radio » s’appelle maintenant « Broadcast », et « Anti-bruit » « Anti-clavier ». Ta voix reste naturelle par défaut : aucun traitement ne s’allume sans ton choix.
+
 ## 5.6.13
 
 - **Casque : deux nouveaux styles.** « Basses ++ » pousse les basses à fond, façon club (environ deux fois plus marqué que « Basses + ») ; « Rap / Hip-hop » donne des sub-basses rondes et garde les voix en avant.

@@ -501,7 +501,7 @@ fn gain_auto() {
     }
     {
         let mut g = b.ctl.lock();
-        g.state.mic = rustudio_core::state::Mic { kind: "dynamic".into(), gain_db: 40 };
+        g.state.mic = rustudio_core::state::Mic { kind: "dynamic".into(), gain_db: 40, model: None };
         g.mark(&[rustudio_engine::controller::Key::Mic], true);
     }
     b.settle();
@@ -547,7 +547,7 @@ fn regler_ma_voix_micro_statique() {
     b.sim.lock().dev.mic_input = Some("condenser".into());
     {
         let mut g = b.ctl.lock();
-        g.state.mic = rustudio_core::state::Mic { kind: "dynamic".into(), gain_db: 30 };
+        g.state.mic = rustudio_core::state::Mic { kind: "dynamic".into(), gain_db: 30, model: None };
         g.mark(&[rustudio_engine::controller::Key::Mic], true);
     }
     b.settle();
@@ -575,7 +575,7 @@ fn regler_ma_voix_n_active_rien() {
     b.sim.lock().dev.mic_input = Some("condenser".into());
     {
         let mut g = b.ctl.lock();
-        g.state.mic = rustudio_core::state::Mic { kind: "condenser".into(), gain_db: 30 };
+        g.state.mic = rustudio_core::state::Mic { kind: "condenser".into(), gain_db: 30, model: None };
         g.mark(&[rustudio_engine::controller::Key::Mic], true);
     }
     b.settle();
@@ -602,7 +602,7 @@ fn regler_ma_voix_qui_sature() {
     }
     {
         let mut g = b.ctl.lock();
-        g.state.mic = rustudio_core::state::Mic { kind: "dynamic".into(), gain_db: 45 };
+        g.state.mic = rustudio_core::state::Mic { kind: "dynamic".into(), gain_db: 45, model: None };
         g.mark(&[rustudio_engine::controller::Key::Mic], true);
     }
     b.settle();
@@ -829,4 +829,122 @@ fn coupures_usb_comptees_par_le_pilote() {
     b.settle();
     std::thread::sleep(Duration::from_millis(50));
     assert_eq!(b.ctl.drops.lock().unwrap().total, 1);
+}
+
+
+// ---------- empreinte vocale et profils sur mesure ----------
+fn eq_param(b: &Bench, key: u32) -> Option<f32> {
+    b.sim.lock().dev.mic_params.get(&key).map(|v| f32::from_le_bytes(*v))
+}
+
+#[test]
+fn empreinte_vocale_puis_profil_sur_mesure() {
+    use rustudio_core::consts::{eq_range, EQ_BANDS};
+    let b = Bench::new();
+    // le modèle du catalogue : statique, 48 V, gain de départ selon sa sensibilité
+    let r = b.act("mic-model", json!({"model": "rode-nt1a"}));
+    assert_eq!(r["mic"]["type"], "condenser", "{r}");
+    b.settle();
+    assert!(b.sim.lock().dev.phantom, "48 V allumé pour le NT1-A");
+    let nt1a = rustudio_core::mics::model("rode-nt1a").unwrap();
+    assert_eq!(b.ctl.lock().state.mic.gain_db, rustudio_core::mics::start_gain_db(nt1a));
+    b.act("route", json!({"input": "Music", "output": "ChatMic", "enabled": true}));
+    b.act("volume", json!({"channel": "Mic", "value": 180}));
+    b.act("mic-preset", json!({"name": "studio"}));
+    b.settle();
+    // pendant la lecture : traitements neutres, « Chat Mic » ne porte que ta voix, volume du micro au maximum
+    let (seen, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let (s2, d2, ctl, sim) = (seen.clone(), done.clone(), b.ctl.clone(), b.sim.clone());
+    let spy = std::thread::spawn(move || {
+        while !d2.load(Ordering::SeqCst) {
+            let reading = ctl.lock().job.as_ref().and_then(|j| j.get("phase").and_then(|p| p.as_str()).map(|p| p == "reading")).unwrap_or(false);
+            if reading {
+                let s = sim.lock();
+                if !s.dev.route_on("Music", "ChatMic") && s.dev.route_on("Microphone", "ChatMic") && s.dev.volume("Mic") == 255
+                    && s.dev.effects.get(&0x013C) == Some(&0) && s.dev.effects.get(&0x0011) == Some(&-59)
+                {
+                    s2.store(true, Ordering::SeqCst);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+    b.act("voice-print", json!({"silence_s": 1.5, "reading_s": 8, "loud_s": 1.5}));
+    let res = b.job_done(40.0);
+    done.store(true, Ordering::SeqCst);
+    spy.join().unwrap();
+    assert!(seen.load(Ordering::SeqCst), "enregistrement sans traitement, ta voix seule vers Chat Mic");
+    assert_eq!(res["audio"], "wanted", "{res}");
+    assert_eq!(res["timeline"].as_array().unwrap().len(), 3, "{res}");
+    b.settle();
+    {
+        let s = b.sim.lock();
+        assert!(s.dev.route_on("Music", "ChatMic"), "routage remis après l'enregistrement");
+        assert_eq!(s.dev.volume("Mic"), 180, "volume du micro remis");
+        assert_ne!(s.dev.effects.get(&0x013C), Some(&0), "compresseur du préréglage revenu");
+    }
+    assert_eq!(b.ctl.lock().state.mic.gain_db, res["gain_db"].as_i64().unwrap() as i32);
+    assert!(b.ctl.lock().state.mic_cal.as_ref().unwrap().loud_peak_db.is_some());
+    // l'audio (voix de synthèse du simulateur) : empreinte gardée, préréglage actif recalculé sur mesure
+    let v = rustudio_engine::jobs::voice_audio(&b.ctl, "synthetic=1", &[]).unwrap();
+    assert_eq!(v["valid"], json!(true), "{}", v["summary"]);
+    assert_eq!(v["profiles"]["stream"]["fitted"], json!(true));
+    assert!(v["profiles"]["stream"]["chart"]["after"].as_array().unwrap().len() > 40);
+    assert!(rustudio_engine::jobs::voice_audio(&b.ctl, "synthetic=1", &[]).is_err(), "un enregistrement ne sert qu'une fois");
+    b.settle();
+    let st = b.ctl.lock().state.clone();
+    assert_eq!(st.voice_print.as_ref().unwrap().model.as_deref(), Some("rode-nt1a"));
+    assert_eq!(st.mic_preset, "studio");
+    // les fréquences et gains calculés partent tels quels vers la Mini
+    for (band, kf, kg) in EQ_BANDS {
+        let f = st.dsp.eq_freq[band];
+        let (lo, hi) = eq_range(band).unwrap();
+        assert!((lo..=hi).contains(&f), "{band} : {f}");
+        assert_eq!(eq_param(&b, kf), Some(f as f32), "{band}");
+        assert_eq!(eq_param(&b, kg), Some(st.dsp.eq[band] as f32), "{band}");
+    }
+    // Avant/Après : tout contourné, puis tout revient ; rien n'est enregistré
+    b.act("mic-ab", json!({"bypass": true}));
+    b.settle();
+    assert!(b.ctl.live_snapshot(false)["ab"].as_f64().unwrap() > 0.0);
+    for (_, _, kg) in EQ_BANDS {
+        assert_eq!(eq_param(&b, kg), Some(0.0));
+    }
+    assert_eq!(b.sim.lock().dev.effects.get(&0x013C), Some(&0));
+    b.act("mic-ab", json!({"bypass": false}));
+    b.settle();
+    for (band, _, kg) in EQ_BANDS {
+        assert_eq!(eq_param(&b, kg), Some(st.dsp.eq[band] as f32));
+    }
+    assert_eq!(b.ctl.lock().state.dsp, st.dsp);
+    // un autre type de micro : le modèle ne correspond plus, l'empreinte non plus
+    b.act("mic", json!({"type": "dynamic"}));
+    assert!(b.ctl.lock().state.mic.model.is_none());
+    assert!(b.ctl.lock().state.voice_for_mic().is_none());
+    b.act("voice-forget", json!({}));
+    assert!(b.ctl.lock().state.voice_print.is_none());
+}
+
+#[test]
+fn empreinte_refusee_micro_coupe_ou_audio_invalide() {
+    let b = Bench::new();
+    assert!(rustudio_engine::jobs::voice_audio(&b.ctl, "synthetic=1", &[]).is_err(), "aucun enregistrement en attente");
+    b.act("mute", json!({"channel": "Mic", "muted": true}));
+    b.act("voice-print", json!({}));
+    assert!(wait_for(5.0, || b.job()["running"] == json!(false)));
+    assert!(b.job()["error"].as_str().unwrap_or("").contains("coupé"), "{}", b.job());
+    b.act("mute", json!({"channel": "Mic", "muted": false}));
+    b.act("voice-print", json!({"silence_s": 1.5, "reading_s": 4, "loud_s": 1.5}));
+    b.job_done(30.0);
+    let ok_body = vec![0u8; 48_000 * 2];
+    for q in ["rate=1000&t0=1&format=s16", "rate=48000&format=s16", "rate=48000&t0=1&format=f32"] {
+        assert!(rustudio_engine::jobs::voice_audio(&b.ctl, q, &ok_body).is_err(), "{q}");
+    }
+    assert!(rustudio_engine::jobs::voice_audio(&b.ctl, "rate=48000&t0=1&format=s16", &[0u8; 3]).is_err(), "octets impairs");
+    // un silence numérique ne fait pas une empreinte
+    let t0 = (b.ctl.lock().voice_take.as_ref().unwrap().timeline[0].1 * 1000.0) as u64;
+    let silence = vec![0u8; 48_000 * 2 * 12];
+    let e = rustudio_engine::jobs::voice_audio(&b.ctl, &format!("rate=48000&t0={t0}&format=s16"), &silence).unwrap_err();
+    assert!(e.msg.contains("entendu"), "{}", e.msg);
+    assert!(b.ctl.lock().state.voice_print.is_none());
 }

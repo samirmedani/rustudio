@@ -3,6 +3,7 @@ pub mod consts;
 pub mod dsp;
 pub mod hpeq;
 pub mod lighting;
+pub mod mics;
 pub mod modules;
 pub mod release;
 pub mod routing;
@@ -10,5 +11,7 @@ pub mod scenes;
 pub mod semver;
 pub mod state;
 pub mod value;
+pub mod voice;
+pub mod voicefit;
 
 pub use state::State;

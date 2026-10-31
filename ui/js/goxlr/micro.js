@@ -5,8 +5,10 @@
 var mic = {};
 function buildMic() {
   var root = $("p-mic"); root.innerHTML = "";
+  mic.model = null; mic.vp = null;
   var grid = h("div", {"class": "mic-grid"});
   var left = h("div", {style: "display:flex;flex-direction:column;gap:16px"});
+  if (micModelsReady()) left.appendChild(buildMicModelCard());
   var inCard = h("div", {"class": "card"});
   inCard.innerHTML = '<h3>' + svg("Mic", ' style="width:16px;height:16px;color:#FF453A"') + 'Entrée micro<small id="mic-state"></small></h3>';
   var meter = h("div", {"class": "meter"});
@@ -87,14 +89,20 @@ function buildMic() {
     sw.addEventListener("click", function () { fxSet(x[0], !S.state.fx[x[0]]); });
     row.appendChild(sw); fxc.appendChild(row); mic.fxSw[x[0]] = sw;
   });
-  right.appendChild(fxc);
+  // Les interrupteurs des traitements terminent la colonne de gauche, à côté de leurs réglages fins :
+  // les deux colonnes ont ainsi la même hauteur, et l'ordre reste le même sur une seule colonne.
+  left.appendChild(fxc);
+  if (micModelsReady()) right.appendChild(buildVoiceCard());
   var pc = h("div", {"class": "card"}, '<h3>Préréglages de voix<small id="preset-hint"></small></h3>');
   var pg = h("div", {"class": "presets"});
   mic.presetBtns = {};
   Object.keys(S.meta.mic_presets).forEach(function (k) {
     var p = S.meta.mic_presets[k];
     var b = h("button", {"class": "preset"}, chipIco(PRESET_ICONS[k], PRESET_COLOURS[k]) + "<b>" + frLabel(p.label) + "</b><p>" + frLabel(p.desc) + "</p>");
-    b.addEventListener("click", function () { withUndo("Préréglage " + frLabel(p.label) + " appliqué", function () { return postModule("goxlr-mini", "mic-preset", {name: k}).then(refresh); }); });
+    b.addEventListener("click", function () {
+      var fit = k !== "brut" && voiceValid();
+      withUndo("Préréglage " + frLabel(p.label) + (fit ? " sur mesure" : "") + " appliqué", function () { return postModule("goxlr-mini", "mic-preset", {name: k}).then(refresh); });
+    });
     pg.appendChild(b); mic.presetBtns[k] = b;
   });
   pc.appendChild(pg);
@@ -112,19 +120,30 @@ function buildMic() {
     tabs.appendChild(b); mic.tabs[t[0]] = {btn: b};
   });
   fine.appendChild(tabs); fine.appendChild(panes);
-  // egaliseur
-  var eq = h("div", {"class": "eq"});
-  var cv = h("canvas"); eq.appendChild(cv); mic.eqCanvas = cv;
+  // egaliseur : la courbe reelle (frequence et forme de chaque bande), puis un curseur de gain par bande
+  var eq = h("div", {"class": "mic-eq"});
+  var graph = h("div", {"class": "eq-graph"});
+  var cv = h("canvas", {role: "img", "aria-label": "Courbe de l\u2019égaliseur du micro"}); graph.appendChild(cv); mic.eqCanvas = cv;
+  eq.appendChild(graph);
   var bands = h("div", {"class": "eq-bands"});
   mic.eq = {};
   var dspSend = throttle(function (patch) { postModule("goxlr-mini", "dsp", patch); }, 80);
-  S.meta.eq_bands.forEach(function (b) {
+  S.meta.eq_bands.forEach(function (b, i) {
     var wrap = h("div", {"class": "eq-band"});
     var lab = h("b");
-    var sl = Slider({label: "Égaliseur micro " + b + " Hz", format: function (v) { return v + " dB"; }, vertical: true, min: -9, max: 9, step: 1, onInput: function (v) { S.state.dsp.eq[b] = v; lab.textContent = (v > 0 ? "+" : "") + v + " dB"; drawEq(); var p = {eq: {}}; p.eq[b] = v; dspSend(p); }});
+    var sl = Slider({label: "Égaliseur micro " + freqLabel(+b), format: function (v) { return v + " dB"; }, vertical: true, min: -9, max: 9, step: 1, onInput: function (v) { S.state.dsp.eq[b] = v; lab.textContent = (v > 0 ? "+" : "") + v + " dB"; drawEq(); var p = {eq: {}}; p.eq[b] = v; dspSend(p); }});
+    var freq = h("button", {"class": "eq-freq", type: "button", title: "Changer la fréquence de cette bande"}, freqLabel(+b));
+    freq.addEventListener("click", function () { openEqFreq(b, freq); });
+    var hot = function (on) { var was = mic.eqHot; mic.eqHot = on ? b : mic.eqHot === b ? null : mic.eqHot; if (was !== mic.eqHot) drawEq(); };
+    [sl.el, freq].forEach(function (e) {
+      e.addEventListener("pointerenter", function () { hot(true); });
+      e.addEventListener("pointerleave", function () { if (document.activeElement !== sl.el && document.activeElement !== freq) hot(false); });
+      e.addEventListener("focus", function () { hot(true); });
+      e.addEventListener("blur", function () { hot(false); });
+    });
     wrap.appendChild(lab); wrap.appendChild(sl.el);
-    wrap.appendChild(h("small", {}, (+b >= 1000 ? (+b / 1000) + " kHz" : b + " Hz")));
-    bands.appendChild(wrap); mic.eq[b] = {sl: sl, lab: lab};
+    wrap.appendChild(freq);
+    bands.appendChild(wrap); mic.eq[b] = {sl: sl, lab: lab, freq: freq};
   });
   eq.appendChild(bands);
   mic.tabs.eq.pane = eq;
@@ -176,33 +195,59 @@ function fxOffNote() {
   if (off) el.innerHTML = svg("info") + "<span>" + info[1] + " coupé : ces réglages ne s\u2019appliquent pas.</span>";
   if (off && !el.querySelector("button")) el.appendChild(h("button", {"class": "pill", onclick: function () { fxSet(key, true); }}, "Allumer"));
 }
+// Courbe réelle de l'égaliseur du micro : fréquences et formes des six bandes mesurées sur la Mini, de 30 Hz à 18 kHz.
+// Chaque point se pose là où sa bande agit (sommet de la cloche, coude du plateau), comme les libellés des bandes.
 function drawEq() {
-  var cv = mic.eqCanvas; if (!cv || !cv.offsetWidth) return;
+  var cv = mic.eqCanvas; if (!cv || !cv.offsetWidth || !S) return;
   var w = cv.offsetWidth, ht = cv.offsetHeight, dpr = devicePixelRatio || 1;
-  cv.width = w * dpr; cv.height = ht * dpr;
-  var c = cv.getContext("2d"); c.scale(dpr, dpr);
-  var bands = S.meta.eq_bands, top = 22, bot = ht - 30, mid = (top + bot) / 2;
-  var cr = cv.getBoundingClientRect(), tr = mic.eq[bands[0]].sl.track.getBoundingClientRect();
-  if (tr.height) { top = tr.top - cr.top; bot = tr.bottom - cr.top; mid = (top + bot) / 2; }
-  c.strokeStyle = "rgba(0,0,0,.07)"; c.lineWidth = 1;
-  [-9, 0, 9].forEach(function (g) { var y = mid - g / 9 * (bot - top) / 2; c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); });
-  var colW = w / bands.length;
-  function gainAt(x) {
-    var lf = Math.log(20) + (x / w) * (Math.log(16000) - Math.log(20)), sum = 0;
-    bands.forEach(function (b, i) {
-      var cx = (i + .5) * colW, lb = Math.log(20) + (cx / w) * (Math.log(16000) - Math.log(20));
-      var d = (lf - lb) / 0.55; sum += S.state.dsp.eq[b] * Math.exp(-d * d);
-    });
-    return clamp(sum, -12, 12);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(ht * dpr);
+  var c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var st = S.state, on = !!(st.fx && st.fx.eq), F0 = 30, F1 = 18000, L = 10, R = 10, top = 12, bot = ht - 20, span = 12;
+  function X(f) { return L + Math.log(f / F0) / Math.log(F1 / F0) * (w - L - R); }
+  function Y(db) { return top + (span - clamp(db, -span, span)) / (2 * span) * (bot - top); }
+  c.lineWidth = 1; c.font = "10.5px Inter Variable, Segoe UI, sans-serif"; c.textBaseline = "middle"; c.textAlign = "center";
+  [-9, 0, 9].forEach(function (g) { c.strokeStyle = g ? "rgba(0,0,0,.05)" : "rgba(0,0,0,.12)"; c.beginPath(); c.moveTo(L, Y(g)); c.lineTo(w - R, Y(g)); c.stroke(); });
+  [[100, "100 Hz"], [1000, "1 kHz"], [10000, "10 kHz"]].forEach(function (t) {
+    c.strokeStyle = "rgba(0,0,0,.05)"; c.beginPath(); c.moveTo(X(t[0]), top); c.lineTo(X(t[0]), bot); c.stroke();
+    c.fillStyle = "rgba(60,60,67,.5)"; c.fillText(t[1], X(t[0]), bot + 10);
+  });
+  // forme du spectre de ta voix (empreinte valide), en fond, sur sa propre échelle : son sommet touche le haut du graphique
+  var p = voiceValid() && st.voice_print;
+  if (p && p.bands && p.voice_db) {
+    var mid = vpMid(p.bands, p.voice_db), vs = [], vals = [];
+    p.bands.forEach(function (f, i) { var v = p.voice_db[i]; if (f >= F0 && f <= F1 && v != null && isFinite(v)) vals.push([f, v - mid]); });
+    var vtop = Math.max.apply(null, vals.map(function (x) { return x[1]; }).concat([0])), vbot = vtop - 42;
+    vals.forEach(function (x) { vs.push([X(x[0]), top + 4 + (vtop - clamp(x[1], vbot, vtop)) / (vtop - vbot) * (bot - top - 4)]); });
+    if (vs.length > 1) {
+      c.beginPath(); vpPath(c, vs); c.lineTo(vs[vs.length - 1][0], bot); c.lineTo(vs[0][0], bot); c.closePath();
+      var vg = c.createLinearGradient(0, top, 0, bot); vg.addColorStop(0, "rgba(118,118,128,.15)"); vg.addColorStop(1, "rgba(118,118,128,.02)");
+      c.fillStyle = vg; c.fill();
+      c.fillStyle = "rgba(60,60,67,.45)"; c.textAlign = "left"; c.fillText("Ta voix", L + 4, top + 6); c.textAlign = "center";
+    }
   }
-  var grad = c.createLinearGradient(0, 0, w, 0);
-  grad.addColorStop(0, "#5856D6"); grad.addColorStop(.5, "#0071E3"); grad.addColorStop(1, "#32ADE6");
-  c.beginPath();
-  for (var x = 0; x <= w; x += 3) { var y = mid - gainAt(x) / 9 * (bot - top) / 2; if (x === 0) c.moveTo(x, y); else c.lineTo(x, y); }
-  c.lineWidth = 2.5; c.strokeStyle = grad; c.shadowColor = "rgba(0,113,227,.3)"; c.shadowBlur = 8; c.stroke();
-  c.shadowBlur = 0; c.lineTo(w, mid); c.lineTo(0, mid); c.closePath();
-  var fg = c.createLinearGradient(0, top, 0, bot); fg.addColorStop(0, "rgba(0,113,227,.14)"); fg.addColorStop(.5, "rgba(0,113,227,.02)"); fg.addColorStop(1, "rgba(0,113,227,.14)");
-  c.fillStyle = fg; c.fill();
+  var resp = micEqResponse(st), pts = [];
+  for (var x = L; x <= w - R + 0.5; x += 2) pts.push([x, Y(resp(F0 * Math.pow(F1 / F0, (x - L) / (w - L - R))))]);
+  c.beginPath(); c.moveTo(pts[0][0], Y(0)); pts.forEach(function (q) { c.lineTo(q[0], q[1]); }); c.lineTo(pts[pts.length - 1][0], Y(0)); c.closePath();
+  c.fillStyle = on ? "rgba(0,113,227,.1)" : "rgba(118,118,128,.08)"; c.fill();
+  c.beginPath(); pts.forEach(function (q, i) { if (i) c.lineTo(q[0], q[1]); else c.moveTo(q[0], q[1]); });
+  if (on) {
+    var grad = c.createLinearGradient(L, 0, w - R, 0);
+    grad.addColorStop(0, "#5856D6"); grad.addColorStop(.5, "#0071E3"); grad.addColorStop(1, "#32ADE6");
+    c.lineWidth = 2.5; c.strokeStyle = grad; c.shadowColor = "rgba(0,113,227,.3)"; c.shadowBlur = 8; c.stroke(); c.shadowBlur = 0;
+  } else { c.setLineDash([5, 4]); c.lineWidth = 2; c.strokeStyle = "rgba(60,60,67,.38)"; c.stroke(); c.setLineDash([]); }
+  S.meta.eq_bands.forEach(function (b) {
+    var f = micEqFreq(b, st), x = X(f), y = Y(resp(f)), hot = mic.eqHot === b || (mic.freqBand === b && !!popEl);
+    if (hot) {
+      c.setLineDash([3, 3]); c.strokeStyle = "rgba(0,113,227,.45)"; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
+      var t = freqLabel(f) + " · " + sgnDb(+st.dsp.eq[b] || 0), tw = c.measureText(t).width + 14, tx = clamp(x - tw / 2, 2, w - tw - 2), ty = y < top + 26 ? y + 14 : y - 26;
+      c.fillStyle = "rgba(255,255,255,.95)"; c.strokeStyle = "rgba(0,113,227,.3)";
+      c.beginPath(); if (c.roundRect) c.roundRect(tx, ty, tw, 18, 9); else c.rect(tx, ty, tw, 18); c.fill(); c.stroke();
+      c.fillStyle = "#0058b0"; c.fillText(t, tx + tw / 2, ty + 9.5);
+    }
+    c.beginPath(); c.arc(x, y, hot ? 6 : 4.5, 0, Math.PI * 2);
+    c.fillStyle = "#fff"; c.fill(); c.lineWidth = 2; c.strokeStyle = on ? "#0071E3" : "rgba(60,60,67,.45)"; c.stroke();
+  });
 }
 function renderMic() {
   if (!built.mic) buildMic();
@@ -222,7 +267,10 @@ function renderMic() {
   mic.mon.set(st.volumes.MicMonitor); if (!mic.mon.busy()) $("mon-val").textContent = pct(st.volumes.MicMonitor) + " %";
   FX_INFO.forEach(function (x) { mic.fxSw[x[0]].classList.toggle("on", !!st.fx[x[0]]); });
   var on = FX_INFO.filter(function (x) { return st.fx[x[0]]; }).map(function (x) { return x[1].toLowerCase(); });
-  $("fx-hint").textContent = on.length ? "Actifs : " + on.join(", ") : "Aucun : ta voix naturelle";
+  // Les interrupteurs montrent déjà lesquels sont allumés : le titre donne le compte, sans pousser « Traitements de ta voix » à la ligne.
+  var fxHint = $("fx-hint");
+  fxHint.textContent = !on.length ? "Aucun : ta voix naturelle" : on.length === FX_INFO.length ? "Tous actifs" : on.length + (on.length > 1 ? " actifs" : " actif") + " sur " + FX_INFO.length;
+  fxHint.title = on.length ? "Actifs : " + on.join(", ") : "";
   fxOffNote();
   var rec = S.meta.mic_type_preset[st.mic.type];
   Object.keys(mic.presetBtns).forEach(function (k) {
@@ -247,6 +295,8 @@ function renderMic() {
   var calHtml = cal ? svg("ok") + "<span>Voix mesurée le " + frDate(cal.t * 1000) + " : bruit de la pièce " + dbTxt(cal.noise_peak_db + st.mic.gain_db - cal.gain_db) + ", ta voix " + Math.round(cal.voice_db - cal.noise_peak_db) + " dB au-dessus.</span>"
     : svg("info") + "<span>Pas encore mesurée : « Régler ma voix » cale le gain sur ta voix en 20 secondes et prépare des traitements doux, sans les allumer.</span>";
   if (cl && cl._h !== calHtml) { cl._h = calHtml; cl.innerHTML = calHtml; cl.classList.toggle("ok", !!cal); }
+  renderEqFreqs();
+  if (micModelsReady()) { renderMicVoice(); voiceInfoLoad(); }
   if (mic.tab === "eq") drawEq();
 }
 var meterShown = -72.2, meterPeak = -72.2, peakT = 0, clipT = -1e9;

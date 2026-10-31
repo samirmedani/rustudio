@@ -1,7 +1,7 @@
 //! Traitements du micro : preregles, calage sur la voix mesuree, interrupteurs, ce qui part vraiment.
-use crate::consts::{EQ_BANDS, GATE_ATTENUATION, RATIOS};
+use crate::consts::{eq_default_freq, eq_range, EQ_BANDS, GATE_ATTENUATION, RATIOS};
 use crate::state::MicCal;
-use crate::value::{clamp, clamp_f, get, has, truthy};
+use crate::value::{clamp, clamp_f, get, has, num, truthy};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,9 +27,26 @@ pub struct Comp {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Dsp {
     pub eq: IndexMap<String, i32>,
+    /// fréquence de chaque bande (Hz) ; les préréglages fixes gardent 90…8000, les profils sur mesure la déplacent
+    #[serde(default = "default_eq_freq")]
+    pub eq_freq: IndexMap<String, f64>,
     pub gate: Gate,
     pub comp: Comp,
     pub deesser: i32,
+}
+
+/// Fréquences d'origine des six bandes (90, 250, 500, 1000, 3000 et 8000 Hz).
+pub fn default_eq_freq() -> IndexMap<String, f64> {
+    EQ_BANDS.iter().map(|(b, _, _)| (b.to_string(), eq_default_freq(b))).collect()
+}
+
+/// Fréquence valide pour une bande : bornée à sa plage, arrondie au hertz.
+pub fn eq_freq_in_range(band: &str, hz: f64) -> f64 {
+    let (lo, hi) = eq_range(band).unwrap_or((20.0, 20000.0));
+    if !hz.is_finite() {
+        return eq_default_freq(band);
+    }
+    hz.clamp(lo, hi).round()
 }
 
 /// Interrupteurs des traitements. Tous coupes par defaut : voix naturelle.
@@ -78,6 +95,7 @@ pub fn make_dsp(eq: [i32; 6], gate: (bool, i32, i32, i32, i32), comp: [i32; 5], 
     }
     Dsp {
         eq: m,
+        eq_freq: default_eq_freq(),
         gate: Gate { enabled: gate.0, threshold: gate.1, attenuation: gate.2, attack: gate.3, release: gate.4 },
         comp: Comp { threshold: comp[0], ratio: comp[1], attack: comp[2], release: comp[3], makeup: comp[4] },
         deesser,
@@ -105,13 +123,13 @@ pub const MIC_PRESETS: [Preset; 7] = [
              dsp: || make_dsp([0; 6], default_gate(), default_comp(), 0) },
     Preset { key: "studio", label: "Studio", desc: "Voix de studio, nette et posée. Faite pour les micros statiques.",
              dsp: || make_dsp([-3, -2, -2, 0, 2, 1], (true, -45, 96, 0, 20), [-24, 8, 3, 11, 6], 35) },
-    Preset { key: "radio", label: "Radio", desc: "Voix pleine et présente, comme à l’antenne.",
+    Preset { key: "radio", label: "Broadcast", desc: "Voix pleine et présente, comme à l’antenne.",
              dsp: || make_dsp([3, -2, -2, 0, 3, 2], (true, -48, 70, 0, 19), [-22, 9, 1, 9, 6], 30) },
     Preset { key: "stream", label: "Stream", desc: "Claire et régulière, idéale en live.",
              dsp: || make_dsp([1, -1, -1, 1, 2, 2], (true, -45, 80, 0, 19), [-18, 8, 1, 9, 4], 20) },
     Preset { key: "podcast", label: "Podcast", desc: "Chaleureuse et posée pour les longues discussions.",
              dsp: || make_dsp([2, 0, -1, 0, 1, 1], (true, -50, 50, 0, 19), [-20, 7, 1, 9, 4], 15) },
-    Preset { key: "anti-bruit", label: "Anti-bruit", desc: "Coupe le clavier, le ventilo et le bruit de la pièce.",
+    Preset { key: "anti-bruit", label: "Anti-clavier", desc: "Coupe le clavier, le ventilo et le bruit de la pièce entre tes phrases.",
              dsp: || make_dsp([-3, -1, 0, 1, 2, 1], (true, -35, 100, 0, 15), [-18, 8, 1, 9, 4], 25) },
 ];
 
@@ -256,6 +274,20 @@ pub fn normalize_dsp(src: &Value, base: Option<&Dsp>) -> Dsp {
                     d.eq.insert(band.clone(), x);
                 }
             }
+        }
+    }
+    if let Some(fr) = get(src, "eq_freq").as_object() {
+        for (band, v) in fr {
+            if crate::consts::is_eq_band(band) {
+                if let Some(x) = num(v) {
+                    d.eq_freq.insert(band.clone(), eq_freq_in_range(band, x));
+                }
+            }
+        }
+    }
+    for (b, _, _) in EQ_BANDS {
+        if !d.eq_freq.contains_key(b) {
+            d.eq_freq.insert(b.to_string(), eq_default_freq(b));
         }
     }
     let g = get(src, "gate");

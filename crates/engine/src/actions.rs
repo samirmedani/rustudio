@@ -190,10 +190,46 @@ impl Inner {
                     gain = Some(recommended_gain(&mtype) as f64);
                 }
                 let before = self.state.mic.clone();
-                self.state.mic = state::Mic { kind: mtype, gain_db: clamp_f(gain.unwrap_or(self.state.mic.gain_db as f64), 0, 72) };
+                // un modèle de micro d'un autre type ne correspond plus au micro branché
+                let model = self.state.mic.model.clone().filter(|m| rustudio_core::mics::model(m).map(|x| x.kind == mtype).unwrap_or(false));
+                self.state.mic = state::Mic { kind: mtype, gain_db: clamp_f(gain.unwrap_or(self.state.mic.gain_db as f64), 0, 72), model };
                 self.mark(&[Key::Mic], true);
                 if self.state.mic != before && dsp::is_preset(&self.state.mic_preset) && self.cal_for().is_some() {
                     self.state.dsp = self.refit(); // seuils toujours places par rapport a ta voix
+                    self.mark(&[Key::Dsp], true);
+                }
+            }
+            "mic-model" => {
+                // modèle du catalogue : son type (48 V pour un statique) et, sans mesure pour ce type, son gain de départ
+                let key = p.get("model").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+                match key {
+                    None => self.state.mic.model = None,
+                    Some(k) => {
+                        let m = rustudio_core::mics::model(&k).ok_or_else(|| ApiError::bad(format!("micro inconnu : {k}")))?;
+                        let keep_gain = self.state.mic.kind == m.kind && self.state.cal_for(Some(m.kind)).is_some();
+                        let gain = if keep_gain { self.state.mic.gain_db } else { rustudio_core::mics::start_gain_db(m) };
+                        self.state.mic = state::Mic { kind: m.kind.into(), gain_db: gain, model: Some(k) };
+                    }
+                }
+                self.mark(&[Key::Mic], true);
+                if dsp::is_preset(&self.state.mic_preset) {
+                    self.state.dsp = self.refit(); // corrections propres au micro (ou à ton empreinte)
+                    self.mark(&[Key::Dsp], true);
+                }
+                return Ok(json!({ "ok": true, "mic": self.state.mic }));
+            }
+            "mic-ab" => {
+                // écoute Avant/Après : tous les traitements contournés, 60 s au plus, jamais enregistré
+                let on = parse_bool(get(p, "bypass"));
+                let secs = num(get(p, "seconds")).unwrap_or(60.0).clamp(1.0, 60.0);
+                self.ab_until = on.then(|| Instant::now() + Duration::from_secs_f64(secs));
+                self.mark(&[Key::Dsp], false);
+                return Ok(json!({ "ok": true, "bypass": on }));
+            }
+            "voice-forget" => {
+                self.state.voice_print = None;
+                if dsp::is_preset(&self.state.mic_preset) {
+                    self.state.dsp = self.refit();
                     self.mark(&[Key::Dsp], true);
                 }
             }
