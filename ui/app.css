@@ -385,6 +385,8 @@ select.inp option{background:#fff;color:var(--text)}
 .advice .chip-ico svg{width:17px;height:17px}
 .advice b{display:block;font-weight:600;font-size:13.5px}
 .advice p{color:var(--text2);font-size:12.5px;line-height:1.4;margin-top:2px}
+.advice p+p{margin-top:8px}
+.advice .drop-list{font-variant-numeric:tabular-nums;opacity:.85}
 .advice .pill{height:30px;margin-top:9px;padding:0 12px;font-size:12.5px}
 .auto-list{display:flex;flex-direction:column;gap:6px;margin:6px 0 10px;max-height:126px;overflow:auto}
 .auto-item{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:11px;background:rgba(118,118,128,.07);font-weight:560;font-size:13px}

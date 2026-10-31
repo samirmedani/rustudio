@@ -1,5 +1,9 @@
 # Nouveautés
 
+## 5.6.10
+
+- **Diagnostic du son plus lisible :** dans « Son qui crépite ? », le conseil et la liste des dernières coupures ont chacun leur paragraphe. Les coupures liées aux écrans (extinction et rallumage) sont regroupées, avec la piste à suivre.
+
 ## 5.6.9
 
 - **Souris en veille reconnue.** Quand la R5 Ultra s’endort, Rustudio affiche « En veille » au lieu de « Déconnecté », avec la marche à suivre pour la réveiller. Ses réglages reviennent tout seuls dès qu’elle bouge.

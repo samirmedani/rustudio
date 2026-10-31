@@ -97,17 +97,23 @@ function usbDropsItem(u, st) {
   if (!u.count && !u.streaming) return echoItem("info", "Aucun flux audio en cours", "Les compteurs USB avancent seulement pendant une lecture ou un enregistrement. Aucune coupure enregistrée" + since + ".");
   if (!u.count) return echoItem("ok", "Aucune coupure USB enregistrée", "Aucune perte relevée dans les compteurs du pilote" + since + ".");
   var last = u.events[0], hint = dropHint(last), mark = dropMark(last, true), burst = last && last.hint && last.hint.length && last.hint[0].n >= 5;
-  var top = u.top && u.top.length && u.top[0].count >= 2 ? u.top[0] : null;
+  var tops = u.top || [];
+  var screens = tops.reduce(function (n, x) { return n + (DROP_MARKS[x.name] ? x.count : 0); }, 0);
+  var top = tops.filter(function (x) { return !DROP_MARKS[x.name]; })[0];
+  if (top && top.count < 2) top = null;
+  var screenLead = screens >= 2 && (!top || screens >= top.count);
   var lines = u.events.slice(0, 6).map(function (e) { var hh = dropHint(e), mk = dropMark(e); return new Date(e.t * 1000).toLocaleTimeString("fr-FR") + " \u00b7 " + dropLoss(e) + (mk ? " \u00b7 " + mk : "") + (hh ? " \u00b7 " + hh : ""); }).join("<br>");
+  var advice = [screenLead ? "Ce moment dépend de Windows et du pilote graphique : mettre ce pilote à jour ou allonger le délai de mise en veille des écrans peut réduire ces coupures." : "", usbAdvice(st.usb)].filter(Boolean).join(" ");
   return echoItem("warn", u.count + " coupure" + (u.count > 1 ? "s" : "") + " entre le PC et la GoXLR",
     "Comptée" + (u.count > 1 ? "s" : "") + " par le pilote" + since + " : " + dropLoss(u) + "." +
     (mark ? " La dernière a eu lieu au moment de " + mark + "." : "") +
     (hint ? " Au moment de la dernière, Windows lançait : " + hint + "." : "") +
     (burst ? " Une rafale de programmes lancés d\u2019un coup (synchronisation, compilation, mise à jour) suffit à faire sauter le son USB : espace ou décale cette tâche." : "") +
-    (top && DROP_MARKS[top.name] ? " Souvent au moment de " + DROP_MARKS[top.name][1] + " : " + top.count + " coupure" + (top.count > 1 ? "s" : "") + " sur " + u.count + "." :
+    (screenLead ? " Souvent quand les écrans s\u2019éteignent ou se rallument : " + screens + " coupures sur " + u.count + "." :
       top ? " Le plus souvent lancé à ces moments-là : « " + esc(top.name) + " », " + top.count + " coupure" + (top.count > 1 ? "s" : "") + " sur " + u.count + "." : "") +
-    (hint || mark || top ? " Ces coïncidences sont des pistes à vérifier, pas une cause prouvée." : "") +
-    (u.count > 1 ? "<br><span class=\"muted-txt\">" + lines + "</span>" : "") + (usbAdvice(st.usb) ? " " + usbAdvice(st.usb) : ""));
+    (hint || mark || top || screenLead ? " Ces coïncidences sont des pistes à vérifier, pas une cause prouvée." : "") +
+    (advice ? "</p><p>" + advice : "") +
+    (u.count > 1 ? "</p><p class=\"drop-list\">" + lines : ""));
 }
 function windowsGlitchItem(w, during) {
   if (!w || w.unsupported) return null;

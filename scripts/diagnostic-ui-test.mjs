@@ -29,9 +29,14 @@ const screen = {t: 2000, out_ms: 3, in_ms: 3, hint: [{name: "@ecrans-eteints", n
 const asleep = render({count: 3, out_ms: 5, in_ms: 5, events: [screen, event, screen], top: [{name: "@ecrans-eteints", count: 2}]});
 assert.match(asleep.detail, /au moment de l’extinction des écrans/, "repère d'écran formulé en clair");
 assert.ok(!asleep.detail.includes("lançait : @"), "un repère d'écran n'est pas présenté comme un programme");
-assert.match(asleep.detail, /Souvent au moment de l’extinction des écrans : 2 coupures sur 3/);
+assert.match(asleep.detail, /Souvent quand les écrans s’éteignent ou se rallument : 2 coupures sur 3/);
 assert.match(asleep.detail, /écrans éteints/, "la liste détaillée nomme le repère");
 assert.ok(!asleep.detail.includes("@ecrans"), "aucun nom interne affiché");
+const mixed = render({count: 5, out_ms: 9, in_ms: 9, events: [screen, event], top: [{name: "svchost.exe", count: 3}, {name: "@ecrans-rallumes", count: 2}, {name: "@ecrans-eteints", count: 2}]});
+assert.match(mixed.detail, /écrans s’éteignent ou se rallument : 4 coupures sur 5/, "extinctions et rallumages comptés ensemble");
+assert.ok(!mixed.detail.includes("« svchost.exe »"), "le repère d'écran l'emporte sur un programme moins fréquent");
+assert.match(mixed.detail, /<\/p><p class="drop-list">/, "la liste détaillée garde son propre paragraphe");
+assert.ok(!/drop-list">[^]*pilote graphique/.test(mixed.detail), "le conseil reste au-dessus de la liste");
 
 const win = {enabled: true, readable: true, total: 0, was_enabled: true};
 assert.equal(context.windowsGlitchItem(win, false).status, "ok");
