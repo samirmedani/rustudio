@@ -44,6 +44,8 @@ fn make_zip(version: &str, files: Option<Vec<(&str, &str)>>, extra: Vec<(&str, &
 struct FakeGitHub {
     base: String,
     release: Arc<Mutex<Value>>,
+    /// toutes les releases publiees (liste et lecture par tag), la plus recente d'abord
+    list: Arc<Mutex<Vec<Value>>>,
     status: Arc<Mutex<(u16, Vec<(String, String)>)>>,
     blobs: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
@@ -52,8 +54,8 @@ impl FakeGitHub {
     fn new() -> FakeGitHub {
         let srv = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let base = format!("http://127.0.0.1:{}", srv.server_addr().to_ip().unwrap().port());
-        let gh = FakeGitHub { base, release: Arc::new(Mutex::new(Value::Null)), status: Arc::new(Mutex::new((200, vec![]))), blobs: Arc::new(Mutex::new(HashMap::new())) };
-        let (rel, st, blobs) = (gh.release.clone(), gh.status.clone(), gh.blobs.clone());
+        let gh = FakeGitHub { base, release: Arc::new(Mutex::new(Value::Null)), list: Arc::new(Mutex::new(vec![])), status: Arc::new(Mutex::new((200, vec![]))), blobs: Arc::new(Mutex::new(HashMap::new())) };
+        let (rel, list, st, blobs) = (gh.release.clone(), gh.list.clone(), gh.status.clone(), gh.blobs.clone());
         std::thread::spawn(move || {
             for req in srv.incoming_requests() {
                 let url = req.url().to_string();
@@ -64,6 +66,15 @@ impl FakeGitHub {
                         resp = resp.with_header(tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()).unwrap());
                     }
                     let _ = req.respond(resp);
+                } else if let Some(tag) = url.split("/releases/tags/").nth(1) {
+                    let found = list.lock().unwrap().iter().find(|r| r["tag_name"] == tag).cloned();
+                    let _ = req.respond(match found {
+                        Some(r) => tiny_http::Response::from_string(r.to_string()),
+                        None => tiny_http::Response::from_string("{}").with_status_code(404),
+                    });
+                } else if url.split('?').next().unwrap_or("").ends_with("/releases") {
+                    let all = Value::Array(list.lock().unwrap().clone());
+                    let _ = req.respond(tiny_http::Response::from_string(all.to_string()));
                 } else if let Some(b) = blobs.lock().unwrap().get(&url).cloned() {
                     let _ = req.respond(tiny_http::Response::from_data(b));
                 } else {
@@ -80,8 +91,21 @@ impl FakeGitHub {
             asset["digest"] = json!(format!("sha256:{}", sha256_hex(&blob)));
         }
         self.blobs.lock().unwrap().insert(path, blob);
-        *self.release.lock().unwrap() = json!({"tag_name": format!("v{version}"), "draft": false, "prerelease": false,
-            "body": "## Nouveau\n- truc", "html_url": format!("https://github.com/x/y/releases/tag/v{version}"), "assets": [asset]});
+        let rel = json!({"tag_name": format!("v{version}"), "draft": false, "prerelease": false, "published_at": "2026-10-31T10:00:00Z",
+            "body": format!("## Nouveau\n- dans la {version}"), "html_url": format!("https://github.com/x/y/releases/tag/v{version}"), "assets": [asset]});
+        self.add(rel.clone());
+        *self.release.lock().unwrap() = rel;
+    }
+    /// Release plus ancienne : listee et lisible par son tag, sans devenir la derniere.
+    fn publish_old(&self, version: &str, blob: Vec<u8>) {
+        let latest = self.release.lock().unwrap().clone();
+        self.publish(version, blob, true);
+        *self.release.lock().unwrap() = latest;
+    }
+    fn add(&self, rel: Value) {
+        let mut l = self.list.lock().unwrap();
+        l.retain(|r| r["tag_name"] != rel["tag_name"]);
+        l.push(rel);
     }
 }
 
@@ -127,7 +151,10 @@ impl U {
         panic!("phase {:?}, attendu {want:?} ; erreur {:?}", self.ctl.updater.peek().phase, self.ctl.updater.peek().error);
     }
     fn install(&self) -> Result<(), String> {
-        self.ctl.updater.start_install(self.ctl.clone())
+        self.ctl.updater.start_install(self.ctl.clone(), None)
+    }
+    fn revert(&self, version: &str) -> Result<Value, String> {
+        self.ctl.act("update-install", &json!({"version": version})).map_err(|e| e.msg)
     }
 }
 impl Drop for U {
@@ -275,6 +302,98 @@ fn nettoyage_apres_installation() {
 }
 
 // ---------- echange des fichiers ----------
+#[test]
+fn historique_des_versions_publiees() {
+    let u = U::new();
+    *u.ctl.updater.current.lock().unwrap() = "5.6.12".into();
+    u.gh.publish_old("5.6.11", make_zip("5.6.11", None, vec![]));
+    u.gh.publish_old("4.9.0", make_zip("4.9.0", None, vec![]));
+    u.gh.publish("5.6.12", make_zip("5.6.12", None, vec![]), true);
+    u.gh.add(json!({"tag_name": "v5.6.13-beta.1", "prerelease": true, "body": "essai", "assets": []}));
+    let h = u.ctl.updater.history(true);
+    assert_eq!(h["current"], "5.6.12");
+    assert!(h["error"].is_null());
+    let gh: Vec<&Value> = h["versions"].as_array().unwrap().iter().filter(|v| v["source"] == "github").collect();
+    let names: Vec<&str> = gh.iter().map(|v| v["version"].as_str().unwrap()).collect();
+    assert_eq!(names, ["5.6.12", "5.6.11", "4.9.0"], "pre-version ecartee, de la plus recente a la plus ancienne");
+    assert_eq!((gh[0]["installed"].as_bool(), gh[0]["revertible"].as_bool()), (Some(true), Some(false)));
+    assert_eq!(gh[1]["revertible"], true, "version precedente publiee avec son archive");
+    assert_eq!(gh[1]["notes"], "## Nouveau\n- dans la 5.6.11");
+    assert_eq!(gh[2]["revertible"], false, "avant la 5.0.0 : pas de retour");
+    let all: Vec<&str> = h["versions"].as_array().unwrap().iter().map(|v| v["version"].as_str().unwrap()).collect();
+    let mut sorted = all.clone();
+    sorted.sort_by(|a, b| if rustudio_core::semver::lt(a, b) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less });
+    assert_eq!(all, sorted, "notes embarquees fusionnees dans l'ordre");
+    assert!(u.applied.lock().unwrap().is_empty(), "lire l'historique n'installe rien");
+}
+
+#[test]
+fn historique_hors_ligne_avec_les_notes_embarquees() {
+    let u = U::new();
+    *u.ctl.updater.current.lock().unwrap() = "5.6.11".into();
+    u.ctl.updater.ucfg.lock().unwrap().api = "http://127.0.0.1:9".into();
+    let h = u.ctl.updater.history(true);
+    assert_eq!(h["error"], "offline");
+    let v = h["versions"].as_array().unwrap();
+    assert!(v.iter().any(|x| x["version"] == "5.6.11" && x["installed"] == true && x["source"] == "local"));
+    assert!(v.iter().all(|x| x["revertible"] == false), "hors ligne, aucun retour propose");
+    assert!(v.iter().all(|x| !rustudio_core::semver::lt(x["version"].as_str().unwrap(), "5.0.0")));
+    assert!(v.iter().all(|x| !rustudio_core::semver::lt("5.6.11", x["version"].as_str().unwrap())), "rien de plus recent invente");
+}
+
+#[test]
+fn retour_a_une_version_precedente() {
+    let u = U::new();
+    *u.ctl.updater.current.lock().unwrap() = "5.6.12".into();
+    u.gh.publish("5.6.12", make_zip("5.6.12", None, vec![]), true);
+    u.gh.publish_old("5.6.11", make_zip("5.6.11", None, vec![]));
+    let data = u.tmp.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("state.json"), "{\"prefs\": {}}").unwrap();
+    u.revert("5.6.11").unwrap();
+    u.phase(&["applying"], 8.0);
+    std::thread::sleep(Duration::from_millis(100));
+    let a = u.applied.lock().unwrap().clone();
+    assert_eq!(a.len(), 1);
+    let plan: Value = serde_json::from_str(&std::fs::read_to_string(a[0].1.join("plan.json")).unwrap()).unwrap();
+    assert_eq!((plan["version"].as_str(), plan["from_version"].as_str(), plan["downgrade"].as_bool()), (Some("5.6.11"), Some("5.6.12"), Some(true)));
+    assert!(data.join("backups").join("state-5.6.12-avant-retour-5.6.11.json").is_file(), "reglages copies avant le retour");
+    assert_eq!(u.ctl.lock().state.prefs.update_reminded, Some(json!("5.6.12")), "la version quittee n'est plus rappelee");
+    assert_eq!(u.ctl.update_snapshot()["target"], "5.6.11");
+}
+
+#[test]
+fn retours_refuses() {
+    let u = U::new();
+    *u.ctl.updater.current.lock().unwrap() = "5.6.12".into();
+    u.gh.publish("5.6.12", make_zip("5.6.12", None, vec![]), true);
+    u.gh.publish_old("4.9.0", make_zip("4.9.0", None, vec![]));
+    u.gh.publish_old("5.6.10", make_zip("5.6.9", None, vec![]));
+    assert!(u.revert("5.6.12").unwrap_err().contains("pas plus ancienne"));
+    assert!(u.revert("5.7.0").unwrap_err().contains("pas plus ancienne"));
+    assert!(u.revert("4.9.0").unwrap_err().contains("5.0.0"));
+    assert!(u.revert("5.6.5").unwrap_err().contains("introuvable"));
+    assert!(u.revert("abc").unwrap_err().contains("invalide"));
+    assert!(u.revert("5.6.11-beta.1").unwrap_err().contains("invalide"));
+    assert_eq!(u.ctl.lock().state.prefs.update_reminded, None, "un retour refuse ne change rien");
+    u.revert("5.6.10").unwrap();
+    u.phase(&["failed"], 8.0);
+    assert_eq!(u.ctl.updater.peek().error.unwrap()["code"], "archive", "archive d'une autre version refusee");
+    assert!(u.applied.lock().unwrap().is_empty(), "rien d'installe");
+}
+
+#[test]
+fn mise_a_jour_sans_version_refuse_toujours_une_archive_plus_ancienne() {
+    let u = U::new();
+    *u.ctl.updater.current.lock().unwrap() = "5.6.12".into();
+    u.gh.publish("5.6.13", make_zip("5.6.11", None, vec![]), true);
+    u.ctl.updater.check(false).unwrap();
+    u.install().unwrap();
+    u.phase(&["failed"], 8.0);
+    assert_eq!(u.ctl.updater.peek().error.unwrap()["code"], "archive");
+    assert!(u.applied.lock().unwrap().is_empty());
+}
+
 struct FakeHooks {
     ok: bool,
     log: Mutex<Vec<String>>,

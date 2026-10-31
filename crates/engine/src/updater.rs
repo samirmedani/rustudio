@@ -1,6 +1,8 @@
 //! Mises a jour depuis les releases GitHub du projet (comme Wispad) : rien ne s'installe sans ton clic.
 //! Taille et empreinte SHA-256 verifiees, chaque redirection controlee, retour arriere si la nouvelle version
 //! ne repond pas. L'echange des fichiers se fait dans une tache a part (apply-update).
+//! Retour a une version precedente : seulement a la demande, vers une release publiee de ce depot (5.0.0 ou plus
+//! recente), avec les memes verifications ; c'est le moteur de la version choisie qui fait l'echange.
 use crate::config::{now_epoch, Config, VERSION};
 use crate::controller::Ctl;
 use crate::log::log;
@@ -24,6 +26,45 @@ const FIRST_CHECK: f64 = 5.0;
 const MANUAL_CHECK_INTERVAL: f64 = 5.0;
 const EVERY: f64 = 6.0 * 3600.0;
 const OFFLINE_RETRY: f64 = 30.0 * 60.0;
+/// Plus ancienne version proposee au retour : l'echange des fichiers (plan.json) et l'etat des reglages n'ont pas
+/// change depuis, ses propres verifications reprennent la main sans perte.
+pub const DOWNGRADE_FLOOR: &str = "5.0.0";
+/// Notes de chaque version, embarquees : l'historique s'affiche aussi hors ligne.
+pub const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+/// Liste des releases relue au plus toutes les 10 minutes (sauf demande explicite).
+const HISTORY_TTL: f64 = 600.0;
+/// Copies de l'etat gardees avant un retour a une version precedente.
+const STATE_BACKUPS: usize = 5;
+
+/// Sections « ## x.y.z » du CHANGELOG, dans l'ordre du fichier : (version, notes). « ## À venir » est ignore.
+pub fn changelog_sections(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = vec![];
+    let mut cur: Option<(String, String)> = None;
+    for line in text.lines() {
+        if let Some(h) = line.strip_prefix("## ") {
+            out.extend(cur.take());
+            let v = h.trim().trim_start_matches('[').split([']', ' ']).next().unwrap_or("").to_string();
+            cur = semver::parse(&v).is_some().then(|| (v, String::new()));
+            continue;
+        }
+        if let Some((_, n)) = cur.as_mut() {
+            n.push_str(line);
+            n.push('\n');
+        }
+    }
+    out.extend(cur);
+    out.into_iter().map(|(v, n)| (v, n.trim().to_string())).collect()
+}
+
+fn newest_first(a: &str, b: &str) -> std::cmp::Ordering {
+    if semver::lt(a, b) {
+        std::cmp::Ordering::Greater
+    } else if semver::lt(b, a) {
+        std::cmp::Ordering::Less
+    } else {
+        std::cmp::Ordering::Equal
+    }
+}
 
 /// Notes de la derniere version, suivies de celles des versions sautees (de la plus recente a la plus ancienne) :
 /// qui passe de la 5.0 a la 5.2 lit aussi ce que la 5.1 apportait.
@@ -118,6 +159,10 @@ struct St {
     error: Option<Value>,
     cancel: bool,
     installed: Option<Value>,
+    /// retour demande vers cette version precedente (None : mise a jour vers la derniere)
+    target: Option<String>,
+    /// releases publiees (heure de lecture, de la plus recente a la plus ancienne)
+    history: Option<(f64, Vec<Release>)>,
 }
 
 type Launcher = Box<dyn Fn(&Path, &Path) -> Result<(), String> + Send + Sync>;
@@ -199,6 +244,10 @@ impl Updater {
     fn current(&self) -> String {
         self.current.lock().unwrap().clone()
     }
+    /// Version qui tourne (modifiable par les tests).
+    pub fn current_version(&self) -> String {
+        self.current()
+    }
     fn set(&self, f: impl FnOnce(&mut St)) {
         f(&mut self.st());
         self.bump();
@@ -229,7 +278,7 @@ impl Updater {
         json!({"current": self.current(), "release_build": self.release_build, "status": s.status, "result": s.result,
                "latest": s.latest, "checked_at": s.checked_at, "phase": s.phase, "progress": s.progress, "error": s.error,
                "installable": ok, "why_not": why, "repo": repo, "repo_url": format!("https://github.com/{repo}"),
-               "release_page": page, "installed": s.installed,
+               "release_page": page, "installed": s.installed, "target": s.target, "floor": DOWNGRADE_FLOOR,
                "check_wait": (s.manual_at + MANUAL_CHECK_INTERVAL - now_epoch()).max(0.0).ceil(), "reminded": reminded})
     }
 
@@ -334,27 +383,97 @@ impl Updater {
     /// une mise a jour est proposee) ; en cas d'echec, les notes de la derniere seule.
     fn notes_since(&self, latest: &Release) -> String {
         let cur = self.current();
-        let c = self.ucfg.lock().unwrap().clone();
-        let url = format!("{}/repos/{}/releases?per_page=30", c.api, c.repo);
-        let Ok(resp) = self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() else {
-            return latest.notes.clone();
-        };
-        let mut rd = resp.into_reader();
-        let Ok(body) = read_limited(&mut rd, 8_000_000) else { return latest.notes.clone() };
-        let Ok(Value::Array(list)) = serde_json::from_slice::<Value>(&body) else { return latest.notes.clone() };
-        let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
-        let mut older: Vec<Release> = list
-            .iter()
-            .filter_map(|d| parse_release(d, &names))
+        let Ok(list) = self.fetch_list() else { return latest.notes.clone() };
+        self.st().history = Some((now_epoch(), list.clone()));
+        let older: Vec<(String, String)> = list
+            .into_iter()
             .filter(|r| semver::lt(&cur, &r.version) && semver::lt(&r.version, &latest.version))
+            .map(|r| (r.version, r.notes))
             .collect();
-        older.sort_by(|a, b| if semver::lt(&a.version, &b.version) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less });
-        older.dedup_by(|a, b| a.version == b.version);
-        let older: Vec<(String, String)> = older.into_iter().map(|r| (r.version, r.notes)).collect();
         compose_notes(&latest.notes, &older)
     }
 
-    pub fn start_install(&self, ctl: Arc<Ctl>) -> Result<(), String> {
+    /// Releases publiees de ce depot (ni brouillon ni pre-version), de la plus recente a la plus ancienne.
+    fn fetch_list(&self) -> Result<Vec<Release>, &'static str> {
+        let c = self.ucfg.lock().unwrap().clone();
+        let url = format!("{}/repos/{}/releases?per_page=50", c.api, c.repo);
+        match self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() {
+            Ok(resp) => {
+                let mut rd = resp.into_reader();
+                let body = read_limited(&mut rd, 12_000_000).map_err(|_| "offline")?;
+                let Ok(Value::Array(list)) = serde_json::from_slice::<Value>(&body) else { return Err("offline") };
+                let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
+                let mut v: Vec<Release> = list.iter().filter_map(|d| parse_release(d, &names)).collect();
+                v.sort_by(|a, b| newest_first(&a.version, &b.version));
+                v.dedup_by(|a, b| a.version == b.version);
+                Ok(v)
+            }
+            Err(ureq::Error::Status(404, _)) => Ok(vec![]),
+            Err(ureq::Error::Status(code, _)) if code == 403 || code == 429 => Err("rate-limited"),
+            Err(_) => Err("offline"),
+        }
+    }
+
+    /// La release d'une version precise, relue sur GitHub au moment du clic (adresse et empreinte a jour).
+    fn fetch_tag(&self, version: &str) -> Result<Release, String> {
+        let c = self.ucfg.lock().unwrap().clone();
+        let url = format!("{}/repos/{}/releases/tags/v{version}", c.api, c.repo);
+        match self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() {
+            Ok(resp) => {
+                let mut rd = resp.into_reader();
+                let body = read_limited(&mut rd, 4_000_000).map_err(|_| "GitHub ne répond pas : vérifie ta connexion.".to_string())?;
+                let data = serde_json::from_slice::<Value>(&body).map_err(|_| "Réponse de GitHub illisible.".to_string())?;
+                let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
+                parse_release(&data, &names)
+                    .filter(|r| r.version == version)
+                    .ok_or_else(|| format!("La {version} n’est pas une version publiée de Rustudio."))
+            }
+            Err(ureq::Error::Status(404, _)) => Err(format!("La {version} est introuvable dans les releases de Rustudio.")),
+            Err(ureq::Error::Status(code, _)) if code == 403 || code == 429 => Err("GitHub limite les recherches : réessaie plus tard.".into()),
+            Err(_) => Err("GitHub ne répond pas : vérifie ta connexion.".into()),
+        }
+    }
+
+    /// Historique des versions : releases publiees (lues sur GitHub, au plus toutes les 10 minutes) et, hors ligne,
+    /// les notes embarquees des versions deja parues. Une version plus ancienne publiee avec son archive peut etre
+    /// reinstallee (« revertible »), jusqu'a DOWNGRADE_FLOOR.
+    pub fn history(&self, refresh: bool) -> Value {
+        let fresh = self.st().history.as_ref().map(|(t, _)| now_epoch() - t < HISTORY_TTL).unwrap_or(false);
+        let mut error: Option<&str> = None;
+        if refresh || !fresh {
+            match self.fetch_list() {
+                Ok(list) => self.st().history = Some((now_epoch(), list)),
+                Err(e) => error = Some(e),
+            }
+        }
+        let cur = self.current();
+        let (ok, why) = self.installable();
+        let (remote, fetched_at) = {
+            let s = self.st();
+            (s.history.as_ref().map(|(_, l)| l.clone()), s.history.as_ref().map(|(t, _)| *t))
+        };
+        let mut rows: Vec<(String, Value)> = vec![];
+        for r in remote.iter().flatten() {
+            let revertible = semver::lt(&r.version, &cur) && !semver::lt(&r.version, DOWNGRADE_FLOOR) && r.asset.is_some();
+            rows.push((r.version.clone(), json!({"version": r.version, "published": r.published, "url": r.url, "notes": r.notes,
+                "installed": r.version == cur, "newer": semver::lt(&cur, &r.version), "revertible": revertible, "source": "github"})));
+        }
+        for (v, notes) in changelog_sections(CHANGELOG) {
+            if rows.iter().any(|(x, _)| *x == v) || semver::lt(&v, DOWNGRADE_FLOOR) || semver::lt(&cur, &v) {
+                continue;
+            }
+            rows.push((v.clone(), json!({"version": v, "published": null, "url": null, "notes": notes,
+                "installed": v == cur, "newer": false, "revertible": false, "source": "local"})));
+        }
+        rows.sort_by(|a, b| newest_first(&a.0, &b.0));
+        let repo = self.ucfg.lock().unwrap().repo.clone();
+        json!({"current": cur, "floor": DOWNGRADE_FLOOR, "installable": ok, "why_not": why, "error": error,
+               "fetched_at": fetched_at, "releases_url": format!("https://github.com/{repo}/releases"),
+               "versions": rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>()})
+    }
+
+    /// Mise a jour vers la derniere version (target None) ou retour a une version precedente publiee (target).
+    pub fn start_install(&self, ctl: Arc<Ctl>, target: Option<&str>) -> Result<(), String> {
         let (ok, why) = self.installable();
         if !ok {
             return Err(match why {
@@ -364,12 +483,31 @@ impl Updater {
             }
             .into());
         }
+        let busy = |s: &St| matches!(s.phase.as_deref(), Some("downloading" | "verifying" | "extracting" | "applying"));
+        if busy(&self.st()) {
+            return Err("Une installation est déjà en cours.".into());
+        }
+        let cur = self.current();
+        let target = match target.map(|t| t.trim().trim_start_matches('v').to_string()) {
+            None => None,
+            Some(t) if semver::parse(&t).is_none() || t.contains(['-', '+']) => return Err("Version invalide.".into()),
+            Some(t) if !semver::lt(&t, &cur) => return Err(format!("La {t} n’est pas plus ancienne que la {cur} installée.")),
+            Some(t) if semver::lt(&t, DOWNGRADE_FLOOR) => return Err(format!("Retour possible jusqu’à la {DOWNGRADE_FLOOR} seulement.")),
+            Some(t) => Some(t),
+        };
+        let picked = match &target {
+            Some(t) => Some(self.fetch_tag(t)?),
+            None => None,
+        };
         let rel = {
             let mut s = self.st();
-            if matches!(s.phase.as_deref(), Some("downloading" | "verifying" | "extracting" | "applying")) {
+            if busy(&s) {
                 return Err("Une installation est déjà en cours.".into());
             }
-            let rel = s.latest.clone().filter(|r| semver::lt(&self.current(), &r.version)).ok_or("Aucune version plus récente à installer.")?;
+            let rel = match picked {
+                Some(r) => r,
+                None => s.latest.clone().filter(|r| semver::lt(&cur, &r.version)).ok_or("Aucune version plus récente à installer.")?,
+            };
             if rel.asset.is_none() {
                 return Err(format!("Cette release ne contient pas {UPDATE_ASSET} : installe depuis sa page."));
             }
@@ -377,6 +515,7 @@ impl Updater {
             s.progress = Some(0.0);
             s.error = None;
             s.cancel = false;
+            s.target = target;
             rel
         };
         self.bump();
@@ -402,6 +541,7 @@ impl Updater {
                     s.phase = None;
                     s.progress = None;
                     s.error = None;
+                    s.target = None;
                 });
                 log("Mise à jour annulée");
             }
@@ -452,8 +592,16 @@ impl Updater {
             return Err(uerr("archive", "L’archive ne correspond pas à la release annoncée."));
         }
         let mver = mver.unwrap();
-        if !semver::lt(&self.current(), &mver) {
-            return Err(uerr("not-newer", "Cette version n’est pas plus récente que celle installée."));
+        let target = self.st().target.clone();
+        match target.as_deref() {
+            Some(t) if mver != t || !semver::lt(&mver, &self.current()) || semver::lt(&mver, DOWNGRADE_FLOOR) => {
+                return Err(uerr("not-older", "L’archive ne correspond pas à la version précédente demandée."));
+            }
+            Some(_) => {}
+            None if !semver::lt(&self.current(), &mver) => {
+                return Err(uerr("not-newer", "Cette version n’est pas plus récente que celle installée."));
+            }
+            None => {}
         }
         let missing: Vec<&str> = REQUIRED_PAYLOAD.iter().copied().filter(|p| !new.join(p).exists()).collect();
         if !missing.is_empty() {
@@ -466,11 +614,20 @@ impl Updater {
             s.phase = Some("applying".into());
             s.progress = None;
         });
+        let downgrade = target.is_some();
+        if downgrade {
+            self.backup_state(&mver);
+        }
         let plan = json!({"from": new, "to": self.base_dir, "version": mver, "from_version": self.current(),
-                          "data_dir": self.data_dir, "port": self.port, "service": crate::config::SERVICE_NAME, "t": now_epoch()});
+                          "data_dir": self.data_dir, "port": self.port, "service": crate::config::SERVICE_NAME, "t": now_epoch(),
+                          "downgrade": downgrade});
         std::fs::write(work.join("plan.json"), serde_json::to_string_pretty(&plan).unwrap())
             .map_err(|e| uerr("internal", e.to_string()))?;
-        logf!("Mise à jour {} → {mver} prête : remplacement des fichiers", self.current());
+        if downgrade {
+            logf!("Retour {} → {mver} prêt : remplacement des fichiers", self.current());
+        } else {
+            logf!("Mise à jour {} → {mver} prête : remplacement des fichiers", self.current());
+        }
         let launch = self.launcher.lock().unwrap();
         match launch.as_ref() {
             Some(f) => f(&new, &work).map_err(|e| uerr("launch", e))?,
@@ -479,6 +636,32 @@ impl Updater {
         }
         drop(launch);
         self.watch_apply()
+    }
+
+    /// Avant un retour a une version precedente : copie de l'etat des reglages (les 5 dernieres sont gardees).
+    fn backup_state(&self, to: &str) {
+        let src = self.data_dir.join("state.json");
+        if !src.is_file() {
+            return;
+        }
+        let dir = self.data_dir.join("backups");
+        let name = format!("state-{}-avant-retour-{to}.json", self.current());
+        match std::fs::create_dir_all(&dir).and_then(|_| std::fs::copy(&src, dir.join(&name))) {
+            Ok(_) => logf!("Réglages copiés dans backups\\{name}"),
+            Err(e) => logf!("Copie des réglages impossible avant le retour : {e}"),
+        }
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            let mut copies: Vec<(std::time::SystemTime, PathBuf)> = rd
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("state-"))
+                .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+                .collect();
+            copies.sort();
+            let n = copies.len();
+            for (_, p) in copies.into_iter().take(n.saturating_sub(STATE_BACKUPS)) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
     }
 
     /// L'installation arrete ce moteur des son debut : s'il tourne encore apres le delai, rien n'a ete touche.

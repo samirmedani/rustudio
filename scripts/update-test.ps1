@@ -2,7 +2,9 @@
 Mise a jour integree de Rustudio sur une machine Windows de test (GitHub Actions), comme chez un utilisateur : une
 version suivante est fabriquee (meme code, numero + 1) et servie par un faux GitHub local (scripts/fake_github.py).
 Le moteur installe doit la proposer, l'installer au clic (tache « Rustudio Update »), redemarrer dessus, garder les
-reglages et faire le menage. A lancer apres migration-test.ps1 (Rustudio installe), avant smoke-test.ps1.
+reglages et faire le menage. Puis, depuis la version suivante, le retour a la version d'origine (« Revenir a cette
+version ») : meme verification, meme echange de fichiers, reglages gardes et copies avant.
+A lancer apres migration-test.ps1 (Rustudio installe), avant smoke-test.ps1.
 #>
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -27,8 +29,8 @@ function Wait-Until([scriptblock]$cond, [int]$seconds, [string]$what) {
   }
   Fail "Delai depasse : $what"
 }
-function Post([string]$action) {
-  Invoke-RestMethod -Method Post "$api/api/$action" -Headers @{ 'X-Rustudio' = '1' } -Body '{}' -ContentType 'application/json'
+function Post([string]$action, [string]$body = '{}') {
+  Invoke-RestMethod -Method Post "$api/api/$action" -Headers @{ 'X-Rustudio' = '1' } -Body $body -ContentType 'application/json'
 }
 
 $cur = (Health).version
@@ -53,7 +55,8 @@ try {
   Pop-Location
 }
 
-# 2. le service lit les releases sur le faux GitHub
+# 2. le service lit les releases sur le faux GitHub (la version d'origine y reste publiee, pour le retour)
+$env:RUSTUDIO_FAKE_OLD = (Join-Path $root 'dist') + '|' + $cur
 $fake = Start-Process python -ArgumentList ('"' + (Join-Path $root 'scripts\fake_github.py') + '"'), ('"' + $next_dist + '"'), $next, '8766', 'Rustudio.zip', 'Rustudio.sha256' -PassThru -WindowStyle Hidden
 New-ItemProperty $svcKey -Name Environment -PropertyType MultiString -Force -Value @(
   'RUSTUDIO_UPDATE_API=http://127.0.0.1:8766', 'RUSTUDIO_UPDATE_PREFIX=http://127.0.0.1:8766/dl/', 'RUSTUDIO_UPDATE_HOSTS=127.0.0.1') | Out-Null
@@ -81,6 +84,23 @@ Write-Host "Rustudio $cur -> $next : fichiers, version, sauvegarde et reglages O
 # 5. menage : tache d'installation et copie preparee retirees
 Wait-Until { -not (Get-ScheduledTask -TaskName 'Rustudio Update' -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $data 'update\new')) } 120 'Tache Rustudio Update et copie preparee retirees'
 
+# 6. retour a la version d'origine, comme « Revenir a cette version » dans l'historique
+$history = Invoke-RestMethod "$api/api/update/history?refresh=1" -TimeoutSec 15
+$row = $history.versions | Where-Object { $_.version -eq $cur }
+if (-not $row -or -not $row.revertible) { Fail "La $cur n'est pas proposee au retour dans l'historique" }
+$micNow = (Invoke-RestMethod "$api/api/state").state.volumes.Mic
+Post 'update-install' ('{"version":"' + $cur + '"}') | Out-Null
+Wait-Until { (Health).version -eq $cur } 180 "Retour a la $cur en marche"
+Wait-Until { Select-String -Path $logf -SimpleMatch "Version $cur installée" -Quiet } 60 'Retour termine'
+if ((Get-Content (Join-Path $dir 'manifest.json') -Raw | ConvertFrom-Json).version -ne $cur) { Fail 'Manifeste pas revenu a la version d origine' }
+if ((Invoke-RestMethod "$api/api/state").state.volumes.Mic -ne $micNow) { Fail 'Reglages perdus pendant le retour' }
+if (-not (Get-ChildItem (Join-Path $data 'backups') -Filter "state-$next-avant-retour-$cur.json" -ErrorAction SilentlyContinue)) { Fail 'Pas de copie des reglages avant le retour' }
+if ((Update).reminded -ne $next) { Fail "La $next quittee serait rappelee a nouveau" }
+Wait-Until { $u = Update; $u.status -eq 'available' -and $u.latest.version -eq $next } 60 "La $next reste proposee apres le retour"
+Wait-Until { -not (Get-ScheduledTask -TaskName 'Rustudio Update' -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $data 'update\new')) } 120 'Menage apres le retour'
+Write-Host "Retour $next -> $cur : version, reglages, copie et proposition de la $next OK"
+
 Remove-ItemProperty $svcKey -Name Environment -ErrorAction SilentlyContinue
 Stop-Process -Id $fake.Id -Force -ErrorAction SilentlyContinue
-Write-Host "Mise a jour integree $cur -> $next : OK"
+Remove-Item Env:RUSTUDIO_FAKE_OLD -ErrorAction SilentlyContinue
+Write-Host "Mise a jour integree $cur -> $next et retour $next -> $cur : OK"

@@ -1,5 +1,13 @@
 # Nouveautés
 
+## 5.6.12
+
+- **Historique des versions.** Clique sur le numéro de version en bas à gauche, ou menu ⋯ › Historique des versions : les nouveautés de chaque version, les trois plus récentes dépliées. Hors ligne, les notes intégrées à ta version restent lisibles.
+- **Revenir à une version précédente.** Si une mise à jour te gêne, « Revenir à cette version » réinstalle une version publiée plus ancienne (5.0.0 ou plus récente), après confirmation. Mêmes vérifications qu’une mise à jour : source GitHub, taille et empreinte SHA-256, archive contrôlée, retour automatique si elle ne répond pas. Tes réglages restent et une copie est gardée ; la version quittée reste proposée en bas à gauche, sans rappel.
+- **Aide et retours** (menu ⋯) : signaler un problème avec un formulaire GitHub prérempli, copier un diagnostic anonyme (ni numéro de série, ni nom de PC, ni chemin personnel), enquêter avec ton agent IA, proposer une idée, poser une question ou demander un nouvel appareil.
+- Dans Diagnostic, « Copier le diagnostic » remplace « Copier le rapport » : le texte copié ne contient plus le numéro de série de la GoXLR.
+- Après une mise à jour comme après un retour, l’appli se relance d’elle-même sur la version installée.
+
 ## 5.6.11
 
 - **Plus aucun lien avec la veille des écrans.** Rustudio ne surveille plus l’extinction ni le rallumage des écrans : l’application et le moteur fonctionnent de la même façon, écrans allumés ou éteints, et le journal ne note plus ces moments.

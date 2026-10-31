@@ -2,6 +2,10 @@ name: Nouvel appareil
 description: Proposer (ou demander) le module d'un appareil
 labels: ["appareil"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Un module se code et se teste sans l'appareil, grâce à un simulateur : voir [docs/MODULES.md](https://github.com/samirmedani/rustudio/blob/main/docs/MODULES.md). Ne donne jamais le numéro de série de ton appareil.
   - type: input
     id: nom
     attributes:
@@ -23,6 +27,11 @@ body:
       placeholder: DPI, polling rate, boutons, éclairage…
     validations:
       required: true
+  - type: input
+    id: logiciel
+    attributes:
+      label: Logiciel officiel du fabricant
+      description: Son nom et sa version, s'il existe (utile pour comprendre le protocole).
   - type: dropdown
     id: role
     attributes:

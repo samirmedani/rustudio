@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Poser une question
+    url: https://github.com/samirmedani/rustudio/discussions/categories/q-a
+    about: "Installation, réglages, compatibilité : pose ta question dans les Discussions."
+  - name: Discuter d'une idée
+    url: https://github.com/samirmedani/rustudio/discussions/categories/ideas
+    about: "Une idée à affiner avant d'ouvrir un ticket : chacun peut voter."
+  - name: Signaler une faille de sécurité
+    url: https://github.com/samirmedani/rustudio/security/advisories/new
+    about: "En privé, jamais dans un ticket public (voir SECURITY.md)."

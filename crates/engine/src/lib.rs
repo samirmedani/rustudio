@@ -18,6 +18,7 @@ pub mod net;
 #[cfg(windows)]
 pub mod service;
 pub mod supervisor;
+pub mod support;
 #[cfg(windows)]
 pub mod uninstall;
 pub mod updater;

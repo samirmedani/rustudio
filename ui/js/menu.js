@@ -33,10 +33,12 @@ function openMenu() {
   }
   box.appendChild(h("div", {"class": "menu-sep"}));
   item("refresh", "Rechercher une mise à jour", checkUpdate);
+  item("history", "Historique des versions", openHistorySheet);
+  item("lifebuoy", "Aide et retours", openHelpSheet);
   item("info", "À propos", function () {
     var repo = (S && S.update && S.update.repo_url) || "https://github.com/samirmedani/rustudio";
     sheet({icon: "info", title: "Rustudio" + (S ? " " + esc(S.version) : ""), text: "Logiciel libre (licence MIT), écrit en Rust, qui réunit tes périphériques sous Windows. Chaque appareil dispose de son module et de son propre espace de réglages." + "<br><br><span class=\"muted-txt\">Projet indépendant, non affilié aux fabricants du matériel.</span>",
-      actions: [["Code source sur GitHub", function () { openUrl(repo); }], ["Fermer", null, "primary"]]});
+      actions: [["Code source sur GitHub", function () { openUrl(repo); }], ["Aide et retours", openHelpSheet], ["Fermer", null, "primary"]]});
   });
   openPop($("fab"), box, "down-right");
 }
@@ -47,7 +49,7 @@ function fmtDur(s) { if (s == null) return "—"; if (s < 60) return s + " s"; i
 var STATUS_FR = {ok: ["Tout va bien", "#30D158", "ok"], absent: ["GoXLR débranchée", "#FF9F0A", "warn"], error: ["Connexion impossible", "#FF9F0A", "warn"], blocked: ["Pilote USB bloqué", "#FF453A", "warn"], starting: ["Démarrage", "#64D2FF", "info"]};
 function openDiag() {
   var body = h("div");
-  sheet({wide: true, body: body, actions: [["Copier le rapport", function () { copyReport(); }, "", true], ["Son qui crépite ?", openSoundSheet, "", true], ["Reconnecter la GoXLR", function () { postModule("goxlr-mini", "reconnect").then(function (r) { if (r) toast("Reconnexion demandée"); }); }, "", true], ["Fermer", null, "primary"]]});
+  sheet({wide: true, body: body, actions: [["Copier le diagnostic", function () { copyReport(); }, "", true], ["Son qui crépite ?", openSoundSheet, "", true], ["Reconnecter la GoXLR", function () { postModule("goxlr-mini", "reconnect").then(function (r) { if (r) toast("Reconnexion demandée"); }); }, "", true], ["Fermer", null, "primary"]]});
   function paint() {
     api("/api/health").then(function (hl) {
       if (!sheetState || sheetState.body !== body) return;
@@ -68,10 +70,9 @@ function openDiag() {
   clearInterval(diagTimer);
   diagTimer = setInterval(function () { if (!sheetState || sheetState.body !== body) { clearInterval(diagTimer); return; } paint(); }, 1000);
 }
+// Le rapport copié est celui des tickets : anonyme (ni numéro de série, ni nom de PC, ni chemin personnel).
 function copyReport() {
-  var r = sheetState && sheetState.report; if (!r) return;
-  var txt = JSON.stringify(r, null, 2);
-  (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast("Rapport copié"); }, function () { toast("Copie impossible"); });
+  supportData().then(function (s) { return copyText(diagnosticText(s, WIN), "Diagnostic copié, sans donnée personnelle"); }, function () { toast("Le moteur ne répond pas"); });
 }
 function simTools() {
   var box = h("div", {"class": "diag-sim"});

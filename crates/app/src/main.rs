@@ -352,18 +352,16 @@ fn installed_version() -> Option<String> {
     m["version"].as_str().map(String::from)
 }
 
-fn newer(a: &str, b: &str) -> bool {
-    let p = |s: &str| -> Vec<u64> { s.split(['.', '-', '+']).take(3).map(|x| x.parse().unwrap_or(0)).collect() };
-    p(a) > p(b)
+/// Version installee changee, dans un sens ou dans l'autre (mise a jour ou retour a une version precedente) : le
+/// moteur annonce la version ecrite sur le disque, differente de celle qui tourne. Sans manifeste (developpement),
+/// jamais de relance.
+fn should_relaunch(engine: &str, running: &str, disk: Option<&str>) -> bool {
+    engine != running && disk == Some(engine)
 }
 
-/// Apres une mise a jour, le moteur annonce la nouvelle version et l'exe a deja ete remplace : on relance le nouveau.
+/// Apres une mise a jour ou un retour, l'exe a deja ete remplace : on relance celui du disque.
 fn relaunch_if_updated(app: &AppHandle, engine_version: &str) -> bool {
-    if !newer(engine_version, VERSION) {
-        return false;
-    }
-    let Some(disk) = installed_version() else { return false };
-    if !newer(&disk, VERSION) {
+    if engine_version == VERSION || !should_relaunch(engine_version, VERSION, installed_version().as_deref()) {
         return false;
     }
     let Ok(exe) = std::env::current_exe() else { return false };
@@ -599,5 +597,17 @@ fn pid_alive(pid: u32) -> bool {
     {
         let _ = pid;
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn relance_apres_mise_a_jour_ou_retour() {
+        assert!(super::should_relaunch("5.6.12", "5.6.11", Some("5.6.12")), "mise a jour");
+        assert!(super::should_relaunch("5.6.11", "5.6.12", Some("5.6.11")), "retour a une version precedente");
+        assert!(!super::should_relaunch("5.6.12", "5.6.12", Some("5.6.12")), "deja la bonne version");
+        assert!(!super::should_relaunch("5.6.11", "5.6.12", Some("5.6.12")), "le disque n'a pas encore change");
+        assert!(!super::should_relaunch("5.6.11", "5.6.12", None), "developpement, sans manifeste");
     }
 }

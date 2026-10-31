@@ -791,7 +791,21 @@ impl Ctl {
                 return Ok(json!({ "ok": true, "update": self.update_snapshot() }));
             }
             "update-install" => {
-                self.updater.start_install(self.clone()).map_err(ApiError::bad)?;
+                // « version » : retour a une version precedente publiee ; sinon la derniere version proposee.
+                let target = p.get("version").and_then(|v| v.as_str()).map(String::from);
+                let from = self.updater.current_version();
+                self.updater.start_install(self.clone(), target.as_deref()).map_err(ApiError::bad)?;
+                if target.is_some() {
+                    // La version quittee reste proposee en bas a gauche, sans avis repete par l'ancienne version.
+                    {
+                        let mut g = self.lock();
+                        g.state.prefs.update_reminded = Some(json!(from));
+                        g.version += 1;
+                        g.save_dirty = true;
+                    }
+                    self.save_if_dirty();
+                    logf!("Retour à la {} demandé depuis la {from}", target.as_deref().unwrap_or(""));
+                }
                 return Ok(json!({ "ok": true }));
             }
             "update-cancel" => {

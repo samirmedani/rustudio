@@ -608,3 +608,32 @@ select.inp option{background:#fff;color:var(--text)}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
 }
+
+/* historique des versions, retour a une version precedente, aide et retours */
+#ver-txt{cursor:pointer;border-radius:6px}
+#ver-txt:hover{color:var(--accent)}
+#ver-txt:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hist-note{margin:14px 0 0;padding:10px 12px;border-radius:12px;background:rgba(118,118,128,.08);color:var(--text2);font-size:12.5px;line-height:1.45}
+.hist-card{margin-top:14px;padding:14px 16px;border-radius:16px;background:rgba(118,118,128,.06);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.06)}
+.hist-card.cur{background:linear-gradient(135deg,rgba(48,209,88,.08),rgba(0,113,227,.05));box-shadow:inset 0 0 0 .5px rgba(48,209,88,.3)}
+.hist-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hist-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
+.hist-title b{font-size:15px;font-weight:680}
+.hist-title small{color:var(--text3);font-size:12px}
+.hist-chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.hist-chip.on{color:#1e7e34;background:rgba(48,209,88,.16)}
+.hist-chip.new{color:#0058b0;background:rgba(0,113,227,.12)}
+.hist-card .notes.rel{margin-top:10px;max-height:220px;font-size:13px}
+.hist-back{height:32px;padding:0 12px;font-size:12.5px;flex:none}
+.hist-fold{width:100%;height:38px;margin-top:14px;justify-content:center}
+.hist-fold svg{transition:transform .25s var(--ease)}
+.hist-fold.open svg{transform:rotate(180deg)}
+.help-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
+.help-item{display:flex;gap:12px;padding:14px;border-radius:16px;background:rgba(118,118,128,.06);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.06)}
+.help-item .chip-ico{width:34px;height:34px;border-radius:10px;flex:none}
+.help-item .chip-ico svg{width:18px;height:18px}
+.help-item b{display:block;font-size:14px;font-weight:650}
+.help-item p{margin:4px 0 0;color:var(--text2);font-size:12.5px;line-height:1.45}
+.help-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.help-acts .pill{height:30px;padding:0 12px;font-size:12.5px}
+@media (max-width:760px){.help-list{grid-template-columns:1fr}}

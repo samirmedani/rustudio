@@ -15,7 +15,8 @@ pour ajouter un appareil.
   réapplique l'état. Le superviseur du service relance le moteur s'il meurt ou se fige.
 - Mises à jour : uniquement depuis les releases GitHub du dépôt, chaque redirection chez GitHub, taille et SHA-256
   vérifiées, archive contrôlée, retour arrière si la nouvelle version ne répond pas, et jamais sans le clic de
-  l'utilisateur. Ne jamais affaiblir ces contrôles.
+  l'utilisateur. Ne jamais affaiblir ces contrôles. Retour à une version précédente : seulement sur demande confirmée,
+  vers une release publiée (5.0.0 ou plus récente), mêmes contrôles et manifeste égal à la version demandée.
 - La voix reste naturelle par défaut : aucun traitement, aucun retour micro ne s'active sans un choix explicite.
 
 ## Développement

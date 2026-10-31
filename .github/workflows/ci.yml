@@ -44,6 +44,7 @@ jobs:
       - run: node scripts/ui-interactions-test.mjs
       - run: node scripts/modules-ui-test.mjs
       - run: node scripts/mouse-ui-test.mjs
+      - run: node scripts/support-ui-test.mjs
 
   windows:
     name: Windows (tests, paquet, installation complète)
@@ -63,13 +64,14 @@ jobs:
       - run: node scripts/ui-interactions-test.mjs
       - run: node scripts/modules-ui-test.mjs
       - run: node scripts/mouse-ui-test.mjs
+      - run: node scripts/support-ui-test.mjs
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1
       - name: Passage depuis GoXLR Mini 4.8.0 (vraie version, faux GitHub)
         shell: pwsh
         run: ./scripts/migration-test.ps1
-      - name: Mise à jour intégrée vers la version suivante (faux GitHub)
+      - name: Mise à jour intégrée vers la version suivante, puis retour à la version d’origine (faux GitHub)
         shell: pwsh
         run: ./scripts/update-test.ps1
       - name: Installation, service, appli et désinstallation

@@ -2,6 +2,17 @@
 
 Merci ! Quelques règles pour que le projet reste fiable et sans données personnelles.
 
+Avant de coder, choisis la bonne porte :
+
+- **Un bug** : le [formulaire de bug](https://github.com/samirmedani/rustudio/issues/new?template=bug.yml). Dans
+  Rustudio, menu ⋯ › Aide et retours › Copier le diagnostic donne un rapport anonyme à coller dedans.
+- **Une idée, un changement de comportement ou une question** : les
+  [Discussions](https://github.com/samirmedani/rustudio/discussions), où chacun peut voter et répondre.
+- **Un nouvel appareil** : le formulaire [Nouvel appareil](https://github.com/samirmedani/rustudio/issues/new?template=appareil.yml).
+- **Une faille de sécurité** : en privé, voir [SECURITY.md](SECURITY.md).
+
+Ensuite :
+
 1. Lis [README.md](README.md) et [AGENTS.md](AGENTS.md) (règles du moteur). Pour un nouvel appareil :
    [docs/MODULES.md](docs/MODULES.md).
 2. Active les garde-fous Git une fois : `scripts/install-hooks.sh`.

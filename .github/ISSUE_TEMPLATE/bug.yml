@@ -1,0 +1,77 @@
+name: Signaler un bug
+description: Quelque chose ne marche pas comme prévu dans Rustudio.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de signaler ce problème. **Ce ticket est public** : n'y écris ni numéro de série, ni nom de PC, ni chemin personnel (`C:\Users\…`), ni adresse IP.
+
+        Le plus simple : dans Rustudio, menu **⋯ › Aide et retours › Signaler un problème**. Ce formulaire s'ouvre avec ta version de Rustudio et de Windows déjà remplies, et **Copier le diagnostic** te donne un rapport anonyme à coller plus bas.
+        *English is welcome too.*
+  - type: textarea
+    id: description
+    attributes:
+      label: Ce qui se passe
+      description: Décris le problème. Une capture d'écran aide beaucoup (sans rien de personnel à l'écran).
+      placeholder: "Ex. : après la mise en veille du PC, la GoXLR reste « Hors ligne » dans Mes appareils."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Pour le reproduire
+      placeholder: |
+        1. Ouvrir Rustudio › Mes appareils › GoXLR Mini
+        2. Mettre le PC en veille, puis le réveiller
+        3. Regarder l'état de la carte
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ce que tu attendais
+    validations:
+      required: false
+  - type: dropdown
+    id: appareil
+    attributes:
+      label: Appareil concerné
+      options:
+        - GoXLR Mini
+        - Attack Shark R5 Ultra
+        - L'appli, l'installation ou les mises à jour
+        - Autre ou je ne sais pas
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version de Rustudio
+      description: Visible en bas à gauche de Rustudio.
+      placeholder: "5.6.12"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Version de Windows
+      description: Paramètres › Système › Informations système.
+      placeholder: "Windows 11 25H2 (build 26200.7019)"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: Diagnostic (facultatif)
+      description: Rustudio › menu ⋯ › Aide et retours › Copier le diagnostic. Il ne contient ni numéro de série, ni nom de PC, ni chemin personnel ; relis-le avant d'envoyer.
+      render: json
+    validations:
+      required: false
+  - type: checkboxes
+    id: prive
+    attributes:
+      label: Avant d'envoyer
+      options:
+        - label: J'ai relu ce ticket, il ne contient rien de personnel.
+          required: true

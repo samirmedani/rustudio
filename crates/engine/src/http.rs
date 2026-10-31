@@ -43,6 +43,7 @@ ui_assets!(
     "js/menu.js",
     "js/goxlr/voix.js",
     "js/mises-a-jour.js",
+    "js/aide.js",
     "js/demarrage.js",
 );
 
@@ -136,6 +137,8 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                 "/api/modules" => ctl.modules_snapshot(),
                 "/api/health" => ctl.health(),
                 "/api/update" => ctl.update_snapshot(),
+                "/api/update/history" => ctl.updater.history(query.split('&').any(|q| q == "refresh=1")),
+                "/api/support" => crate::support::support(ctl),
                 "/api/usb" => crate::usbmap::query(),
                 "/api/glitches" => {
                     let since = query

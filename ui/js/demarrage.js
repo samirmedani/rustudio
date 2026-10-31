@@ -72,6 +72,10 @@ function init() {
   $("ver-check").innerHTML = svg("refresh");
   $("ver-check").addEventListener("click", checkUpdate);
   $("upd-btn").addEventListener("click", openUpdateSheet);
+  $("ver-txt").addEventListener("click", openHistorySheet);
+  $("ver-txt").setAttribute("role", "button");
+  $("ver-txt").setAttribute("tabindex", "0");
+  $("ver-txt").addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openHistorySheet(); } });
   $("ver-state").addEventListener("click", function () { if (S && S.update && S.update.status === "available") openUpdateSheet(); });
   $("import-file").addEventListener("change", function (e) {
     var f = e.target.files[0]; if (!f) return;

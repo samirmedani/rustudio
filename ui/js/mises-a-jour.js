@@ -47,11 +47,11 @@ document.addEventListener("click", function (e) {
 function renderUpdate() {
   var u = S.update; if (!u) return;
   $("ver-txt").textContent = "v" + u.current;
-  $("ver-txt").title = "Rustudio " + u.current;
+  $("ver-txt").title = "Rustudio " + u.current + " : historique des versions";
   var st = $("ver-state"), busy = u.phase && u.phase !== "failed", avail = u.status === "available" && u.latest;
   st.className = "ver-state" + (avail ? " avail" : "") + (busy ? " busy" : "");
-  if (busy) st.innerHTML = "<i></i>" + (u.phase === "downloading" && u.progress != null ? "Téléchargement " + Math.round(u.progress * 100) + " %" : "Installation…");
-  else if (u.phase === "failed") st.innerHTML = "<i style=\"background:var(--red)\"></i>Échec de la mise à jour";
+  if (busy) st.innerHTML = "<i></i>" + (u.phase === "downloading" && u.progress != null ? "Téléchargement " + Math.round(u.progress * 100) + " %" : u.target ? "Retour à la " + esc(u.target) + "…" : "Installation…");
+  else if (u.phase === "failed") st.innerHTML = "<i style=\"background:var(--red)\"></i>" + (u.target ? "Échec du retour" : "Échec de la mise à jour");
   else if (avail) st.innerHTML = "<i></i>" + esc(u.latest.version) + " proposée";
   else if (!u.release_build) st.innerHTML = "<i style=\"background:var(--text3)\"></i>développement";
   else if (u.status === "up-to-date") st.innerHTML = "<i></i>À jour";
@@ -97,24 +97,32 @@ function notesRender(md) {
   });
 }
 function openUpdateSheet() {
-  var u = S.update; if (!u || !u.latest) return;
+  var u = S && S.update; if (!u || (!u.latest && !u.target)) return;
   var body = h("div");
   sheet({wide: true, update: true, body: body, actions: []});
   paintUpdateSheet();
 }
 function paintUpdateSheet() {
   var u = S.update, b = sheetState.body, rel = u.latest || {};
-  var key = JSON.stringify([u.phase, Math.round((u.progress || 0) * 50), u.error, rel.version, u.installable, u.status]);
+  var key = JSON.stringify([u.phase, Math.round((u.progress || 0) * 50), u.error, rel.version, u.installable, u.status, u.target]);
   if (sheetState.key === key) return;
   sheetState.key = key;
-  var newer = u.status === "available", busy = u.phase && u.phase !== "failed";
-  var html = '<div class="upd-hero">' + chipIco(newer ? "sparkles" : "ok", newer ? "#0A84FF" : "#30D158") + '<div><div class="eyebrow">' + (newer ? "Mise à jour proposée" : "À jour") + "</div><h2>Rustudio " + esc(newer ? rel.version : u.current) + "</h2><p class=\"muted-txt\">" + (newer ? "Tu as la " + esc(u.current) + (rel.published ? " · publiée le " + frDate(rel.published) : "") : "Tu as la dernière version.") + "</p></div></div>";
-  html += '<div class="notes rel">' + notesRender(rel.notes) + "</div>";
+  var busy = u.phase && u.phase !== "failed", back = !!u.target && (busy || u.phase === "failed");
+  var newer = u.status === "available" && !back;
+  var html;
+  if (back) {
+    var old = HIST && (HIST.versions || []).filter(function (v) { return v.version === u.target; })[0];
+    html = '<div class="upd-hero">' + chipIco("reset", "#FF9F0A") + '<div><div class="eyebrow">Version précédente</div><h2>Retour à la ' + esc(u.target) + "</h2><p class=\"muted-txt\">Depuis la " + esc(u.current) + ", avec les mêmes vérifications qu’une mise à jour.</p></div></div>";
+    if (old) html += '<div class="notes rel">' + notesRender(old.notes) + "</div>";
+  } else {
+    html = '<div class="upd-hero">' + chipIco(newer ? "sparkles" : "ok", newer ? "#0A84FF" : "#30D158") + '<div><div class="eyebrow">' + (newer ? "Mise à jour proposée" : "À jour") + "</div><h2>Rustudio " + esc(newer ? rel.version : u.current) + "</h2><p class=\"muted-txt\">" + (newer ? "Tu as la " + esc(u.current) + (rel.published ? " · publiée le " + frDate(rel.published) : "") : "Tu as la dernière version.") + "</p></div></div>";
+    html += '<div class="notes rel">' + notesRender(rel.notes) + "</div>";
+  }
   if (busy) {
     var pct = u.phase === "downloading" && u.progress != null ? Math.round(u.progress * 100) : null;
     html += '<div class="upd-progress"><div class="bar' + (pct == null ? " indet" : "") + '"><i style="width:' + (pct || 0) + '%"></i></div><small>' + UPD_PHASE[u.phase] + (pct != null ? " " + pct + " %" : "") + "</small></div>";
   } else if (u.phase === "failed" && u.error) {
-    html += '<div class="upd-fail">' + esc(u.error.msg) + " L’ancienne version reste en place.</div>";
+    html += '<div class="upd-fail">' + esc(u.error.msg) + (back ? " La " + esc(u.current) + " reste en place." : " L’ancienne version reste en place.") + "</div>";
   } else if (newer && !u.installable) {
     html += '<div class="upd-why">' + (UPD_WHY[u.why_not] || "") + "</div>";
   } else if (newer) {
@@ -129,12 +137,72 @@ function paintUpdateSheet() {
     return;
   }
   btn("Voir sur GitHub", function () { openUrl(u.release_page); }, "", true);
+  btn("Historique des versions", openHistorySheet);
   if (u.phase === "failed") {
     btn("Fermer", null);
-    btn("Réessayer", function () { post("update-install").then(refresh); }, "primary", true);
+    btn("Réessayer", function () { post("update-install", u.target ? {version: u.target} : {}).then(refresh); }, "primary", true);
   } else if (newer) {
     btn("Plus tard", null);
     if (u.installable) btn("Mettre à jour maintenant", function () { post("update-install").then(refresh); }, "primary", true);
     else btn("Ouvrir la page de la release", function () { openUrl(u.release_page); }, "primary");
   } else btn("Fermer", null, "primary");
+}
+
+/* ---------- historique des versions et retour à une version précédente ---------- */
+var HIST = null, HIST_UNFOLDED = 3;
+// Les trois versions les plus récentes dépliées, les autres derrière « Afficher les N versions précédentes ».
+function histView(hist, showAll) {
+  var list = (hist && hist.versions) || [];
+  return {shown: showAll ? list : list.slice(0, HIST_UNFOLDED), hidden: Math.max(0, list.length - HIST_UNFOLDED)};
+}
+function histFoldLabel(hidden, showAll) {
+  return showAll ? "Masquer les versions précédentes" : hidden === 1 ? "Afficher la version précédente" : "Afficher les " + hidden + " versions précédentes";
+}
+function histCard(v, canRevert) {
+  var chip = v.installed ? '<span class="hist-chip on">Installée</span>' : v.newer ? '<span class="hist-chip new">Disponible</span>' : "";
+  var when = v.published ? "<small>Publiée le " + frDate(v.published) + "</small>" : "";
+  var act = v.revertible && canRevert ? '<button class="pill hist-back" data-v="' + esc(v.version) + '">' + svg("reset") + "<span>Revenir à cette version</span></button>" : "";
+  return '<section class="hist-card' + (v.installed ? " cur" : "") + '"><div class="hist-head"><div class="hist-title"><b>Rustudio ' + esc(v.version) + "</b>" + chip + when + "</div>" + act +
+    '</div><div class="notes rel">' + notesRender(v.notes) + "</div></section>";
+}
+function histNote(hist) {
+  if (!hist) return "";
+  var t = hist.error === "offline" ? "GitHub ne répond pas : l’historique vient des notes intégrées à ta version. Le retour à une version précédente revient avec la connexion."
+    : hist.error === "rate-limited" ? "GitHub limite les recherches pour le moment : réessaie dans quelques minutes pour revenir à une version précédente."
+    : !hist.installable ? (UPD_WHY[hist.why_not] || "") : "";
+  return t ? '<p class="hist-note">' + esc(t) + "</p>" : "";
+}
+function revertText(v, cur) {
+  return "Rustudio télécharge la " + esc(v) + " depuis ses releases GitHub, vérifie sa taille et son empreinte SHA-256 comme pour une mise à jour, puis redémarre quelques secondes. " +
+    "Tes réglages restent, et une copie est gardée avant le retour. La " + esc(cur) + " reste proposée en bas à gauche pour revenir quand tu veux.";
+}
+function openHistorySheet() {
+  var body = h("div", {"class": "hist"}), showAll = false;
+  sheet({wide: true, history: true, body: body, actions: [["Fermer", null, "primary"]]});
+  function current() { return HIST ? HIST.current : S && S.update ? S.update.current : ""; }
+  function paint() {
+    if (!sheetState || sheetState.body !== body) return;
+    var cur = current(), busy = S && S.update && S.update.phase && S.update.phase !== "failed";
+    var html = '<div class="upd-hero">' + chipIco("history", "#5E5CE6") + '<div><div class="eyebrow">Historique des versions</div><h2>Ce qui a changé</h2><p class="muted-txt">Tu as la ' + esc(cur || "—") +
+      ". Si une mise à jour te gêne, une version précédente se réinstalle en un clic.</p></div></div>";
+    if (!HIST) html += '<p class="hist-note">Lecture des versions…</p>';
+    else {
+      var view = histView(HIST, showAll), can = HIST.installable && !busy;
+      html += histNote(HIST) + view.shown.map(function (v) { return histCard(v, can); }).join("");
+      if (view.hidden) html += '<button class="pill hist-fold' + (showAll ? " open" : "") + '">' + svg("chev") + "<span>" + histFoldLabel(view.hidden, showAll) + "</span></button>";
+    }
+    body.innerHTML = html;
+    body.querySelectorAll(".hist-back").forEach(function (b) { b.addEventListener("click", function () { confirmRevert(b.getAttribute("data-v"), cur); }); });
+    var f = body.querySelector(".hist-fold");
+    if (f) f.addEventListener("click", function () { showAll = !showAll; paint(); });
+  }
+  paint();
+  api("/api/update/history").then(function (x) { HIST = x; paint(); }, function () {
+    HIST = HIST || {current: current(), versions: [], error: "offline", installable: false}; paint();
+  });
+}
+function confirmRevert(v, cur) {
+  sheet({icon: "reset", title: "Revenir à la " + esc(v) + " ?", text: revertText(v, cur), actions: [["Annuler", openHistorySheet], ["Revenir à la " + esc(v), function () {
+    post("update-install", {version: v}).then(function (r) { if (r) return refresh().then(openUpdateSheet); });
+  }, "primary"]]});
 }
