@@ -25,18 +25,14 @@ assert.equal(mic.status, "warn");
 assert.match(mic.detail, /2 ms vers le PC/, "une coupure micro seule garde sa duree");
 assert.match(mic.detail, /pas une cause prouvée/, "coincidence de lancement : pas une accusation");
 assert.ok(!mic.detail.includes("<programme>"), "le nom d'un programme n'est jamais du HTML");
+// Historique écrit par une ancienne version : repères internes de veille des écrans mêlés aux programmes.
 const screen = {t: 2000, out_ms: 3, in_ms: 3, hint: [{name: "@ecrans-eteints", n: 1}]};
-const asleep = render({count: 3, out_ms: 5, in_ms: 5, events: [screen, event, screen], top: [{name: "@ecrans-eteints", count: 2}]});
-assert.match(asleep.detail, /au moment de l’extinction des écrans/, "repère d'écran formulé en clair");
-assert.ok(!asleep.detail.includes("lançait : @"), "un repère d'écran n'est pas présenté comme un programme");
-assert.match(asleep.detail, /Souvent quand les écrans s’éteignent ou se rallument : 2 coupures sur 3/);
-assert.match(asleep.detail, /écrans éteints/, "la liste détaillée nomme le repère");
-assert.ok(!asleep.detail.includes("@ecrans"), "aucun nom interne affiché");
-const mixed = render({count: 5, out_ms: 9, in_ms: 9, events: [screen, event], top: [{name: "svchost.exe", count: 3}, {name: "@ecrans-rallumes", count: 2}, {name: "@ecrans-eteints", count: 2}]});
-assert.match(mixed.detail, /écrans s’éteignent ou se rallument : 4 coupures sur 5/, "extinctions et rallumages comptés ensemble");
-assert.ok(!mixed.detail.includes("« svchost.exe »"), "le repère d'écran l'emporte sur un programme moins fréquent");
-assert.match(mixed.detail, /<\/p><p class="drop-list">/, "la liste détaillée garde son propre paragraphe");
-assert.ok(!/drop-list">[^]*pilote graphique/.test(mixed.detail), "le conseil reste au-dessus de la liste");
+const old = render({count: 5, out_ms: 9, in_ms: 9, events: [screen, event], top: [{name: "@ecrans-eteints", count: 3}, {name: "svchost.exe", count: 2}]});
+assert.ok(!old.detail.includes("@"), "aucun repère interne affiché");
+assert.ok(!/écran|veille/i.test(old.detail), "le diagnostic ne parle plus de la veille des écrans");
+assert.ok(!old.detail.includes("lançait :"), "un repère seul n'est pas présenté comme un programme lancé");
+assert.match(old.detail, /« svchost\.exe », 2 coupures sur 5/, "le programme le plus fréquent reste signalé");
+assert.match(old.detail, /<\/p><p class="drop-list">/, "la liste détaillée garde son propre paragraphe");
 
 const win = {enabled: true, readable: true, total: 0, was_enabled: true};
 assert.equal(context.windowsGlitchItem(win, false).status, "ok");

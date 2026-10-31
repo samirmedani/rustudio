@@ -10,9 +10,6 @@ use std::path::PathBuf;
 /// Coupures gardees (l'historique survit aux redemarrages du moteur et du PC) et duree presentee.
 const KEEP: usize = 300;
 const DAY: f64 = 86_400.0;
-/// Repères placés parmi les programmes lancés : l'appli signale l'extinction et le rallumage des écrans.
-pub const MARK_DISPLAY_OFF: &str = "@ecrans-eteints";
-pub const MARK_DISPLAY_ON: &str = "@ecrans-rallumes";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropEvent {
@@ -91,8 +88,10 @@ impl UsbDrops {
                 continue;
             }
             let hint = e["hint"].as_array().map(|a| {
+                // Les repères internes d'anciennes versions (« @… », veille des écrans) ne sont pas des programmes.
                 a.iter()
                     .filter_map(|h| Some((h["name"].as_str()?.to_string(), u32::try_from(h["n"].as_u64()?).ok()?)))
+                    .filter(|(n, _)| !n.starts_with('@'))
                     .collect::<Vec<_>>()
             });
             d.events.push_back(DropEvent { t, out_ms: e["out_ms"].as_f64().unwrap_or(0.0), in_ms: e["in_ms"].as_f64().unwrap_or(0.0), hint });
@@ -318,14 +317,18 @@ mod tests {
     }
 
     #[test]
-    fn extinction_des_ecrans_rattachee_a_la_coupure() {
-        let mut d = UsbDrops::default();
-        d.update(Some(st(true, 1000, 0)), 100.0);
-        d.note_launched(100.4, vec![MARK_DISPLAY_OFF.into()]);
-        d.update(Some(st(true, 2000, 8)), 101.0);
-        d.note_launched(103.0, vec![]);
-        assert_eq!(d.events[0].hint.as_ref().unwrap()[0].0, MARK_DISPLAY_OFF, "coupure une demi-seconde après l'extinction");
-        assert_eq!(d.json(0.0)["top"][0]["name"], MARK_DISPLAY_OFF);
+    fn anciens_reperes_de_veille_ignores_au_chargement() {
+        let dir = std::env::temp_dir().join(format!("rustudio-drops-reperes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("usb-drops.json");
+        let old = json!({"since": 900.0, "total": 1, "events": [{"t": 1000.0, "out_ms": 2.0, "in_ms": 2.0,
+            "hint": [{"name": "@ecrans-eteints", "n": 1}, {"name": "svchost.exe", "n": 1}]}]});
+        std::fs::write(&path, old.to_string()).unwrap();
+        let d = UsbDrops::load(path, 1001.0);
+        assert_eq!(d.events[0].hint.as_ref().unwrap(), &vec![("svchost.exe".to_string(), 1)], "repère d'écran retiré");
+        assert_eq!(d.json(0.0)["top"][0]["name"], "svchost.exe");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

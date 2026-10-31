@@ -1,5 +1,10 @@
 # Nouveautés
 
+## 5.6.11
+
+- **Plus aucun lien avec la veille des écrans.** Rustudio ne surveille plus l’extinction ni le rallumage des écrans : l’application et le moteur fonctionnent de la même façon, écrans allumés ou éteints, et le journal ne note plus ces moments.
+- « Son qui crépite ? » ne mentionne plus la veille des écrans. Les anciens repères encore présents dans l’historique des coupures sont masqués.
+
 ## 5.6.10
 
 - **Diagnostic du son plus lisible :** dans « Son qui crépite ? », le conseil et la liste des dernières coupures ont chacun leur paragraphe. Les coupures liées aux écrans (extinction et rallumage) sont regroupées, avec la piste à suivre.

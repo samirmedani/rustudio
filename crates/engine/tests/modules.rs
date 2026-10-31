@@ -114,7 +114,7 @@ fn api_modules_et_vues_existantes_partagent_le_contrat() {
 #[test]
 fn actions_declarees_correspondent_aux_actions_materielles_existantes() {
     let actions = rustudio_core::modules::GOXLR_MINI.actions;
-    let global = ["update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh", "restart-engine", "display"];
+    let global = ["update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh", "restart-engine"];
     for action in actions {
         assert!(rustudio_engine::http::ACTIONS.contains(action), "action sans implementation : {action}");
     }
