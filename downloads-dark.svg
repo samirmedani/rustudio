@@ -23,14 +23,14 @@
 <text x="60.0" y="272.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">200</text>
 <line x1="72" y1="216.0" x2="928" y2="216.0" stroke="#3d444d" stroke-dasharray="3 5"/>
 <text x="60.0" y="220.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">300</text>
-<path d="M72.0,269.6 L165.1,260.2 L311.2,256.0 L928.0,256.0 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
-<path d="M72.0,269.6 L165.1,260.2 L311.2,256.0 L928.0,256.0" fill="none" stroke="#409cff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M72.0,269.6 L128.9,260.2 L218.2,256.0 L595.3,256.0 L928.0,256.0 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
+<path d="M72.0,269.6 L128.9,260.2 L218.2,256.0 L595.3,256.0 L928.0,256.0" fill="none" stroke="#409cff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="928.0" cy="256.0" r="5" fill="#409cff" stroke="#0d1117" stroke-width="2.5"/>
 <text x="918.0" y="244.0" font-size="13" font-weight="700" fill="#f0f6fc" text-anchor="end" stroke="#0d1117" stroke-width="8" stroke-linejoin="round" paint-order="stroke">223</text>
-<text x="72.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">31 oct., 15 h 56</text>
-<text x="357.3" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">1 nov., 5 h 33</text>
-<text x="642.7" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">1 nov., 19 h 09</text>
-<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">2 nov., 8 h 46</text>
+<text x="72.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">31 oct.</text>
+<text x="357.3" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">1 nov.</text>
+<text x="642.7" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">2 nov.</text>
+<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">3 nov.</text>
 <text x="32.0" y="432.0" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="start">Par version</text>
 <text x="928.0" y="432.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">20 dernières versions sur 24</text>
 <line x1="72" y1="572" x2="928" y2="572" stroke="#3d444d"/>
@@ -94,5 +94,5 @@
 <rect x="893.8" y="529.5" width="25.7" height="42.5" rx="4.0" fill="#409cff" fill-opacity="1"/>
 <text x="906.6" y="522.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">5</text>
 <text x="906.6" y="592.0" font-size="11.5" font-weight="600" fill="#f0f6fc" text-anchor="middle">5.6.14</text>
-<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 2 nov. 2026 à 8 h 46 (heure de Paris)</text>
+<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 3 nov. 2026 à 10 h 43 (heure de Paris)</text>
 </svg>
