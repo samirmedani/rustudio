@@ -440,8 +440,8 @@ impl Mixer {
             Page::Mouse => acts = acts.child(self.mouse_actions(cx)),
             _ => {}
         }
-        if self.page.space() == Some(Space::GoXlr) {
-            if let Some((muted, partial)) = self.mic_state() {
+        if self.page.space() == Some(Space::GoXlr)
+            && let Some((muted, partial)) = self.mic_state() {
                 let (text, glyph, tone) = if !muted {
                     ("Micro actif", Icon::Mic, Tone::Soft)
                 } else if partial {
@@ -453,7 +453,6 @@ impl Mixer {
                     this.enqueue("mute", json!({"channel": "Mic", "muted": !muted, "target": "all"}), cx);
                 })));
             }
-        }
         acts = acts.child(
             ui::round("more", Icon::Dots, 40., alpha(ui::WHITE, 0.92), rgb(ui::TEXT))
                 .shadow(ui::soft_shadow())
@@ -632,7 +631,7 @@ impl Mixer {
                                     .pb(px(28.))
                                     .pl(px(28.))
                                     .pr(px(36.))
-                                    .child(content),
+                                    .child(div().mt(px(-preview_scroll())).child(content)),
                             ),
                     ),
             )
@@ -773,6 +772,34 @@ impl Mixer {
         .detach();
     }
 
+    /// Confirmation d'un profil (appliquer ou supprimer), en fenêtre par-dessus la page.
+    pub(crate) fn profile_confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let confirm = self.confirm?;
+        let (index, apply) = match confirm {
+            Confirm::Apply(i) => (i, true),
+            Confirm::Delete(i) => (i, false),
+        };
+        let name = self.profiles.iter().find(|(i, _)| *i == index).map(|(_, p)| p.name.clone())?;
+        let message = if apply {
+            format!("Appliquer « {name} » ? Les volumes et les coupures du mixeur changent, y compris celle du micro.")
+        } else {
+            format!("Supprimer le profil « {name} » ?")
+        };
+        Some(
+            ui::card()
+                .flex_row()
+                .items_center()
+                .gap(px(14.))
+                .child(ui::chip(if apply { Icon::Play } else { Icon::Trash }, if apply { ui::ACCENT } else { ui::RED }, 34.))
+                .child(div().flex_1().text_size(px(13.5)).child(message))
+                .child(ui::pill("profile-cancel", None, "Annuler", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+                    this.confirm = None;
+                    cx.notify();
+                })))
+                .child(ui::pill("profile-confirm", None, if apply { "Appliquer" } else { "Supprimer" }, if apply { Tone::Primary } else { Tone::Danger }).on_click(cx.listener(|this, _, _, cx| this.confirm_profile(cx)))),
+        )
+    }
+
     fn confirm_profile(&mut self, cx: &mut Context<Self>) {
         match self.confirm.take() {
             Some(Confirm::Apply(id)) => {
@@ -837,7 +864,6 @@ impl Mixer {
         for (index, profile) in &self.profiles {
             let id = *index;
             let export = profile.clone();
-            let confirming = self.confirm.is_some_and(|c| matches!(c, Confirm::Apply(i) | Confirm::Delete(i) if i == id));
             let card = ui::card()
                 .child(
                     div()
@@ -863,25 +889,7 @@ impl Mixer {
                             this.confirm = Some(Confirm::Delete(id));
                             cx.notify();
                         })))),
-                )
-                .when(confirming, |el| {
-                    let apply = self.confirm == Some(Confirm::Apply(id));
-                    el.child(hint(if apply {
-                        "Appliquer ce profil modifie les volumes et les coupures du mixeur, y compris celle du micro."
-                    } else {
-                        "Supprimer ce profil de la liste ?"
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .child(ui::pill(("confirm", id), None, "Confirmer", if apply { Tone::Primary } else { Tone::Danger }).on_click(cx.listener(|this, _, _, cx| this.confirm_profile(cx))))
-                            .child(ui::pill(("cancel", id), None, "Annuler", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
-                                this.confirm = None;
-                                cx.notify();
-                            }))),
-                    )
-                });
+                );
             cards.push(card.into_any_element());
         }
         if !cards.is_empty() {
@@ -1029,3 +1037,13 @@ pub fn verify_profiles(client: &Client) -> Result<(), String> {
 }
 
 
+
+/// Aperçu sur Mac (développement, RUSTUDIO_PREVIEW_SCROLL) : décale la page pour capturer le bas des écrans.
+/// Toujours 0 sous Windows.
+fn preview_scroll() -> f32 {
+    if !cfg!(target_os = "macos") {
+        return 0.;
+    }
+    static OFFSET: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *OFFSET.get_or_init(|| std::env::var("RUSTUDIO_PREVIEW_SCROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.))
+}

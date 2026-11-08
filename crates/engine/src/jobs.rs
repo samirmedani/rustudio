@@ -620,7 +620,7 @@ pub fn voice_audio(ctl: &Ctl, query: &str, body: &[u8]) -> Result<Value, ApiErro
             .ok_or_else(|| ApiError::bad("fréquence d’échantillonnage invalide"))?;
         let t0 = query_value(query, "t0").and_then(|t| t.parse::<f64>().ok()).filter(|t| t.is_finite() && *t > 0.0)
             .ok_or_else(|| ApiError::bad("début de l’enregistrement inconnu (t0)"))? / 1000.0;
-        if body.len() < 2 || body.len() % 2 != 0 || body.len() > VOICE_AUDIO_MAX {
+        if body.len() < 2 || !body.len().is_multiple_of(2) || body.len() > VOICE_AUDIO_MAX {
             return Err(ApiError::bad("enregistrement vide ou illisible"));
         }
         let x: Vec<f32> = body.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();

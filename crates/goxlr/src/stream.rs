@@ -7,6 +7,7 @@
 //! - +0x2C : millisecondes depuis le demarrage du flux ;
 //! - +0x30 : micro-trames USB servies (8 000 par seconde) ;
 //! - +0x34 : micro-trames perdues.
+//!
 //! Chaque coupure entendue fait avancer ce dernier compteur de 8 (une trame USB d'1 ms) ou 16, dans les deux sens a
 //! la fois : test en boucle du 29/10, 4 coupures sur 4 retrouvees a la milliseconde. A l'arret du flux d'entree, le
 //! pilote y ajoute quelques micro-trames : seules comptent les avances pendant que le flux tourne.

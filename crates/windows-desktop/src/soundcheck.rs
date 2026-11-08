@@ -116,9 +116,7 @@ pub fn verdict(name: &str, loopback: bool, secs: f64, s: &Stats) -> Value {
         "silent"
     } else if lost > 0 || short {
         "dropouts"
-    } else if loopback && (s.overs > 0 || s.clipped > 2) && s.sound_frames > 0 {
-        "clipping"
-    } else if !loopback && s.clipped > 2 {
+    } else if (loopback && (s.overs > 0 || s.clipped > 2) && s.sound_frames > 0) || (!loopback && s.clipped > 2) {
         "clipping"
     } else {
         "ok"
@@ -332,8 +330,8 @@ pub fn echo_analyse(rec: &[f32], reference: &[f32], offset: usize, sr: f64) -> V
     let lo = offset.saturating_sub((0.05 * sr) as usize);
     let hi = (offset + (0.8 * sr) as usize).min(rec.len() - reference.len()).max(lo);
     let (mut best, mut lag) = (0.0f64, lo);
-    for i in lo..=hi {
-        let v = ar[i].abs() / n as f64;
+    for (i, a) in ar.iter().enumerate().take(hi + 1).skip(lo) {
+        let v = a.abs() / n as f64;
         if v > best {
             best = v;
             lag = i;
@@ -797,6 +795,24 @@ pub fn loop_test(secs: f64, exclusive: bool) -> Value {
     }
 }
 
+// Aperçu de l'interface sur Mac (développement) : pas d'audio Windows.
+#[cfg(not(windows))]
+pub fn record_mic(_secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
+    Err("Disponible sous Windows.".into())
+}
+#[cfg(not(windows))]
+pub fn play_default(_samples: Vec<f32>, _rate: u32) -> Result<(), String> {
+    Err("Disponible sous Windows.".into())
+}
+#[cfg(not(windows))]
+pub fn echo_test() -> Value {
+    json!({"status": "unavailable", "unsupported": true})
+}
+#[cfg(not(windows))]
+pub fn capture_voice(_stop: &std::sync::atomic::AtomicBool, _started: std::sync::mpsc::SyncSender<(u64, u32)>) -> Result<Vec<u8>, String> {
+    Err("Disponible sous Windows.".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,22 +963,4 @@ mod tests {
         assert_eq!(s.packets, packets, "un tampon vide ne fournit aucune position valide");
         assert_eq!(s.timestamp_errors, 1);
     }
-}
-
-// Aperçu de l'interface sur Mac (développement) : pas d'audio Windows.
-#[cfg(not(windows))]
-pub fn record_mic(_secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
-    Err("Disponible sous Windows.".into())
-}
-#[cfg(not(windows))]
-pub fn play_default(_samples: Vec<f32>, _rate: u32) -> Result<(), String> {
-    Err("Disponible sous Windows.".into())
-}
-#[cfg(not(windows))]
-pub fn echo_test() -> Value {
-    json!({"status": "unavailable", "unsupported": true})
-}
-#[cfg(not(windows))]
-pub fn capture_voice(_stop: &std::sync::atomic::AtomicBool, _started: std::sync::mpsc::SyncSender<(u64, u32)>) -> Result<Vec<u8>, String> {
-    Err("Disponible sous Windows.".into())
 }

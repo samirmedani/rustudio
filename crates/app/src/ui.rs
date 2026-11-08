@@ -299,7 +299,7 @@ pub fn pill(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<Share
     let el = base
         .id(id)
         .relative()
-        .top(px(-1. * t))
+        .top(px(-t))
         .flex()
         .flex_none()
         .items_center()
@@ -335,7 +335,7 @@ pub fn round(id: impl Into<ElementId>, glyph: Icon, size: f32, bg: Hsla, fg: Hsl
     let el = div()
         .id(id)
         .relative()
-        .top(px(-1. * t))
+        .top(px(-t))
         .flex()
         .flex_none()
         .items_center()

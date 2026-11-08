@@ -128,7 +128,7 @@ pub fn start_gain_db(m: &MicModel) -> i32 {
 /// Écart du micro à une réponse plate (dB) à une fréquence, interpolé sur une échelle logarithmique ; 0 sans courbe.
 pub fn response_db(m: &MicModel, f: f64) -> f64 {
     let r = m.response;
-    if r.is_empty() || !(f > 0.0) {
+    if r.is_empty() || f.is_nan() || f <= 0.0 {
         return 0.0;
     }
     if f <= r[0].0 {

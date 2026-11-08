@@ -39,7 +39,7 @@ fn enveloppes_tronquees_ou_anciennes_reponses_refusees() {
 }
 #[test]
 fn debranchement_et_ecriture_ignoree_ne_donnent_pas_de_faux_succes() {
-    let mut sim = Sim::default(); sim.disconnected = true;
+    let sim = Sim { disconnected: true, ..Sim::default() };
     assert!(Mouse::new(sim).read().is_err());
     struct Ignore(Sim);
     impl Transport for Ignore {

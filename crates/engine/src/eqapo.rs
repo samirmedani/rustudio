@@ -230,7 +230,7 @@ impl EqApo {
             let agent = crate::net::agent(std::time::Duration::from_secs(60), 10, &crate::net::ua());
             let resp = agent.get(EQAPO_URL).set("User-Agent", &format!("Rustudio/{}", crate::config::VERSION)).call().map_err(|e| e.to_string())?;
             let mut reader = resp.into_reader();
-            let data = crate::updater::read_limited(&mut reader, 40 * 1024 * 1024).map_err(|_| "Téléchargement trop gros : installation refusée.".to_string())?;
+            let data = crate::updater::read_limited(&mut reader, 40 * 1024 * 1024).ok_or_else(|| "Téléchargement trop gros : installation refusée.".to_string())?;
             if crate::updater::sha256_hex(&data) != EQAPO_SHA256 {
                 return Err("Empreinte d'Equalizer APO inattendue : installation refusée.".into());
             }

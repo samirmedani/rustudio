@@ -55,39 +55,6 @@ pub fn snapshot() -> Value {
 /// Compatible avec les anciennes interfaces : aucune fiche non publiée n'est téléchargée.
 pub fn refresh() -> Value { snapshot() }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalogue_et_registre_compiles_ont_la_meme_provenance() {
-        let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap();
-        let clean = clean(&local);
-        assert_eq!(clean.len(), local["modules"].as_array().unwrap().len(), "aucune fiche livrée ne doit être rejetée");
-        for module in modules::installed() {
-            let entry = clean.iter().find(|m| m["id"] == module.id).expect("fiche du module livré");
-            assert_eq!(entry["status"], module.origin.as_str());
-            assert_eq!(entry["author"], module.author);
-            assert_eq!(entry["source"], module.source);
-            assert_eq!(entry["review_pr"], json!(module.review_pr));
-            assert_eq!(entry["builtin"], true);
-        }
-        assert_eq!(snapshot()["source"], "release");
-        assert_eq!(refresh()["modules"], snapshot()["modules"]);
-    }
-
-    #[test]
-    fn une_fiche_ne_peut_pas_se_declarer_officielle_ou_validee() {
-        let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap();
-        let original = local["modules"][0].clone();
-        for (field, forged) in [("id", json!("module-inconnu")), ("status", json!("community")),
-            ("author", json!("autre")), ("source", json!("crates/inconnu")), ("review_pr", json!(1))] {
-            let mut entry = original.clone(); entry[field] = forged;
-            assert!(clean(&json!({"modules":[entry]})).is_empty(), "fiche falsifiée : {field}");
-        }
-    }
-}
-
 /// Tout ce qui, dans le routage de la GoXLR, peut faire de l'echo (chez tes amis, dans ton stream ou chez toi).
 pub fn echo_check(ctl: &Ctl) -> Value {
     let g = ctl.lock();
@@ -119,4 +86,37 @@ pub fn echo_check(ctl: &Ctl) -> Value {
         if hp { format!("Tu t’entends à {mon} % : avec un casque ouvert, au-delà de 25 % le micro peut le capter.") } else { "Le retour micro est coupé ou bas.".into() },
         Some(("Couper le retour", route("Microphone", "Headphones"))));
     json!({"checks": checks, "mic_type": s.mic.kind})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalogue_et_registre_compiles_ont_la_meme_provenance() {
+        let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap();
+        let clean = clean(&local);
+        assert_eq!(clean.len(), local["modules"].as_array().unwrap().len(), "aucune fiche livrée ne doit être rejetée");
+        for module in modules::installed() {
+            let entry = clean.iter().find(|m| m["id"] == module.id).expect("fiche du module livré");
+            assert_eq!(entry["status"], module.origin.as_str());
+            assert_eq!(entry["author"], module.author);
+            assert_eq!(entry["source"], module.source);
+            assert_eq!(entry["review_pr"], json!(module.review_pr));
+            assert_eq!(entry["builtin"], true);
+        }
+        assert_eq!(snapshot()["source"], "release");
+        assert_eq!(refresh()["modules"], snapshot()["modules"]);
+    }
+
+    #[test]
+    fn une_fiche_ne_peut_pas_se_declarer_officielle_ou_validee() {
+        let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap();
+        let original = local["modules"][0].clone();
+        for (field, forged) in [("id", json!("module-inconnu")), ("status", json!("community")),
+            ("author", json!("autre")), ("source", json!("crates/inconnu")), ("review_pr", json!(1))] {
+            let mut entry = original.clone(); entry[field] = forged;
+            assert!(clean(&json!({"modules":[entry]})).is_empty(), "fiche falsifiée : {field}");
+        }
+    }
 }

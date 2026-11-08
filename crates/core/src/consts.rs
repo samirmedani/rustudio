@@ -104,10 +104,10 @@ pub struct Theme {
     pub accent: &'static str,
 }
 pub const THEMES: [Theme; 7] = [
-    Theme { key: "voies", label: "Couleur des voies", per_channel: true, top: "", bottom: "", faders: None, accent: "F2F2F7" },
+    Theme { key: "voies", label: "Par voie", per_channel: true, top: "", bottom: "", faders: None, accent: "F2F2F7" },
     Theme { key: "glacier", label: "Glacier", per_channel: false, top: "00E5FF", bottom: "00303A", faders: None, accent: "00E5FF" },
     Theme { key: "aurore", label: "Aurore", per_channel: false, top: "", bottom: "", faders: Some(["00F5D4", "7B61FF", "FF4FD8", "FFB800"]), accent: "7B61FF" },
-    Theme { key: "sunset", label: "Coucher de soleil", per_channel: false, top: "FF7A00", bottom: "4A0020", faders: None, accent: "FF2D78" },
+    Theme { key: "sunset", label: "Crépuscule", per_channel: false, top: "FF7A00", bottom: "4A0020", faders: None, accent: "FF2D78" },
     Theme { key: "neon", label: "Néon", per_channel: false, top: "FF00E5", bottom: "12003A", faders: None, accent: "00FFF0" },
     Theme { key: "blanc", label: "Blanc pur", per_channel: false, top: "FFFFFF", bottom: "2A2A2A", faders: None, accent: "FFFFFF" },
     Theme { key: "nuit", label: "Nuit", per_channel: false, top: "3A5BFF", bottom: "00000C", faders: None, accent: "1E2E80" },

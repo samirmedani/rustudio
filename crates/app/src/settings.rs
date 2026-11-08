@@ -316,7 +316,7 @@ impl Mixer {
                 .cursor(gpui::CursorStyle::PointingHand)
                 .when(n > 0, |d| d.mt(px(2.)))
                 .bg(ui::lerp(alpha(ui::ACCENT, 0.), alpha(ui::ACCENT, 0.05), t.max(if expanded { 1. } else { 0. })))
-                .child(div().w(px(70.)).text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(version.clone()))
+                .child(div().min_w(px(70.)).flex_none().whitespace_nowrap().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(version.clone()))
                 .child(badges)
                 .child(div().flex_1())
                 .child(ui::caption(date))

@@ -158,12 +158,11 @@ fn on_menu(id: &str, client: &Client, live_mode: bool, cx: &mut App, open: &dyn 
         "mic" => {
             let client = client.clone();
             cx.background_executor().spawn(async move {
-                if let Ok(l) = client.live_state() {
-                    if goxlr_connected(&l) {
+                if let Ok(l) = client.live_state()
+                    && goxlr_connected(&l) {
                         let muted = mic_of(&l) != "on";
                         let _ = client.post_module("/api/modules/goxlr-mini", "mute", json!({"channel": "Mic", "muted": !muted, "target": "all"}));
                     }
-                }
             }).detach();
         }
         "startup" if live_mode => {
@@ -201,11 +200,10 @@ pub fn start(
         let _ = tx.try_send(Action::Panel);
     }
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-        if let TrayIconEvent::Click { id, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-            if id == tray_id {
+        if let TrayIconEvent::Click { id, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event
+            && id == tray_id {
                 let _ = tx.try_send(Action::Panel);
             }
-        }
     }));
     let actions = client.clone();
     let open: crate::tray_panel::Opener = std::rc::Rc::new(open);
@@ -231,7 +229,7 @@ pub fn start(
         let mut tick = 0u64;
         loop {
             let reader = watch.clone();
-            let with_state = tick % 3 == 0;
+            let with_state = tick.is_multiple_of(3);
             let (live, state) = cx
                 .background_executor()
                 .spawn(async move {
@@ -243,13 +241,11 @@ pub fn start(
             match &live {
                 Some(l) => {
                     last_ok = Instant::now();
-                    if live_mode {
-                        if let Some(v) = l["app_version"].as_str() {
-                            if should_relaunch(v, crate::VERSION, installed_version().as_deref()) && cx.update(relaunch).unwrap_or(false) {
+                    if live_mode
+                        && let Some(v) = l["app_version"].as_str()
+                            && should_relaunch(v, crate::VERSION, installed_version().as_deref()) && cx.update(relaunch).unwrap_or(false) {
                                 return;
                             }
-                        }
-                    }
                     if goxlr_connected(l) {
                         let mic = mic_of(l);
                         if native_osd && l["osd"] != false && previous_mic.as_deref().is_some_and(|m| m != mic) {
@@ -290,12 +286,11 @@ pub fn start(
                     s.and_then(|s| s["state"]["user_scenes"].as_object()).map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
                     session::startup_enabled(),
                 );
-                if mk != menu_key {
-                    if let Ok(menu) = build_menu(s, live_mode) {
+                if mk != menu_key
+                    && let Ok(menu) = build_menu(s, live_mode) {
                         tray.set_menu(Some(Box::new(menu)));
                         menu_key = mk;
                     }
-                }
             }
             tick += 1;
             cx.background_executor().timer(Duration::from_millis(if native_osd { 300 } else { 1000 })).await;

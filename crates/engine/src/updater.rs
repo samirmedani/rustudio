@@ -97,13 +97,11 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-pub fn read_limited(r: &mut dyn Read, limit: u64) -> Result<Vec<u8>, ()> {
+/// Lit au plus limit octets ; None si la lecture échoue ou dépasse la limite.
+pub fn read_limited(r: &mut dyn Read, limit: u64) -> Option<Vec<u8>> {
     let mut out = vec![];
-    r.take(limit + 1).read_to_end(&mut out).map_err(|_| ())?;
-    if out.len() as u64 > limit {
-        return Err(());
-    }
-    Ok(out)
+    r.take(limit + 1).read_to_end(&mut out).ok()?;
+    (out.len() as u64 <= limit).then_some(out)
 }
 
 pub fn read_json(path: &Path) -> Option<Value> {
@@ -360,7 +358,7 @@ impl Updater {
         match self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() {
             Ok(resp) => {
                 let mut r = resp.into_reader();
-                let Ok(body) = read_limited(&mut r, 4_000_000) else { return Fetch::Offline };
+                let Some(body) = read_limited(&mut r, 4_000_000) else { return Fetch::Offline };
                 let Ok(data) = serde_json::from_slice::<Value>(&body) else { return Fetch::Offline };
                 let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
                 match parse_release(&data, &names) {
@@ -400,7 +398,7 @@ impl Updater {
         match self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() {
             Ok(resp) => {
                 let mut rd = resp.into_reader();
-                let body = read_limited(&mut rd, 12_000_000).map_err(|_| "offline")?;
+                let body = read_limited(&mut rd, 12_000_000).ok_or("offline")?;
                 let Ok(Value::Array(list)) = serde_json::from_slice::<Value>(&body) else { return Err("offline") };
                 let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
                 let mut v: Vec<Release> = list.iter().filter_map(|d| parse_release(d, &names)).collect();
@@ -421,7 +419,7 @@ impl Updater {
         match self.agent(8, 5).get(&url).set("Accept", "application/vnd.github+json").call() {
             Ok(resp) => {
                 let mut rd = resp.into_reader();
-                let body = read_limited(&mut rd, 4_000_000).map_err(|_| "GitHub ne répond pas : vérifie ta connexion.".to_string())?;
+                let body = read_limited(&mut rd, 4_000_000).ok_or_else(|| "GitHub ne répond pas : vérifie ta connexion.".to_string())?;
                 let data = serde_json::from_slice::<Value>(&body).map_err(|_| "Réponse de GitHub illisible.".to_string())?;
                 let names = Names { repo: &c.repo, asset: UPDATE_ASSET, hash_asset: UPDATE_HASH_ASSET, download_prefix: &c.prefix };
                 parse_release(&data, &names)
@@ -861,7 +859,7 @@ pub fn safe_extract(zpath: &Path, dest: &Path, limit: u64) -> Result<(), UpdateE
         let mut file = z.by_index(i).map_err(|_| uerr("archive", "Archive illisible."))?;
         let name = file.name().replace('\\', "/");
         let parts: Vec<&str> = name.split('/').collect();
-        if name.starts_with('/') || parts[0].contains(':') || parts.iter().any(|p| *p == "..") {
+        if name.starts_with('/') || parts[0].contains(':') || parts.contains(&"..") {
             return Err(uerr("archive", format!("Chemin refusé dans l'archive : {name}")));
         }
         if file.unix_mode().map(|m| m & 0o170000 == 0o120000).unwrap_or(false) {

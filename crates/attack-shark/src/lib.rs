@@ -153,7 +153,7 @@ impl<T: Transport> Mouse<T> {
         }
         Ok(())
     }
-    fn plan(before: &Settings, changes: &Value) -> Result<Vec<(String, u8, u8, Vec<u8>)>> {
+    fn plan(before: &Settings, changes: &Value) -> Result<Vec<SettingWrite>> {
         let fields = changes.as_object().ok_or("Liste de réglages attendue")?;
         if fields.is_empty() || fields.len() > 9 { return Err("Choisis de 1 à 9 réglages".into()); }
         let mut validation = before.clone();
@@ -238,3 +238,6 @@ impl Transport for Hid {
 }
 
 pub mod sim;
+
+/// Une écriture : nom du réglage, adresse, longueur, octets.
+type SettingWrite = (String, u8, u8, Vec<u8>);

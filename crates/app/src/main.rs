@@ -1,39 +1,39 @@
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod backend;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod desktop;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod goxlr;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod library;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod mixer;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod mouse;
-#[cfg(any(windows, target_os = "macos", test))]
+#[cfg(any(windows, unix, test))]
 mod profiles;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod settings;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod tray;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod tray_panel;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod ui;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod voice;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 mod win_session;
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, unix)))]
 fn main() {
     eprintln!("Rustudio est une application Windows.");
     std::process::exit(1);
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 fn main() {
     if let Err(err) = run() {
         eprintln!("{err}");
@@ -42,10 +42,10 @@ fn main() {
 }
 
 /// Version de l'appli : la même que celle du moteur livré avec elle.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 fn run() -> Result<(), String> {
     use gpui::{App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
     use rustudio_windows_desktop::{session, soundcheck};
@@ -176,7 +176,17 @@ fn run() -> Result<(), String> {
             }
             let client = window_client.clone();
             let dir = dir.clone();
-            let bounds = Bounds::centered(None, size(px(1240.), px(800.)), cx);
+            // RUSTUDIO_WINDOW_HEIGHT (développement) : fenêtre plus haute pour voir une page entière
+            let height = std::env::var("RUSTUDIO_WINDOW_HEIGHT").ok().and_then(|h| h.parse().ok()).unwrap_or(800.);
+            let mut bounds = Bounds::centered(None, size(px(1240.), px(height)), cx);
+            // Aperçu sur Mac (développement, RUSTUDIO_PREVIEW) : fenêtre presque hors de l'écran, voir preview_float.
+            #[cfg(target_os = "macos")]
+            if std::env::var_os("RUSTUDIO_PREVIEW").is_some()
+                && let Some(d) = cx.primary_display()
+            {
+                let b = d.bounds();
+                bounds.origin = gpui::point(b.origin.x + b.size.width - px(24.), b.origin.y + b.size.height - px(24.));
+            }
             let result = cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
@@ -191,7 +201,9 @@ fn run() -> Result<(), String> {
                     show: visible,
                     ..Default::default()
                 },
-                |_, cx| {
+                |_window, cx| {
+                    #[cfg(target_os = "macos")]
+                    preview_float(_window, cx);
                     cx.new(|cx| {
                         let mut mixer = mixer::Mixer::new(
                             client,
@@ -253,14 +265,14 @@ fn run() -> Result<(), String> {
     });
     Ok(())
 }
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 struct DemoEngine {
     child: std::process::Child,
     _state: tempfile::TempDir,
     port: u16,
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 impl DemoEngine {
     fn start(port: Option<u16>) -> Result<Self, String> {
         #[cfg(windows)]
@@ -312,10 +324,49 @@ impl DemoEngine {
     }
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 impl Drop for DemoEngine {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Aperçu sur Mac (développement, RUSTUDIO_PREVIEW) : la fenêtre passe au-dessus des autres (Dock compris), sans
+/// jamais devenir active (l'appli n'est pas activée) et en laissant passer tous les clics. macOS la voit presque hors
+/// de l'écran et GPUI suspend alors son affichage : on le relance une fois la fenêtre posée.
+#[cfg(target_os = "macos")]
+fn preview_float(window: &gpui::Window, cx: &mut gpui::App) {
+    use objc::{msg_send, runtime::Object, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    if std::env::var_os("RUSTUDIO_PREVIEW").is_none() {
+        return;
+    }
+    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else { return };
+    let view = appkit.ns_view.as_ptr() as usize;
+    unsafe {
+        let view = view as *mut Object;
+        let win: *mut Object = msg_send![view, window];
+        let _: () = msg_send![win, setLevel: 101isize];
+        let _: () = msg_send![win, setIgnoresMouseEvents: objc::runtime::YES];
+        let _: () = msg_send![win, orderFrontRegardless];
+    }
+    // une image toutes les 100 ms : la couche est redessinée sans attendre l'horloge d'affichage suspendue
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
+            let alive = cx.update(|_| unsafe {
+                let view = view as *mut Object;
+                let layer: *mut Object = msg_send![view, layer];
+                if !layer.is_null() {
+                    let _: () = msg_send![layer, setNeedsDisplay];
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        }
+    })
+    .detach();
 }

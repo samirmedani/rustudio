@@ -272,11 +272,10 @@ impl Mixer {
                 match result {
                     Ok(settings) => {
                         this.mouse.last = Some(settings.clone());
-                        if let Some(view) = this.mouse.status.as_mut() {
-                            if view.device.status == "ready" {
+                        if let Some(view) = this.mouse.status.as_mut()
+                            && view.device.status == "ready" {
                                 view.state = Some(settings.clone());
                             }
-                        }
                         if let Some((draft, dpi)) = this.mouse.sent.take() {
                             // ce qui a été envoyé est enregistré ; ce qui a changé entre-temps part au prochain envoi
                             this.mouse.draft.retain(|k, v| draft.get(k) != Some(v));
@@ -503,7 +502,7 @@ impl Mixer {
                     .child(self.dpi_input(s, i, true, self.mouse_focus[i * 2 + 1].is_focused(window), cx)),
             );
         }
-        dpi = dpi.child(rows).child(ui::hint("Tape une valeur ou utilise ↑ ↓ (pas de 50), puis Enregistre.").text_size(px(12.)));
+        dpi = dpi.child(rows).child(ui::hint("Tape une valeur ou utilise ↑ ↓ (pas de 50) : c’est enregistré tout seul.").text_size(px(12.)));
         let rates: Vec<(Value, String)> = RATES.into_iter().filter(|&n| !s.wired || n <= 1000).map(|n| (json!(n), format!("{} Hz", group(n)))).collect();
         let mut sensor = ui::card()
             .flex_1()

@@ -623,7 +623,7 @@ impl Ctl {
         if g.fast_level {
             return true;
         }
-        matches!(g.level_until, Some(t) if Instant::now() < t) && tick % 2 == 0
+        matches!(g.level_until, Some(t) if Instant::now() < t) && tick.is_multiple_of(2)
     }
 
     pub fn poll_once(&self, dev: &mut GoXlr, with_level: bool) -> Result<(), DevError> {

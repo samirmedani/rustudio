@@ -233,8 +233,8 @@ mod tests {
         assert_eq!(v["readable"], false);
         assert!(v["total"].is_null());
         assert!(enabled("propriété inconnue: true").is_err());
-        assert_eq!(enabled("<?xml version='1.0'?><channel enabled=\"true\"/>").unwrap(), true);
-        assert_eq!(enabled("<channel enabled='false'/>").unwrap(), false);
+        assert!(enabled("<?xml version='1.0'?><channel enabled=\"true\"/>").unwrap());
+        assert!(!enabled("<channel enabled='false'/>").unwrap());
         assert!(enabled("<channel enabled='inconnu'/>").is_err());
     }
 }

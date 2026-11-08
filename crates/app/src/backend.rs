@@ -577,14 +577,12 @@ pub fn start(
                             state["mic"]["partial"].as_str().unwrap_or("")
                         };
                         if mic.as_deref().is_some_and(|last| last != value) && state["osd"] == true
-                        {
-                            if session_tx
+                            && session_tx
                                 .send_blocking(Event::MicOsd(value.into()))
                                 .is_err()
                             {
                                 break;
                             }
-                        }
                         mic = Some(value.into());
                     } else {
                         mic = None;
@@ -603,8 +601,8 @@ pub fn start(
         let mut last_update: Option<Value> = None;
         let mut tick = 0u64;
         while !inventory_tx.is_closed() {
-            if inventory_client.is_live() && tick % 3 == 0 {
-                if let Ok(mut update) = inventory_client.get("/api/update") {
+            if inventory_client.is_live() && tick.is_multiple_of(3)
+                && let Ok(mut update) = inventory_client.get("/api/update") {
                     // compte à rebours de la recherche manuelle : inutile ici, et il changerait à chaque lecture
                     update.as_object_mut().map(|o| o.remove("check_wait"));
                     if last_update.as_ref() != Some(&update) {
@@ -614,7 +612,6 @@ pub fn start(
                         }
                     }
                 }
-            }
             tick += 1;
             let current = inventory_client.inventory().ok();
             if current != last {

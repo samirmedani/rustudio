@@ -120,7 +120,7 @@ impl Mixer {
                 }
                 let diag = ui::section(Icon::Download, ui::GREEN, "Diagnostic anonyme", None)
                     .child(hint("Rustudio n’envoie rien tout seul. Ce rapport ne contient ni numéro de série, ni nom de PC, ni chemin personnel : relis-le avant de le partager."))
-                    .child(ui::pill("help-copy", Some(Icon::Download), "Copier le diagnostic", ui::Tone::Primary).on_click(cx.listener(move |_, _, _, cx| {
+                    .child(ui::pill("help-copy", Some(Icon::Bookmark), "Copier le diagnostic", ui::Tone::Primary).on_click(cx.listener(move |_, _, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(report.clone()));
                     })));
                 root.child(ui::grid(tiles, 2)).child(diag)

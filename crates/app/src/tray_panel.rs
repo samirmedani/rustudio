@@ -56,11 +56,10 @@ pub fn toggle(cx: &mut App, client: Client, live_mode: bool, open: Opener) {
         ..Default::default()
     };
     let _ = cx.open_window(options, move |window, cx| {
-        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(&*window) {
-            if let raw_window_handle::RawWindowHandle::Win32(w) = handle.as_raw() {
+        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(&*window)
+            && let raw_window_handle::RawWindowHandle::Win32(w) = handle.as_raw() {
                 session::round_corners(w.hwnd.get());
             }
-        }
         cx.new(|cx| {
             // le panneau se referme dès qu'on clique ailleurs
             cx.observe_window_activation(window, |_, window, _| {

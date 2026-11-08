@@ -159,8 +159,8 @@ pub fn fit_bands(target: &[f64], weight: &[f64], no_boost_below: f64) -> Vec<(f6
     let mut sum = vec![0f64; n];
     let add = |sum: &mut Vec<f64>, c: &Cands, fi: usize, gi: usize, sign: f64| {
         let base = (fi * GAINS + gi) * n;
-        for b in 0..n {
-            sum[b] += sign * c.resp[base + b] as f64;
+        for (s, r) in sum.iter_mut().zip(&c.resp[base..base + n]) {
+            *s += sign * *r as f64;
         }
     };
     for _ in 0..6 {
@@ -777,7 +777,7 @@ pub fn fit_with_model(name: &str, cal: Option<&MicCal>, gain_db: i32, model: &Mi
             (base[i] + cut).clamp(-9.0, 6.0)
         })
         .collect();
-    let weight: Vec<f64> = g.iter().map(|&f| if f < 60.0 || f > 16000.0 { 0.3 } else { 1.0 }).collect();
+    let weight: Vec<f64> = g.iter().map(|&f| if !(60.0..=16000.0).contains(&f) { 0.3 } else { 1.0 }).collect();
     for ((b, _, _), (f, gn)) in EQ_BANDS.iter().zip(fit_bands(&target, &weight, 80.0)) {
         d.eq.insert(b.to_string(), gn);
         d.eq_freq.insert(b.to_string(), dsp::eq_freq_in_range(b, f));

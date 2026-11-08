@@ -23,7 +23,7 @@ impl MixerSettings {
         }
         if self.faders.len() != FADERS.len() || self.mute_modes.len() != FADERS.len()
             || FADERS.iter().any(|&id| !self.faders.contains_key(id)
-                || !self.mute_modes.get(id).is_some_and(|mode| mute_target(mode).is_some()))
+                || self.mute_modes.get(id).is_none_or(|mode| mute_target(mode).is_none()))
             || self.faders.values().any(|id| !CHANNELS.contains(&id.as_str()))
             || self.faders.values().collect::<BTreeSet<_>>().len() != FADERS.len()
         {

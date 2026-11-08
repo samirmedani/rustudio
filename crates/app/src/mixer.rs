@@ -414,13 +414,12 @@ impl Mixer {
         let key_channel = channel.clone();
         let enabled = self.enabled();
         let drag_origin = cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-            if this.enabled() {
-                if let Some(bounds) = rect.get() {
+            if this.enabled()
+                && let Some(bounds) = rect.get() {
                     press_focus.focus(window);
                     this.gesture = Some(Gesture { channel: id.clone(), bounds, vertical, value: position_value(bounds, event.position, vertical), sent_at: None });
                     cx.notify();
                 }
-            }
         });
         let el = div()
             .relative()
@@ -756,7 +755,7 @@ impl Render for Mixer {
                 .detach();
             }
         }
-        let dialog = self.go_confirm_box(cx).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
+        let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
         let shell = self.shell(window, cx).children(toast.map(|(ok, text)| ui::toast(ok, text))).children(dialog.map(ui::modal));
         ui::keep_animating(window);
         shell
@@ -815,10 +814,10 @@ fn channel_colour(channel: &Channel) -> u32 {
 pub(crate) fn channel_hint(id: &str) -> &'static str {
     match id {
         "Mic" => "Ta voix",
-        "System" => "Sons de Windows et notifications",
+        "System" => "Sons de Windows",
         "Game" => "Le son de tes jeux",
-        "Chat" => "Discord, Teams et appels",
-        "Music" => "Spotify, YouTube, navigateur",
+        "Chat" => "Discord et appels",
+        "Music" => "Spotify, YouTube…",
         "Sample" => "Les sons du sampler",
         "LineIn" => "Appareil branché sur la prise Line In",
         "Console" => "Console branchée sur la prise dédiée",

@@ -431,7 +431,7 @@ impl Mixer {
         let apps: Vec<(String, String)> = entries(&v.meta["known_apps"]).map(|(exe, l)| (exe.clone(), l.as_str().unwrap_or(exe).to_owned())).collect();
         let picked_app = self.go.app_name.trim().to_owned();
         let app_text = if picked_app.is_empty() { "Choisir une appli".to_owned() } else { app_label(&picked_app) };
-        let scene_text = self.go.auto_scene.as_deref().map(|s| label_of(s)).unwrap_or_else(|| "Choisir une scène".into());
+        let scene_text = self.go.auto_scene.as_deref().map(&label_of).unwrap_or_else(|| "Choisir une scène".into());
         let apps_for_pick = apps.clone();
         let names_for_pick = names.clone();
         let mut add = div()
@@ -448,7 +448,7 @@ impl Mixer {
         }
         let fallback_names = names.clone();
         let rules_for_fallback = rules.clone();
-        let fallback_text = fallback.as_str().map(|f| label_of(f)).unwrap_or_else(|| "Ne rien changer".into());
+        let fallback_text = fallback.as_str().map(label_of).unwrap_or_else(|| "Ne rien changer".into());
         let mut fallback_options = vec![("Ne rien changer".to_owned(), fallback.is_null())];
         fallback_options.extend(names.iter().map(|(n, l)| (l.clone(), fallback == n.as_str())));
         automation = automation
@@ -746,11 +746,10 @@ impl Mixer {
             );
         let mut styles: Vec<AnyElement> = vec![];
         for (id, st) in entries(&v.meta["hp_styles"]) {
-            if let Some(required) = st["headphone"].as_str() {
-                if eq["headphone"] != required {
+            if let Some(required) = st["headphone"].as_str()
+                && eq["headphone"] != required {
                     continue;
                 }
-            }
             let tile = ui::tile(SharedString::from(format!("hp-style-{id}")), Some((style_icon(id), style_colour(id))), st["label"].as_str().unwrap_or(id).to_owned(), st["desc"].as_str().map(|d| d.to_owned().into()), eq["style"] == id.as_str(), st["headphone"].is_string().then(|| ("Pour ton casque".into(), 0x5856d6)));
             styles.push(self.act(tile, "hp-eq", json!({"style":id}), cx).into_any_element());
         }
@@ -864,7 +863,7 @@ impl Mixer {
                 };
                 state = state.child(ui::list_row(Some((Icon::Route, ui::TEXT2)), label, None, trailing, false));
             }
-            state = state.child(ui::pill("diag-copy", Some(Icon::Download), "Copier le diagnostic anonymisé", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))));
+            state = state.child(ui::pill("diag-copy", Some(Icon::Bookmark), "Copier le diagnostic anonymisé", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))));
         } else {
             state = state.child(hint("Lecture des données du moteur…"));
         }
@@ -883,7 +882,7 @@ impl Mixer {
         }
         let obs = ui::section(Icon::Monitor, 0x5856d6, "Incrustation OBS", None)
             .child(hint("Ajoute une « Source navigateur » dans OBS avec ce lien : la pastille du micro s’affiche dans ton live.").text_size(px(12.)))
-            .child(ui::list_row(None, url.clone(), None, ui::pill("obs-url", Some(Icon::Download), "Copier", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone())))), true));
+            .child(ui::list_row(None, url.clone(), None, ui::pill("obs-url", Some(Icon::Bookmark), "Copier", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone())))), true));
         split(vec![state.into_any_element(), obs.into_any_element()], vec![test.into_any_element(), self.echo_panel(cx).into_any_element()])
     }
 

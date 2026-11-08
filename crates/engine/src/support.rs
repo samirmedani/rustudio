@@ -229,7 +229,7 @@ pub fn support(ctl: &Ctl) -> Value {
         .unwrap_or_default()
         .into_iter()
         .map(|d| json!({"module": d["id"], "etat": d["status"], "connecte": d["connected"], "simule": d["simulated"],
-            "firmware": d["firmware"], "erreur": d["error"].as_str().map(|e| anon(e))}))
+            "firmware": d["firmware"], "erreur": d["error"].as_str().map(&anon)}))
         .collect();
     let drops = &h["usb_drops"];
     let stats = &h["stats"];
@@ -250,7 +250,7 @@ pub fn support(ctl: &Ctl) -> Value {
         "goxlr_mini": {"connectee": h["connected"], "presente": h["present"], "firmware": h["firmware"],
                         "connectee_depuis_s": h["device_uptime_s"], "reconnexions": h["reconnects"], "port_usb": h["usb"],
                         "commandes": stats["commands"], "resynchros": stats["resyncs"], "remises_a_zero": stats["index_resets"],
-                        "boucle_usb_ms": h["loop_age_ms"], "derniere_erreur": h["last_error"].as_str().map(|e| anon(e))},
+                        "boucle_usb_ms": h["loop_age_ms"], "derniere_erreur": h["last_error"].as_str().map(&anon)},
         "mise_a_jour": u,
         "coupures_usb_24h": {"nombre": drops["count"], "perdu_casque_ms": drops["out_ms"], "perdu_pc_ms": drops["in_ms"],
                              "flux_actif": drops["streaming"],

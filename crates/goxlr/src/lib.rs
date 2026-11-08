@@ -340,7 +340,7 @@ impl GoXlr {
         }
         let mut body: Vec<u8> =
             outs.iter().map(|o| (MIX_OUTPUT_ORDER.iter().position(|x| x == o).unwrap() * 2) as u8).collect();
-        body.extend(std::iter::repeat(0xFF).take(outs.len()));
+        body.extend(std::iter::repeat_n(0xFF, outs.len()));
         self.command(0x817 << 12, &body).map(|_| ())
     }
     pub fn set_channel_state(&mut self, ch: usize, muted: bool) -> Res<()> {

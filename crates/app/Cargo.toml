@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
 
-[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+[target.'cfg(any(windows, unix))'.dependencies]
 rustudio-windows-desktop = { path = "../windows-desktop" }
 # le manifeste Windows est dans app.rc (même réglage que GPUI), pour partager gpui avec l'installeur
 gpui = { version = "=0.2.2", default-features = false }
@@ -32,3 +32,12 @@ ureq = { version = "2.12", default-features = false, features = ["json"] }
 # aperçu sur Mac (développement) : shaders compilés au lancement, sans la chaîne Metal de Xcode
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
+objc = "0.2"
+
+# aperçu sous Linux (écran virtuel du serveur, développement)
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui = { version = "=0.2.2", default-features = false, features = ["x11"] }
+
+# macros de objc 0.2 (aperçu sur Mac)
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

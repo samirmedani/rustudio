@@ -1,0 +1,3 @@
+# Les constructeurs d'interface (GPUI) prennent beaucoup de paramètres et des fermetures typées : seuils relevés.
+too-many-arguments-threshold = 11
+type-complexity-threshold = 400

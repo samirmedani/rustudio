@@ -1,5 +1,10 @@
 # Nouveautés
 
+## 6.1.3
+
+- **Finitions vérifiées page par page :** la confirmation d'un profil s'ouvre par-dessus la page, les numéros de version ne se coupent plus, les sous-titres des faders sont plus courts, les tuiles de thème ont la même hauteur, les boutons « Copier » ont la bonne icône et l'aide de la souris ne parle plus de bouton Enregistrer.
+- **Code nettoyé :** plus aucun avertissement du compilateur ni de clippy.
+
 ## 6.1.2
 
 - **Plus rien ne décale la page :** les messages après une action (« Enregistré », erreur, profil appliqué, mise à jour…) s'affichent en notification flottante en bas de la fenêtre et s'effacent seuls. Les demandes de confirmation s'ouvrent par-dessus la page au lieu de s'insérer en haut. Valable sur toutes les pages : GoXLR, profils, réglages, versions, son Windows.
