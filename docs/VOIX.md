@@ -25,7 +25,7 @@ dans `C:\ProgramData\Rustudio\state.json` (des niveaux par bande de fréquences 
 l’efface.
 
 <p align="center">
-  <img src="captures/mic.jpg" width="720" alt="La page Micro : type et modèle du micro, gain, empreinte vocale, préréglages et réécoute">
+  <img src="captures/empreinte.jpg" width="720" alt="Analyse de l’empreinte : ta voix avant et avec le préréglage, ce qui a été mesuré et tes profils sur mesure">
 </p>
 
 ### Ce que l’analyse mesure

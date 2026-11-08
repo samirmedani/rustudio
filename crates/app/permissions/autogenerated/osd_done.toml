@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-osd-done"
+description = "Enables the osd_done command without any pre-configured scope."
+commands.allow = ["osd_done"]
+
+[[permission]]
+identifier = "deny-osd-done"
+description = "Denies the osd_done command without any pre-configured scope."
+commands.deny = ["osd_done"]

@@ -14,7 +14,6 @@ pub mod library;
 pub mod log;
 pub mod modules;
 pub mod mouse;
-mod mixer;
 pub mod net;
 #[cfg(windows)]
 pub mod service;

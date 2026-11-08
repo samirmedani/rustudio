@@ -220,7 +220,7 @@ pub fn support(ctl: &Ctl) -> Value {
     let secrets = secrets(ctl);
     let anon = |s: &str| anonymize(s, &secrets);
     let h = ctl.health();
-    let windows = if ctl.simulated() { "Démonstration".into() } else { windows_version() };
+    let windows = windows_version();
     let repo = ctl.updater.ucfg.lock().unwrap().repo.clone();
     let u = ctl.updater.brief();
     let devices: Vec<Value> = ctl.modules_snapshot()["devices"]

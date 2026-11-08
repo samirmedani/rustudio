@@ -1,318 +1,613 @@
-#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+//! Rustudio - appli Windows (logiciel libre, licence MIT).
+//! Fenetre sur l'interface servie par le moteur (http://127.0.0.1:14565/), icone d'etat et menu pres de l'horloge,
+//! bulle a l'ecran quand le micro change (jamais de focus, meme en jeu), relance apres une mise a jour,
+//! peripheriques son par defaut de Windows (anti-echo). Instance unique.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg(windows)]
-mod backend;
-#[cfg(windows)]
-mod desktop;
-#[cfg(windows)]
-mod goxlr;
-#[cfg(windows)]
-mod library;
-#[cfg(windows)]
-mod mixer;
-#[cfg(windows)]
-mod mouse;
-#[cfg(any(windows, test))]
-mod profiles;
-#[cfg(windows)]
-mod settings;
-#[cfg(windows)]
-mod tray;
-#[cfg(windows)]
-mod tray_panel;
-#[cfg(windows)]
-mod ui;
-#[cfg(windows)]
-mod voice;
-#[cfg(windows)]
-mod win_session;
+mod audio;
+mod badge;
+mod soundcheck;
 
-#[cfg(not(windows))]
-fn main() {
-    eprintln!("Rustudio est une application Windows.");
-    std::process::exit(1);
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use tauri::image::Image;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+
+const ENGINE: &str = "http://127.0.0.1:14565";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+static QUITTING: AtomicBool = AtomicBool::new(false);
+static ICON: &[u8] = include_bytes!("../icons/32x32.png");
+static OPEN_PAGE: Mutex<&str> = Mutex::new("devices");
+
+struct Icons {
+    on: Image<'static>,
+    muted: Image<'static>,
+    part: Image<'static>,
+    off: Image<'static>,
+}
+fn icons() -> &'static Icons {
+    static I: OnceLock<Icons> = OnceLock::new();
+    I.get_or_init(|| {
+        let base = Image::from_bytes(ICON).expect("icone");
+        let (w, h) = (base.width(), base.height());
+        let mk = |c| Image::new_owned(badge::badge(base.rgba(), w, c), w, h);
+        Icons { on: mk(None), muted: mk(Some((255, 69, 58))), part: mk(Some((255, 159, 10))), off: mk(Some((142, 142, 147))) }
+    })
 }
 
-#[cfg(windows)]
-fn main() {
-    if let Err(err) = run() {
-        eprintln!("{err}");
-        std::process::exit(1);
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new().timeout(Duration::from_secs(3)).build()
+}
+fn get(path: &str) -> Option<Value> {
+    agent().get(&format!("{ENGINE}{path}")).call().ok()?.into_json().ok()
+}
+fn post(path: &str, body: Value) {
+    let _ = agent().post(&format!("{ENGINE}/api/{path}")).set("X-Rustudio", "1").send_json(body);
+}
+
+fn hidden(cmd: &str) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut c = std::process::Command::new(cmd);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    c
+}
+
+// ---------- demarrage avec Windows ----------
+fn is_startup() -> bool {
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        winreg::RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>("Rustudio")).is_ok()
+    }
+    #[cfg(not(windows))]
+    false
+}
+fn set_startup_reg(on: bool) {
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        if let Ok((k, _)) = winreg::RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY) {
+            if on {
+                let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                let _ = k.set_value("Rustudio", &format!("\"{exe}\" --tray"));
+            } else {
+                let _ = k.delete_value("Rustudio");
+            }
+        }
+    }
+    let _ = (on, RUN_KEY);
+}
+
+// ---------- commandes appelees par l'interface ----------
+#[tauri::command]
+fn audio_defaults() -> Value {
+    audio::status()
+}
+#[tauri::command]
+fn audio_fix() -> Value {
+    let n = audio::fix();
+    let mut st = audio::status();
+    st["fixed"] = json!(n);
+    st
+}
+/// Test « son qui crépite » : écoute les voies GoXLR sans rien jouer (hors du fil de la fenêtre).
+#[tauri::command]
+async fn sound_check(seconds: f64) -> Value {
+    tauri::async_runtime::spawn_blocking(move || soundcheck::run(seconds)).await.unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+/// Test en boucle : son discret joue sur Sample (isole par le moteur), reecoute par le Stream Mix.
+#[tauri::command]
+async fn sound_loop_test(seconds: f64) -> Value {
+    tauri::async_runtime::spawn_blocking(move || soundcheck::loop_test(seconds, false)).await.unwrap_or_else(|e| json!({"status": "error", "error": e.to_string()}))
+}
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("adresse refusée".into());
+    }
+    hidden("explorer.exe").arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn app_info() -> Value {
+    json!({"version": VERSION, "startup": is_startup(), "app": "tauri"})
+}
+#[tauri::command]
+fn set_startup(on: bool) -> bool {
+    set_startup_reg(on);
+    is_startup()
+}
+#[tauri::command]
+fn osd_done(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("osd") {
+        let _ = w.hide();
+        webview_visible(&w, false);
     }
 }
 
-/// Version de l'appli : la même que celle du moteur livré avec elle.
-#[cfg(windows)]
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+// ---------- fenetre ----------
+/// Dit a WebView2 si la page est visible. Cachee ou reduite, la page passe en « hidden » : plus de rendu ni
+/// d'animation, et l'interface ralentit ses lectures (WebView2 ne le devine pas seul pour une fenetre cachee).
+fn webview_visible(w: &WebviewWindow, on: bool) {
+    #[cfg(windows)]
+    {
+        let _ = w.with_webview(move |wv| unsafe {
+            let _ = wv.controller().SetIsVisible(on);
+        });
+    }
+    let _ = (w, on);
+}
+
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        webview_visible(&w, true);
+        let _ = w.set_focus();
+    }
+}
+
+/// Navigation demandee par un clic sur le menu Windows ; le moniteur conserve aussi cette page au demarrage.
+fn show_page(app: &AppHandle, page: &'static str) {
+    *OPEN_PAGE.lock().unwrap() = page;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.eval(&format!("if (typeof go === 'function') {{ if (typeof closeSheet === 'function') closeSheet(); go({}); }}", json!(page)));
+    }
+    show_main(app);
+}
+
+fn goxlr_connected(snapshot: &Value) -> bool {
+    match snapshot["modules"]["devices"].as_array() {
+        Some(devices) => devices.iter().any(|d| d["id"] == "goxlr-mini" && d["connected"] == true),
+        None => snapshot["connected"].as_bool().unwrap_or(false), // moteur anterieur au registre des modules
+    }
+}
+
+fn connected_devices(snapshot: &Value) -> usize {
+    snapshot["modules"]["devices"].as_array()
+        .map(|devices| devices.iter().filter(|d| d["connected"] == true).count())
+        .unwrap_or_else(|| usize::from(snapshot["connected"].as_bool().unwrap_or(false)))
+}
 
 #[cfg(windows)]
-fn run() -> Result<(), String> {
-    use gpui::{App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
-    use rustudio_windows_desktop::{session, soundcheck};
-    use std::time::{Duration, Instant};
-
-    let all: Vec<String> = std::env::args().skip(1).collect();
-    // Diagnostic sans fenêtre : Rustudio.exe --sound-check|--loop-test <secondes> [fichier.json] [--exclusive]
-    if let Some(i) = all.iter().position(|a| a == "--sound-check" || a == "--loop-test") {
-        let secs = all.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(30.0);
-        let out = if all[i] == "--loop-test" {
-            soundcheck::loop_test(secs, all.iter().any(|a| a == "--exclusive"))
-        } else {
-            soundcheck::run(secs)
+fn style_main(w: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    if let Ok(h) = w.hwnd() {
+        let hwnd = HWND(h.0 as _);
+        // barre de titre de la couleur du fond de l'interface (#F5F5F7), texte #1D1D1F
+        for (attr, val) in [(20u32, 0u32), (35, 0x00F7F5F5), (36, 0x001F1D1D)] {
+            unsafe {
+                let _ = DwmSetWindowAttribute(hwnd, windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(attr as i32), &val as *const u32 as _, 4);
+            }
         }
-        .to_string();
-        match all.get(i + 2).filter(|f| !f.starts_with("--")) {
-            Some(f) => std::fs::write(f, out).map_err(|e| e.to_string())?,
+    }
+}
+
+/// « M'écouter » enregistre l'entree Chat Mic : seule la page locale du moteur a le micro, rien d'autre.
+#[cfg(windows)]
+fn allow_mic(w: &WebviewWindow) {
+    let _ = w.with_webview(|wv| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::*;
+        use webview2_com::PermissionRequestedEventHandler;
+        let Ok(core) = wv.controller().CoreWebView2() else { return };
+        let handler = PermissionRequestedEventHandler::create(Box::new(|_, args| {
+            if let Some(args) = args {
+                let mut uri = windows::core::PWSTR::null();
+                args.Uri(&mut uri)?;
+                let u = uri.to_string().unwrap_or_default();
+                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                args.PermissionKind(&mut kind)?;
+                let local = u.starts_with(ENGINE);
+                let ok = local && (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE);
+                args.SetState(if ok { COREWEBVIEW2_PERMISSION_STATE_ALLOW } else { COREWEBVIEW2_PERMISSION_STATE_DENY })?;
+            }
+            Ok(())
+        }));
+        let mut token = Default::default();
+        let _ = core.add_PermissionRequested(&handler, &mut token);
+    });
+}
+
+// ---------- bulle a l'ecran ----------
+fn osd(app: &AppHandle, title: &str, sub: &str, colour: &str, off: bool) {
+    let Some(w) = app.get_webview_window("osd") else { return };
+    if let Ok(Some(m)) = w.primary_monitor() {
+        let (ms, mp, sc) = (m.size(), m.position(), m.scale_factor());
+        let (bw, bh) = ((342.0 * sc) as i32, (86.0 * sc) as i32);
+        let x = mp.x + (ms.width as i32 - bw) / 2;
+        let y = mp.y + ms.height as i32 - bh - (110.0 * sc) as i32;
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+    webview_visible(&w, true);
+    show_no_activate(&w);
+    let _ = w.emit("osd", json!({"title": title, "sub": sub, "color": colour, "off": off, "ms": 1400}));
+}
+
+fn show_no_activate(w: &WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        if let Ok(h) = w.hwnd() {
+            let hwnd = HWND(h.0 as _);
+            unsafe {
+                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0) as isize);
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+            return;
+        }
+    }
+    let _ = w.show();
+}
+
+fn mic_label(t: &str) -> &'static str {
+    match t {
+        "stream" => "coupé du stream",
+        "chat" => "coupé de Discord",
+        "phones" => "coupé du casque",
+        "lineout" => "coupé des enceintes",
+        "all" => "coupé",
+        _ => "actif",
+    }
+}
+
+// ---------- menu de l'icone ----------
+fn build_menu(app: &AppHandle, st: Option<&Value>) -> tauri::Result<Menu<tauri::Wry>> {
+    let connected = st.map(goxlr_connected).unwrap_or(false);
+    let muted = st.map(|s| {
+        let s = &s["state"];
+        s["mutes"]["Mic"].as_bool().unwrap_or(false) || s["partial"]["Mic"].is_string()
+    });
+    let open = MenuItem::with_id(app, "open", "Ouvrir Rustudio", true, None::<&str>)?;
+    let devices = MenuItem::with_id(app, "devices", "Mes appareils", true, None::<&str>)?;
+    let modules = MenuItem::with_id(app, "modules", "Modules", true, None::<&str>)?;
+    let goxlr = Submenu::with_id(app, "goxlr", if connected { "GoXLR Mini" } else { "GoXLR Mini — déconnectée" }, st.is_some())?;
+    let mixer = MenuItem::with_id(app, "goxlr-open", "Ouvrir les réglages", st.is_some(), None::<&str>)?;
+    let mic = CheckMenuItem::with_id(app, "mic", if muted == Some(true) { "Réactiver le micro" } else { "Couper le micro" }, connected, muted.unwrap_or(false), None::<&str>)?;
+    let scenes = Submenu::with_id(app, "scenes", "Scènes", connected)?;
+    if let Some(s) = st {
+        let active = s["state"]["scene"].as_str().unwrap_or("");
+        if let Some(m) = s["meta"]["scenes"].as_object() {
+            for (k, v) in m {
+                scenes.append(&CheckMenuItem::with_id(app, format!("scene:{k}"), v["label"].as_str().unwrap_or(k), true, k == active, None::<&str>)?)?;
+            }
+        }
+        if let Some(m) = s["state"]["user_scenes"].as_object().filter(|m| !m.is_empty()) {
+            scenes.append(&PredefinedMenuItem::separator(app)?)?;
+            for k in m.keys() {
+                scenes.append(&CheckMenuItem::with_id(app, format!("scene:{k}"), k, true, k == active, None::<&str>)?)?;
+            }
+        }
+    }
+    let reconnect = MenuItem::with_id(app, "reconnect", "Reconnecter GoXLR Mini", st.is_some(), None::<&str>)?;
+    let diag = MenuItem::with_id(app, "diag", "Diagnostic GoXLR Mini…", st.is_some(), None::<&str>)?;
+    let overlay = MenuItem::with_id(app, "overlay", "Incrustation GoXLR Mini pour OBS…", st.is_some(), None::<&str>)?;
+    goxlr.append_items(&[&mixer, &mic, &scenes, &PredefinedMenuItem::separator(app)?, &reconnect, &diag, &overlay])?;
+    let startup = CheckMenuItem::with_id(app, "startup", "Démarrer avec Windows", true, is_startup(), None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quitter l'appli", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &devices, &modules])?;
+    if connected {
+        menu.append_items(&[&PredefinedMenuItem::separator(app)?, &goxlr])?;
+    }
+    menu.append_items(&[&PredefinedMenuItem::separator(app)?, &startup, &quit])?;
+    Ok(menu)
+}
+
+fn on_menu(app: &AppHandle, id: &str) {
+    match id {
+        "open" => show_main(app),
+        "devices" => show_page(app, "devices"),
+        "modules" => show_page(app, "modules"),
+        "goxlr-open" => show_page(app, "goxlr-mini/mixer"),
+        "mic" => {
+            std::thread::spawn(|| {
+                let Some(st) = get("/api/state").filter(goxlr_connected) else { return };
+                let muted = st["state"]["mutes"]["Mic"].as_bool().unwrap_or(false) || st["state"]["partial"]["Mic"].is_string();
+                post("mute", json!({"channel": "Mic", "muted": !muted, "target": "all"}));
+            });
+        }
+        "reconnect" => {
+            std::thread::spawn(|| post("reconnect", json!({})));
+        }
+        "diag" => {
+            show_page(app, "goxlr-mini/mixer");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("typeof openDiag === 'function' && openDiag()");
+            }
+        }
+        "overlay" => {
+            show_page(app, "goxlr-mini/mixer");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("typeof openOverlaySheet === 'function' && openOverlaySheet()");
+            }
+        }
+        "startup" => set_startup_reg(!is_startup()),
+        "quit" => {
+            QUITTING.store(true, Ordering::SeqCst);
+            app.exit(0);
+        }
+        s if s.starts_with("scene:") => {
+            let name = s[6..].to_string();
+            std::thread::spawn(move || post("scene", json!({"name": name})));
+        }
+        _ => {}
+    }
+}
+
+// ---------- surveillance du moteur ----------
+fn installed_version() -> Option<String> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
+    m["version"].as_str().map(String::from)
+}
+
+/// Version installee changee, dans un sens ou dans l'autre (mise a jour ou retour a une version precedente) : le
+/// moteur annonce la version ecrite sur le disque, differente de celle qui tourne. Sans manifeste (developpement),
+/// jamais de relance.
+fn should_relaunch(engine: &str, running: &str, disk: Option<&str>) -> bool {
+    engine != running && disk == Some(engine)
+}
+
+/// Apres une mise a jour ou un retour, l'exe a deja ete remplace : on relance celui du disque.
+fn relaunch_if_updated(app: &AppHandle, engine_version: &str) -> bool {
+    if engine_version == VERSION || !should_relaunch(engine_version, VERSION, installed_version().as_deref()) {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let visible = app.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
+    let mut c = std::process::Command::new(exe);
+    c.args(["--relaunch", &std::process::id().to_string()]);
+    if !visible {
+        c.arg("--tray");
+    }
+    if c.spawn().is_ok() {
+        QUITTING.store(true, Ordering::SeqCst);
+        app.exit(0);
+        return true;
+    }
+    false
+}
+
+fn monitor(app: AppHandle, tray: TrayIcon) {
+    let mut last_mic: Option<String> = None;
+    let (mut icon_key, mut tip) = (String::new(), String::new());
+    let (mut last_ok, mut last_rescue) = (Instant::now(), Instant::now() - Duration::from_secs(120));
+    let (mut tick, mut audio_key, mut menu_key, mut loaded) = (0u64, String::new(), String::new(), false);
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        tick += 1;
+        let live = get("/api/live");
+        let (key, text) = match &live {
+            Some(l) => {
+                last_ok = Instant::now();
+                if !loaded {
+                    loaded = true;
+                    if let Some(w) = app.get_webview_window("main") {
+                        let page = *OPEN_PAGE.lock().unwrap();
+                        let _ = w.navigate(format!("{ENGINE}/#{page}").parse().unwrap());
+                    }
+                }
+                let connected = goxlr_connected(l);
+                let device_count = connected_devices(l);
+                let health = l["health"].as_str().unwrap_or("ok");
+                let mic = if l["mic"]["muted"].as_bool().unwrap_or(false) { "all".to_string() } else { l["mic"]["partial"].as_str().unwrap_or("on").to_string() };
+                if let Some(v) = l["app_version"].as_str() {
+                    if relaunch_if_updated(&app, v) {
+                        return;
+                    }
+                }
+                if connected && l["osd"].as_bool().unwrap_or(true) && last_mic.as_deref().map(|m| m != mic).unwrap_or(false) {
+                    match mic.as_str() {
+                        "on" => osd(&app, "Micro actif", "Tout le monde t'entend", "#30D158", false),
+                        "all" => osd(&app, "Micro coupé", "Personne ne t'entend", "#FF453A", true),
+                        m => osd(&app, &format!("Micro {}", mic_label(m)), "Les autres t'entendent encore", "#FF9F0A", true),
+                    }
+                }
+                if connected {
+                    last_mic = Some(mic.clone());
+                }
+                let key = if device_count == 0 || (connected && health != "ok") { "off" } else if !connected || mic == "on" { "on" } else if mic == "all" { "muted" } else { "part" };
+                let text = if device_count == 0 {
+                    "Rustudio · aucun appareil connecté".to_string()
+                } else if !connected {
+                    format!("Rustudio · {device_count} appareil{} connecté{}", if device_count > 1 { "s" } else { "" }, if device_count > 1 { "s" } else { "" })
+                } else if health != "ok" {
+                    "Rustudio · GoXLR Mini · connexion à vérifier".into()
+                } else if mic == "on" {
+                    "Rustudio · GoXLR Mini · micro actif".into()
+                } else if mic == "all" {
+                    "Rustudio · GoXLR Mini · micro coupé".into()
+                } else {
+                    format!("Rustudio · GoXLR Mini · micro {}", mic_label(&mic))
+                };
+                (key.to_string(), text)
+            }
+            None => {
+                // moteur muet : le service est relance (l'installeur autorise ce compte a le demarrer)
+                if last_ok.elapsed() > Duration::from_secs(20) && last_rescue.elapsed() > Duration::from_secs(60) {
+                    last_rescue = Instant::now();
+                    let _ = hidden("sc").args(["start", "Rustudio"]).spawn();
+                }
+                ("off".to_string(), "Rustudio · moteur arrêté".to_string())
+            }
+        };
+        if key != icon_key {
+            let i = icons();
+            let img = match key.as_str() { "on" => &i.on, "muted" => &i.muted, "part" => &i.part, _ => &i.off };
+            let _ = tray.set_icon(Some(img.clone()));
+            icon_key = key;
+        }
+        if text != tip {
+            let _ = tray.set_tooltip(Some(&text));
+            tip = text;
+        }
+        // peripheriques Windows par defaut : relus toutes les 4 s, envoyes a l'interface s'ils changent
+        if tick % 4 == 0 && live.is_some() {
+            let st = audio::status();
+            let k = st.to_string();
+            if k != audio_key {
+                audio_key = k;
+                let _ = app.emit_to("main", "audio-defaults", st);
+            }
+        }
+        // menu : micro et scenes a jour
+        if tick % 3 == 1 {
+            let st = get("/api/state");
+            let mk = st.as_ref().map(|s| format!("{}|{}|{}|{}", s["state"]["mutes"]["Mic"], s["state"]["partial"]["Mic"], s["state"]["scene"], s["state"]["user_scenes"].as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default())).unwrap_or_default();
+            let mk = format!("{mk}|{}|{}|{}", st.as_ref().map(|s| &s["modules"]).unwrap_or(&Value::Null), st.as_ref().map(|s| &s["connected"]).unwrap_or(&Value::Null), is_startup());
+            if mk != menu_key {
+                menu_key = mk;
+                if let Ok(m) = build_menu(&app, st.as_ref()) {
+                    let _ = tray.set_menu(Some(m));
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let tray_only = args.iter().any(|a| a == "--tray");
+    // diagnostic sans fenetre : Rustudio.exe --sound-check|--loop-test <secondes> <fichier.json>
+    if let Some(i) = args.iter().position(|a| a == "--sound-check" || a == "--loop-test") {
+        let secs = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(30.0);
+        let exclusive = args.iter().any(|a| a == "--exclusive");
+        let out = if args[i] == "--loop-test" { soundcheck::loop_test(secs, exclusive) } else { soundcheck::run(secs) }.to_string();
+        match args.get(i + 2) {
+            Some(f) => {
+                let _ = std::fs::write(f, out);
+            }
             None => println!("{out}"),
         }
-        return Ok(());
+        return;
     }
-
-    let mut args = all.into_iter();
-    let mut port = None;
-    let mut profiles_dir = None;
-    let mut force_live = false;
-    let mut demo = false;
-    let mut open_mixer = false;
-    let mut inspect = false;
-    let mut start_demo = false;
-    let mut native_osd = false;
-    let mut tray_mode = false;
-    let mut duration = None;
-    let mut show = true;
-    let mut self_test = false;
-    let mut relaunch = None;
-    let mut start_page = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--port" => {
-                port = Some(args.next().and_then(|x| x.parse::<u16>().ok()).filter(|p| *p > 0).ok_or("Port moteur invalide.")?);
+    // relance apres mise a jour : on attend que l'ancienne instance soit partie
+    if let Some(i) = args.iter().position(|a| a == "--relaunch") {
+        if let Some(pid) = args.get(i + 1).and_then(|p| p.parse::<u32>().ok()) {
+            let t0 = Instant::now();
+            while t0.elapsed() < Duration::from_secs(20) && pid_alive(pid) {
+                std::thread::sleep(Duration::from_millis(200));
             }
-            "--seconds" => {
-                duration = Some(Duration::from_secs(
-                    args.next().and_then(|x| x.parse().ok()).filter(|n| (1..=300).contains(n)).ok_or("Durée attendue : 1 à 300 secondes.")?,
-                ))
-            }
-            "--relaunch" => relaunch = args.next().and_then(|x| x.parse::<u32>().ok()),
-            "--hidden" => show = false,
-            "--live" => force_live = true,
-            "--demo" => demo = true,
-            "--native-osd" => native_osd = true,
-            "--tray" => tray_mode = true,
-            "--start-demo" => start_demo = true,
-            "--mixer" => open_mixer = true,
-            "--page" => start_page = Some(desktop::Page::from_name(&args.next().ok_or("Page manquante.")?).ok_or("Page inconnue.")?),
-            "--inspect" => inspect = true,
-            "--profiles-dir" => profiles_dir = Some(std::path::PathBuf::from(args.next().ok_or("Dossier de profils manquant.")?)),
-            "--self-test" => self_test = true,
-            // ouvre le panneau de l'icône dès le démarrage (captures et bancs de test)
-            "--panel" => {}
-            _ => return Err(format!("Option inconnue : {arg}")),
         }
     }
-    // Sans option, Rustudio pilote le moteur installé. Les essais passent toujours par la démonstration.
-    let live = force_live || !(demo || start_demo || self_test || port.is_some_and(|p| p != 14565));
-    if live && (demo || start_demo || self_test) {
-        return Err("La démonstration ne peut pas utiliser le moteur installé.".into());
-    }
-    let (port, _demo_engine) = if start_demo {
-        let engine = DemoEngine::start(port)?;
-        (engine.port, Some(engine))
-    } else {
-        (port.unwrap_or(if live { 14565 } else { 14566 }), None)
-    };
-    if !live && port == 14565 {
-        return Err("Le port 14565 est celui du moteur installé.".into());
-    }
-    let dir = profiles_dir.unwrap_or_else(|| {
-        if live {
-            std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Rustudio").join("profils")
-        } else {
-            std::env::temp_dir().join("Rustudio Démo").join("profils")
-        }
-    });
-    let client = backend::Client::new(port, live);
-    if inspect {
-        let inventory = client.inventory()?;
-        let mix = client.snapshot(None)?;
-        println!("inventaire={} mixeur={} voies={}", inventory.devices.len(), mix.health, mix.channels.len());
-        return Ok(());
-    }
-    if self_test {
-        let state = client.snapshot(None)?;
-        backend::verify(&client, &state)?;
-        desktop::verify_profiles(&client)?;
-        mouse::verify(&client)?;
-        return goxlr::verify(&client);
-    }
-    if let Some(pid) = relaunch {
-        session::wait_exit(pid, Duration::from_secs(20));
-    }
-    // Appli installée : une seule instance par session ; la seconde ouverture montre la fenêtre existante.
-    let instance = if live && duration.is_none() {
-        match session::Instance::acquire("Rustudio") {
-            Some(instance) => Some(instance),
-            None => return Ok(()),
-        }
-    } else {
-        None
-    };
-    // Avec le moteur installé, l'icône près de l'horloge garde Rustudio ouvert, fenêtre fermée ou non.
-    let resident = live || tray_mode;
-    let initial = start_page.unwrap_or(if open_mixer { desktop::Page::Mixer } else { desktop::Page::Devices });
-    let start = Instant::now();
-    Application::new().with_assets(ui::Assets).run(move |cx: &mut App| {
-        ui::load_fonts(cx);
-        let window_client = client.clone();
-        let open = std::rc::Rc::new(move |cx: &mut App, page: Option<desktop::Page>, visible: bool| {
-            if let Some(handle) = cx.windows().iter().find_map(|w| w.downcast::<mixer::Mixer>()) {
-                let _ = handle.update(cx, |mixer, window, cx| {
-                    if let Some(page) = page {
-                        mixer.go_to(page, cx);
-                    }
-                    window.activate_window();
-                });
-                return;
+    let ui_url = format!("{ENGINE}/");
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| show_main(app)))
+        .invoke_handler(tauri::generate_handler![audio_defaults, audio_fix, sound_check, sound_loop_test, open_external, app_info, set_startup, osd_done])
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            let main = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("Rustudio")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(900.0, 620.0)
+                .center()
+                .theme(Some(tauri::Theme::Light))
+                .visible(!tray_only)
+                .build()?;
+            #[cfg(windows)]
+            {
+                style_main(&main);
+                allow_mic(&main);
             }
-            let client = window_client.clone();
-            let dir = dir.clone();
-            let bounds = Bounds::centered(None, size(px(1240.), px(800.)), cx);
-            let result = cx.open_window(
-                WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(if live { "Rustudio" } else { "Rustudio · Démonstration" }.into()),
-                        // barre de titre dessinée par Rustudio (boutons de fenêtre dans la page)
-                        appears_transparent: true,
-                        ..Default::default()
-                    }),
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(1000.), px(660.))),
-                    focus: visible,
-                    show: visible,
-                    ..Default::default()
-                },
-                |_, cx| {
-                    cx.new(|cx| {
-                        let mut mixer = mixer::Mixer::new(
-                            client,
-                            profiles::Store::new(dir),
-                            initial,
-                            native_osd && !resident,
-                            if resident { None } else { duration },
-                            start,
-                            cx,
-                        );
-                        mixer.go_to(page.unwrap_or(initial), cx);
-                        mixer
-                    })
-                },
-            );
-            if let Err(err) = result {
-                eprintln!("Ouverture de la fenêtre : {err:#}");
-                if !resident {
-                    cx.quit();
-                }
-            }
-        });
-        if resident {
-            let opener = open.clone();
-            if let Err(error) = tray::start(cx, client, live || native_osd, duration, move |cx, page| opener(cx, page, true)) {
-                eprintln!("Icône Rustudio : {error}");
-                cx.quit();
-                return;
-            }
-            if let Some(instance) = instance {
-                let (tx, rx) = async_channel::bounded::<()>(4);
-                std::thread::spawn(move || {
-                    while instance.wait_show() {
-                        if tx.send_blocking(()).is_err() {
-                            break;
-                        }
-                    }
-                });
-                let opener = open.clone();
-                cx.spawn(async move |cx| {
-                    while rx.recv().await.is_ok() {
-                        let _ = cx.update(|cx| opener(cx, None, true));
+            let _ = &ui_url;
+            let _osd = WebviewWindowBuilder::new(app, "osd", WebviewUrl::App("osd.html".into()))
+                .title("Rustudio")
+                .inner_size(342.0, 86.0)
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .focused(false)
+                .resizable(false)
+                .shadow(false)
+                .visible(false)
+                .build()?;
+            let _ = _osd.set_ignore_cursor_events(true);
+            let menu = build_menu(&handle, None)?;
+            let tray = TrayIconBuilder::with_id("main")
+                .icon(icons().off.clone())
+                .tooltip("Rustudio")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, ev| on_menu(app, ev.id().as_ref()))
+                .on_tray_icon_event(|tray, ev| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                        show_main(tray.app_handle());
                     }
                 })
-                .detach();
+                .build(app)?;
+            static TOLD: Mutex<bool> = Mutex::new(false);
+            let h2 = handle.clone();
+            if tray_only {
+                webview_visible(&main, false);
             }
-            if !tray_mode {
-                open(cx, None, show);
-            }
-        } else {
-            open(cx, None, show);
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
+            webview_visible(&_osd, false);
+            main.on_window_event(move |ev| {
+                if let tauri::WindowEvent::Resized(_) = ev {
+                    if let Some(w) = h2.get_webview_window("main") {
+                        let shown = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
+                        webview_visible(&w, shown);
+                    }
                 }
-            })
-            .detach();
-        }
-    });
-    Ok(())
-}
-#[cfg(windows)]
-struct DemoEngine {
-    child: std::process::Child,
-    _state: tempfile::TempDir,
-    port: u16,
-}
-
-#[cfg(windows)]
-impl DemoEngine {
-    fn start(port: Option<u16>) -> Result<Self, String> {
-        use std::os::windows::process::CommandExt;
-        use std::process::{Command, Stdio};
-
-        if port == Some(14565) {
-            return Err(
-                "Le port de l’installation n’est pas disponible pour la démonstration.".into(),
-            );
-        }
-        let guard = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port.unwrap_or(0)))
-            .map_err(|_| "Le port de démonstration est indisponible.")?;
-        let port = guard.local_addr().map_err(|e| e.to_string())?.port();
-        let state = tempfile::Builder::new()
-            .prefix("rustudio-gpui-demo-")
-            .tempdir()
-            .map_err(|e| format!("Dossier de démonstration inaccessible : {e}"))?;
-        let exe = std::env::current_exe()
-            .map_err(|e| e.to_string())?
-            .with_file_name("rustudio-engine.exe");
-        drop(guard);
-        let child = Command::new(exe)
-            .args([
-                "run",
-                "--child",
-                "--simulate",
-                "--port",
-                &port.to_string(),
-                "--data-dir",
-            ])
-            .arg(state.path())
-            .env_remove("RUSTUDIO_SUPERVISED")
-            .env_remove("RUSTUDIO_SIM_FW")
-            .env_remove("RUSTUDIO_DEMO_UPDATE")
-            .creation_flags(0x08000000)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("Impossible de démarrer le moteur de démonstration : {e}"))?;
-        Ok(Self {
-            child,
-            _state: state,
-            port,
+                if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+                    if !QUITTING.load(Ordering::SeqCst) {
+                        api.prevent_close();
+                        if let Some(w) = h2.get_webview_window("main") {
+                            let _ = w.hide();
+                            webview_visible(&w, false);
+                        }
+                        let mut t = TOLD.lock().unwrap();
+                        if !*t {
+                            *t = true;
+                            osd(&h2, "Rustudio reste ouvert", "Retrouve-le près de l'horloge", "#0A84FF", false);
+                        }
+                    }
+                }
+            });
+            std::thread::spawn(move || monitor(handle, tray));
+            Ok(())
         })
+        .run(tauri::generate_context!())
+        .expect("Rustudio");
+}
+
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code).is_ok() && code == 259;
+        let _ = CloseHandle(h);
+        ok
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        false
     }
 }
 
-#[cfg(windows)]
-impl Drop for DemoEngine {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn relance_apres_mise_a_jour_ou_retour() {
+        assert!(super::should_relaunch("5.6.12", "5.6.11", Some("5.6.12")), "mise a jour");
+        assert!(super::should_relaunch("5.6.11", "5.6.12", Some("5.6.11")), "retour a une version precedente");
+        assert!(!super::should_relaunch("5.6.12", "5.6.12", Some("5.6.12")), "deja la bonne version");
+        assert!(!super::should_relaunch("5.6.11", "5.6.12", Some("5.6.12")), "le disque n'a pas encore change");
+        assert!(!super::should_relaunch("5.6.11", "5.6.12", None), "developpement, sans manifeste");
     }
 }

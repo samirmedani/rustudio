@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 232" width="880" height="232" role="img" aria-labelledby="t">
+<title id="t">Comment ça marche : installe Rustudio, branche ton matériel, puis règle tout au même endroit.</title>
+<style>text{font-family:'Segoe UI Variable Text','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
+@keyframes hl0{0%,0.000%{stroke-opacity:0}4.000%,29.333%{stroke-opacity:1}33.333%,100%{stroke-opacity:0}}.hl0{animation:hl0 9s ease-in-out infinite}
+@keyframes hl1{0%,33.133%{stroke-opacity:0}37.333%,62.667%{stroke-opacity:1}66.667%,100%{stroke-opacity:0}}.hl1{animation:hl1 9s ease-in-out infinite}
+@keyframes hl2{0%,66.467%{stroke-opacity:0}70.667%,96.000%{stroke-opacity:1}100.000%,100%{stroke-opacity:0}}.hl2{animation:hl2 9s ease-in-out infinite}
+@keyframes dl{0%,4%{transform:scaleX(0)}26%,100%{transform:scaleX(1)}}.dl{transform-box:fill-box;transform-origin:left center;animation:dl 9s ease-out infinite}
+@keyframes c1{0%,36%{opacity:0;transform:translateY(10px)}42%,100%{opacity:1;transform:translateY(0)}}.c1{animation:c1 9s ease-out infinite}
+@keyframes c2{0%,44%{opacity:0;transform:translateY(10px)}50%,100%{opacity:1;transform:translateY(0)}}.c2{animation:c2 9s ease-out infinite}
+@keyframes f0{0%,68%{transform:scaleX(1)}78%,90%{transform:scaleX(2.167)}100%{transform:scaleX(1)}}.f0{transform-box:fill-box;transform-origin:left center;animation:f0 9s ease-in-out infinite}
+@keyframes n0{0%,68%{transform:translateX(0)}78%,90%{transform:translateX(70px)}100%{transform:translateX(0)}}.n0{animation:n0 9s ease-in-out infinite}
+@keyframes f1{0%,71%{transform:scaleX(1)}81%,92%{transform:scaleX(0.636)}100%{transform:scaleX(1)}}.f1{transform-box:fill-box;transform-origin:left center;animation:f1 9s ease-in-out infinite}
+@keyframes n1{0%,71%{transform:translateX(0)}81%,92%{transform:translateX(-40px)}100%{transform:translateX(0)}}.n1{animation:n1 9s ease-in-out infinite}
+@keyframes f2{0%,74%{transform:scaleX(1)}84%,94%{transform:scaleX(2.500)}100%{transform:scaleX(1)}}.f2{transform-box:fill-box;transform-origin:left center;animation:f2 9s ease-in-out infinite}
+@keyframes n2{0%,74%{transform:translateX(0)}84%,94%{transform:translateX(60px)}100%{transform:translateX(0)}}.n2{animation:n2 9s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}</style>
+<rect x="12" y="12" width="264" height="208" rx="16" fill="#16171d" stroke="#2c2d33"/>
+<rect class="hl0" x="12" y="12" width="264" height="208" rx="16" fill="none" stroke="#0a84ff" stroke-width="2" stroke-opacity="0"/>
+<circle cx="42" cy="164" r="12" fill="#0a84ff"/><text x="42" y="168.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+<text x="64" y="169" font-size="15" font-weight="650" fill="#f2f2f7">Installe Rustudio</text>
+<text x="32" y="198" font-size="12" fill="#8e8e93">un seul fichier, Rustudio-Setup.exe</text>
+<path d="M286 108 l7 8 -7 8" fill="none" stroke="#636366" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="308" y="12" width="264" height="208" rx="16" fill="#16171d" stroke="#2c2d33"/>
+<rect class="hl1" x="308" y="12" width="264" height="208" rx="16" fill="none" stroke="#0a84ff" stroke-width="2" stroke-opacity="0"/>
+<circle cx="338" cy="164" r="12" fill="#0a84ff"/><text x="338" y="168.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+<text x="360" y="169" font-size="15" font-weight="650" fill="#f2f2f7">Branche ton matériel</text>
+<text x="328" y="198" font-size="12" fill="#8e8e93">il apparaît dans Mes appareils</text>
+<path d="M582 108 l7 8 -7 8" fill="none" stroke="#636366" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="604" y="12" width="264" height="208" rx="16" fill="#16171d" stroke="#2c2d33"/>
+<rect class="hl2" x="604" y="12" width="264" height="208" rx="16" fill="none" stroke="#0a84ff" stroke-width="2" stroke-opacity="0"/>
+<circle cx="634" cy="164" r="12" fill="#0a84ff"/><text x="634" y="168.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+<text x="656" y="169" font-size="15" font-weight="650" fill="#f2f2f7">Règle tout au même endroit</text>
+<text x="624" y="198" font-size="12" fill="#8e8e93">réglages gardés, mises à jour vérifiées</text>
+<rect x="74" y="44" width="140" height="74" rx="14" fill="#202128" stroke="#33343b"/>
+<path d="M144 58 v26 m-10 -10 l10 10 10 -10" fill="none" stroke="#0a84ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="94" y="98" width="100" height="6" rx="3" fill="#2c2d33"/><rect class="dl" x="94" y="98" width="100" height="6" rx="3" fill="#0a84ff"/>
+<g class="c1"><rect x="336" y="40" width="98" height="82" rx="12" fill="#202128" stroke="#33343b"/><rect x="348" y="52" width="22" height="22" rx="6" fill="#0a84ff" opacity=".25"/><rect x="348" y="82" width="70" height="7" rx="3.5" fill="#d1d1d6"/><circle cx="352" cy="103" r="3.5" fill="#30d158"/><rect x="360" y="100" width="44" height="6" rx="3" fill="#636366"/></g>
+<g class="c2"><rect x="446" y="40" width="98" height="82" rx="12" fill="#202128" stroke="#33343b"/><rect x="458" y="52" width="22" height="22" rx="6" fill="#0a84ff" opacity=".25"/><rect x="458" y="82" width="56" height="7" rx="3.5" fill="#d1d1d6"/><circle cx="462" cy="103" r="3.5" fill="#30d158"/><rect x="470" y="100" width="44" height="6" rx="3" fill="#636366"/></g>
+<rect x="646" y="56" width="180" height="6" rx="3" fill="#2c2d33"/>
+<rect class="f0" x="646" y="56" width="60" height="6" rx="3" fill="#0a84ff"/>
+<circle class="n0" cx="706" cy="59" r="8" fill="#f2f2f7"/>
+<rect x="646" y="82" width="180" height="6" rx="3" fill="#2c2d33"/>
+<rect class="f1" x="646" y="82" width="110" height="6" rx="3" fill="#0a84ff"/>
+<circle class="n1" cx="756" cy="85" r="8" fill="#f2f2f7"/>
+<rect x="646" y="108" width="180" height="6" rx="3" fill="#2c2d33"/>
+<rect class="f2" x="646" y="108" width="40" height="6" rx="3" fill="#0a84ff"/>
+<circle class="n2" cx="686" cy="111" r="8" fill="#f2f2f7"/>
+</svg>

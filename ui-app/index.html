@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Rustudio</title>
+<style>
+html,body{margin:0;height:100%;background:#F5F5F7;font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:#6e6e73}
+.c{height:100%;display:grid;place-items:center;text-align:center}
+.s{width:30px;height:30px;margin:0 auto 18px;border-radius:50%;border:3px solid rgba(0,0,0,.08);border-top-color:#0071E3;animation:r .8s linear infinite}
+b{display:block;color:#1d1d1f;font-size:17px;font-weight:600;margin-bottom:4px}
+@keyframes r{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="c"><div><div class="s"></div><b>Rustudio</b><span id="t">Démarrage…</span></div></div>
+<script>
+window.addEventListener("DOMContentLoaded", function () {
+  if (!window.__TAURI__) return;
+  window.__TAURI__.event.listen("splash", function (e) { document.getElementById("t").textContent = e.payload; });
+});
+</script></body></html>

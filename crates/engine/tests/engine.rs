@@ -778,16 +778,6 @@ fn http_routes_et_protections() {
     assert_eq!(code(agent.post(&url("/api/mic-listen")).set("X-Rustudio", "1").send_json(json!({"seconds": 0}))), 200);
     assert_eq!(code(agent.get(&url("/api/processes")).call()), 200);
     assert_eq!(code(agent.get(&url("/api/library")).call()), 200);
-    let get_json = |path| agent.get(&url(path)).call().unwrap().into_json::<Value>().unwrap();
-    assert_eq!(get_json("/api/usb"), json!({"found": false, "simulated": true}));
-    let glitches = get_json("/api/glitches");
-    assert_eq!(glitches["simulated"], true);
-    assert_eq!(glitches["readable"], false);
-    assert!(glitches["total"].is_null());
-    assert_eq!(get_json("/api/health")["log"], json!([]));
-    let report = get_json("/api/support");
-    assert_eq!(report["windows"], "Démonstration");
-    assert_eq!(report["report"]["journal"], json!([]));
     let html = agent.get(&url("/")).call().unwrap().into_string().unwrap();
     assert!(html.contains("<html"), "interface servie");
     assert_eq!(code(agent.post(&url("/api/sim/press")).set("X-Rustudio", "1").send_json(json!({"button": "Bleep"}))), 200);
@@ -957,57 +947,4 @@ fn empreinte_refusee_micro_coupe_ou_audio_invalide() {
     let e = rustudio_engine::jobs::voice_audio(&b.ctl, &format!("rate=48000&t0={t0}&format=s16"), &silence).unwrap_err();
     assert!(e.msg.contains("entendu"), "{}", e.msg);
     assert!(b.ctl.lock().state.voice_print.is_none());
-}
-
-#[test]
-fn mixeur_attend_le_mouvement_et_reveille_sur_une_commande() {
-    let b = Bench::new();
-    let initial = b.ctl.mixer_snapshot(None).unwrap();
-    assert_eq!(initial["channels"].as_array().unwrap().len(), 11);
-    assert_eq!(initial["faders"].as_array().unwrap().len(), 4);
-    let cursor = initial["cursor"].as_str().unwrap().to_owned();
-    let ctl = b.ctl.clone();
-    let waiter = std::thread::spawn(move || ctl.mixer_snapshot(Some(&cursor)).unwrap());
-    b.sim.move_fader(0, 210);
-    let changed = waiter.join().unwrap();
-    assert_eq!(changed["faders"][0]["position"], 210);
-    assert_ne!(changed["cursor"], initial["cursor"]);
-    let cursor = changed["cursor"].as_str().unwrap().to_owned();
-    let ctl = b.ctl.clone();
-    let waiter = std::thread::spawn(move || ctl.mixer_snapshot(Some(&cursor)).unwrap());
-    b.ctl.act("mute", &json!({"channel": "Mic", "muted": true, "target": "stream"})).unwrap();
-    let changed = waiter.join().unwrap();
-    assert_eq!(changed["channels"][0]["mute"], "stream");
-}
-
-#[test]
-fn profil_du_mixeur_ne_modifie_que_les_reglages_du_mixeur() {
-    let b = Bench::new();
-    let before = b.ctl.lock().state.to_value();
-    let snapshot = b.ctl.mixer_snapshot(None).unwrap();
-    let map = |rows: &Value, field: &str| {
-        rows.as_array().unwrap().iter()
-            .map(|row| (row["id"].as_str().unwrap().to_string(), row[field].clone()))
-            .collect::<serde_json::Map<String, Value>>()
-    };
-    let mut profile = json!({
-        "volumes": map(&snapshot["channels"], "volume"),
-        "cuts": map(&snapshot["channels"], "mute"),
-        "faders": map(&snapshot["faders"], "channel"),
-        "mute_modes": map(&snapshot["faders"], "mode"),
-    });
-    profile["volumes"]["Mic"] = json!(31);
-    profile["cuts"]["Mic"] = json!("stream");
-    let mut invalid = profile.clone();
-    invalid["faders"]["A"] = invalid["faders"]["B"].clone();
-    assert!(b.ctl.act("mixer-profile", &invalid).is_err());
-    assert_eq!(b.ctl.lock().state.to_value(), before);
-
-    b.ctl.act("mixer-profile", &profile).unwrap();
-    let after = b.ctl.lock().state.to_value();
-    assert_eq!(after["volumes"]["Mic"], 31);
-    assert_eq!(after["partial"]["Mic"], "stream");
-    for key in ["mic", "voice_print", "routing", "prefs", "dsp", "fx", "hp_eq"] {
-        assert_eq!(before[key], after[key], "Le profil a modifié {key}");
-    }
 }

@@ -1,9 +1,8 @@
 [package]
 name = "rustudio-app"
-description = "Rustudio : appli Windows native en Rust et GPUI (fenêtre, icône d'état, bulle à l'écran, périphériques son)"
+description = "Rustudio : appli Windows (fenetre, icone d'etat, bulle a l'ecran, peripheriques son par defaut)"
 version.workspace = true
-edition = "2024"
-rust-version = "1.95"
+edition.workspace = true
 license.workspace = true
 
 [[bin]]
@@ -11,20 +10,21 @@ name = "Rustudio"
 path = "src/main.rs"
 
 [build-dependencies]
-embed-resource = "3"
+tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
-rustudio-core.workspace = true
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2.5"
 serde.workspace = true
 serde_json.workspace = true
-tempfile = "3"
+ureq = { version = "2.12", default-features = false, features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
-rustudio-windows-desktop = { path = "../windows-desktop" }
-# le manifeste Windows est dans app.rc (même réglage que GPUI), pour partager gpui avec l'installeur
-gpui = { version = "=0.2.2", default-features = false }
-async-channel = "=2.5.0"
-raw-window-handle = "0.6"
-tray-icon = { version = "=0.23.1", default-features = false }
-image = { version = "0.25", default-features = false, features = ["png"] }
-ureq = { version = "2.12", default-features = false, features = ["json"] }
+winreg = "0.55"
+webview2-com = "0.39"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Com", "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_System_Com_StructuredStorage", "Win32_Devices_FunctionDiscovery",
+  "Win32_UI_Shell_PropertiesSystem", "Win32_System_Threading",
+] }

@@ -40,6 +40,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
       - run: cargo test --locked -p rustudio-goxlr --example usbstats
+      - run: node scripts/diagnostic-ui-test.mjs
+      - run: node scripts/ui-interactions-test.mjs
+      - run: node scripts/modules-ui-test.mjs
+      - run: node scripts/mouse-ui-test.mjs
+      - run: node scripts/support-ui-test.mjs
+      - run: node scripts/voice-ui-test.mjs
 
   windows:
     name: Windows (tests, paquet, installation complète)
@@ -53,16 +59,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: cargo test --locked
-      - run: cargo test --locked -p rustudio-app -p rustudio-setup
+      - run: cargo test --locked -p rustudio-app
       - run: cargo test --locked -p rustudio-goxlr --example usbstats
+      - run: node scripts/diagnostic-ui-test.mjs
+      - run: node scripts/ui-interactions-test.mjs
+      - run: node scripts/modules-ui-test.mjs
+      - run: node scripts/mouse-ui-test.mjs
+      - run: node scripts/support-ui-test.mjs
+      - run: node scripts/voice-ui-test.mjs
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1
-      - name: Appli native sur la démonstration (toutes les pages et commandes)
-        shell: pwsh
-        run: |
-          $p = Start-Process target\release\Rustudio.exe -ArgumentList '--start-demo', '--self-test' -Wait -PassThru -NoNewWindow
-          if ($p.ExitCode -ne 0) { throw "Auto-test de l'appli : code $($p.ExitCode)" }
       - name: Passage depuis GoXLR Mini 4.8.0 (vraie version, faux GitHub)
         shell: pwsh
         run: ./scripts/migration-test.ps1
