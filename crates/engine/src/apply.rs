@@ -264,7 +264,7 @@ impl Hooks for WinHooks {
         }
         for user in users {
             crate::win::powershell(&format!(
-                "$t = 'Rustudio (relance)'; $a = New-ScheduledTaskAction -Execute {} -Argument '--tray'; \
+                "$t = 'Rustudio (relance)'; $a = New-ScheduledTaskAction -Execute {}; \
                  $p = New-ScheduledTaskPrincipal -UserId {} -LogonType Interactive -RunLevel Limited; \
                  Register-ScheduledTask -TaskName $t -Action $a -Principal $p -Force | Out-Null; \
                  Start-ScheduledTask -TaskName $t; Start-Sleep 3; Unregister-ScheduledTask -TaskName $t -Confirm:$false",

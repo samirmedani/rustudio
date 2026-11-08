@@ -1,5 +1,9 @@
 # Nouveautés
 
+## 6.0.3
+
+- **Mise à jour :** Rustudio rouvre sa fenêtre tout seul une fois la mise à jour installée, au lieu de rester caché près de l’horloge.
+
 ## 6.0.2
 
 - **Boutons de la fenêtre réparés.** Réduire, agrandir et fermer répondent de nouveau : la zone qui sert à déplacer la fenêtre passait sous les trois boutons et prenait leurs clics.
