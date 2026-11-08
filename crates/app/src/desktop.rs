@@ -308,7 +308,16 @@ impl Mixer {
 
     /// Bas de la barre latérale : version, état et bouton de mise à jour (cherche, puis installe d'un clic).
     fn update_widget(&self, cx: &mut Context<Self>) -> Div {
-        let u = self.update.clone().unwrap_or(serde_json::Value::Null);
+        // RUSTUDIO_PREVIEW_UPDATE (développement) : force un état pour vérifier le bloc à l'écran
+        let preview = std::env::var("RUSTUDIO_PREVIEW_UPDATE").ok();
+        let u = match preview.as_deref() {
+            Some("ready") => json!({"status":"available","installable":true,"latest":{"version":"6.2.0"},"release_build":true}),
+            Some("downloading") => json!({"phase":"downloading","progress":0.42,"latest":{"version":"6.2.0"},"release_build":true}),
+            Some("checking") => json!({"status":"checking","release_build":true}),
+            Some("failed") => json!({"phase":"failed","release_build":true}),
+            Some(_) => json!({"status":"up-to-date","release_build":true}),
+            None => self.update.clone().unwrap_or(serde_json::Value::Null),
+        };
         let phase = u["phase"].as_str().unwrap_or("");
         let working = matches!(phase, "downloading" | "verifying" | "extracting" | "applying");
         let checking = u["status"] == "checking" || (self.update_then_install && !working);
@@ -324,81 +333,83 @@ impl Mixer {
             .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)));
         let version = ui::hoverable(version, "version-label".to_owned());
         let mut root = div().mt(px(12.)).pt(px(10.)).border_t_1().border_color(alpha(0x000000, 0.07)).flex().flex_col().gap(px(8.));
-        if !self.client.is_live() || u["release_build"] == false {
+        if preview.is_none() && (!self.client.is_live() || u["release_build"] == false) {
             return root.child(div().flex().items_center().gap(px(8.)).child(version).child(ui::caption("Version de développement")));
         }
-        if working {
-            let fraction = if phase == "downloading" { u["progress"].as_f64().unwrap_or(0.) as f32 } else { 1. };
-            let text = match phase {
-                "downloading" => format!("Téléchargement de la {latest}… {} %", (fraction * 100.).round()),
-                "verifying" => "Vérification de l’empreinte…".into(),
-                "extracting" => "Préparation…".into(),
-                _ => "Installation : Rustudio se rouvre tout seul.".into(),
-            };
-            return root.child(version).child(ui::progress(fraction, ui::ACCENT)).child(ui::caption(text));
-        }
-        if ready {
-            return root.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .p(px(10.))
-                    .rounded(px(14.))
-                    .bg(alpha(ui::ACCENT, 0.08))
-                    .border_1()
-                    .border_color(alpha(ui::ACCENT, 0.18))
-                    .child(div().flex().items_center().gap(px(8.)).child(div().size(px(7.)).rounded_full().bg(rgb(ui::ACCENT))).child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(format!("Rustudio {latest} est prête"))))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(ui::pill("update-now", Some(Icon::Download), "Mettre à jour", Tone::Primary).h(px(30.)).px(px(12.)).text_size(px(12.5)).on_click(cx.listener(|this, _, _, cx| this.update_click(cx))))
-                            .child(ui::pill("update-notes", None, "Nouveautés", Tone::Plain).h(px(30.)).px(px(10.)).text_size(px(12.5)).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)))),
-                    )
-                    .child(div().flex().items_center().gap(px(6.)).child(version).child(ui::caption("installée"))),
-            );
-        }
-        let (state, colour) = if checking {
-            ("Recherche…", ui::TEXT3)
+        // Hauteur fixe dans tous les états : rien ne bouge au-dessus quand une mise à jour arrive ou s'installe.
+        let fraction = if phase == "downloading" { u["progress"].as_f64().unwrap_or(0.) as f32 } else { 1. };
+        let (state, colour): (String, u32) = if working {
+            match phase {
+                "downloading" => (format!("{latest} · {} %", (fraction * 100.).round()), ui::ACCENT),
+                "verifying" => ("Vérification…".into(), ui::ACCENT),
+                "extracting" => ("Préparation…".into(), ui::ACCENT),
+                _ => ("Installation…".into(), ui::ACCENT),
+            }
+        } else if ready {
+            (format!("{latest} disponible"), ui::ACCENT)
+        } else if checking {
+            ("Recherche…".into(), ui::TEXT3)
         } else if phase == "failed" {
-            ("Mise à jour interrompue", ui::ORANGE)
+            ("Mise à jour interrompue".into(), ui::ORANGE)
         } else if u["status"] == "up-to-date" {
-            ("À jour", ui::GREEN)
+            ("À jour".into(), ui::GREEN)
         } else {
-            ("Rechercher", ui::TEXT3)
+            ("Rechercher".into(), ui::TEXT3)
         };
         let t = ui::hover_t("update-check");
+        let (bg, fg) = if ready {
+            (ui::lerp(rgb(ui::ACCENT), rgb(0x2b8af0), t), rgb(ui::WHITE))
+        } else {
+            (ui::lerp(alpha(ui::ACCENT, 0.), alpha(ui::ACCENT, 0.12), t), ui::lerp(rgb(ui::TEXT2), rgb(ui::ACCENT), t.max(if checking { 1. } else { 0. })))
+        };
+        let button = ui::hoverable(
+            div()
+                .id("update-check")
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(30.))
+                .rounded_full()
+                .bg(bg)
+                .when(!working, |d| d.cursor(gpui::CursorStyle::PointingHand))
+                .child(ui::icon(if checking || working { Icon::Refresh } else { Icon::Download }, 16., fg))
+                .when(!checking && !working, |d| d.on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))),
+            "update-check".to_owned(),
+        );
+        let below: AnyElement = if working {
+            ui::progress(fraction, ui::ACCENT).into_any_element()
+        } else if ready {
+            div()
+                .id("update-notes")
+                .text_size(px(12.))
+                .text_color(ui::lerp(rgb(ui::TEXT3), rgb(ui::ACCENT), ui::hover_t("update-notes")))
+                .cursor(gpui::CursorStyle::PointingHand)
+                .child("Voir les nouveautés")
+                .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)))
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
         root = root.child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .child(version)
-                .child(div().flex().items_center().gap(px(5.)).child(div().size(px(6.)).rounded_full().bg(rgb(colour))).child(ui::caption(state)))
-                .child(div().flex_1())
                 .child(
-                    ui::hoverable(
-                        div()
-                            .id("update-check")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(30.))
-                            .rounded_full()
-                            .cursor(gpui::CursorStyle::PointingHand)
-                            .bg(ui::lerp(alpha(ui::ACCENT, 0.), alpha(ui::ACCENT, 0.12), t))
-                            .child(ui::icon(if checking { Icon::Refresh } else { Icon::Download }, 16., ui::lerp(rgb(ui::TEXT2), rgb(ui::ACCENT), t.max(if checking { 1. } else { 0. }))))
-                            .when(!checking, |d| d.on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))),
-                        "update-check".to_owned(),
-                    ),
-                ),
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .items_center()
+                        .gap(px(5.))
+                        .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(colour)))
+                        .child(ui::caption(state).truncate().text_color(rgb(if colour == ui::GREEN { ui::GREEN_TEXT } else if colour == ui::ORANGE { ui::ORANGE_TEXT } else if colour == ui::ACCENT { ui::ACCENT } else { ui::TEXT3 }))),
+                )
+                .child(button),
         );
-        if checking {
-            root = root.child(ui::caption("Si une version est trouvée, elle s’installe aussitôt."));
-        }
-        root
+        root.child(div().h(px(14.)).flex().items_center().child(below))
     }
 
     /// Espace d'appareil affiché : celui de la page, ou le dernier ouvert tant qu'on ne revient pas à l'accueil.

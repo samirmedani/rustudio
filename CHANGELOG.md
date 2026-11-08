@@ -1,5 +1,11 @@
 # Nouveautés
 
+## 6.1.4
+
+- **Bouton de mise à jour stable :** le bloc en bas à gauche garde la même hauteur quand une version arrive, se télécharge ou s'installe ; plus rien ne se décale au-dessus.
+- **Diagnostic :** il se lit dès l'ouverture de la page, et les vérifications du routage ont des titres et des explications en clair (au lieu de « chat-loop »…).
+- **Mixeur :** le sous-titre de chaque fader n'est plus coupé.
+
 ## 6.1.3
 
 - **Finitions vérifiées page par page :** la confirmation d'un profil s'ouvre par-dessus la page, les numéros de version ne se coupent plus, les sous-titres des faders sont plus courts, les tuiles de thème ont la même hauteur, les boutons « Copier » ont la bonne icône et l'aide de la souris ne parle plus de bouton Enregistrer.

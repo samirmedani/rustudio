@@ -839,8 +839,8 @@ impl Mixer {
             let engine_ok = report["moteur"]["etat"].as_str().is_some_and(|e| e.contains("ok") || e.contains("connect") || e.contains("Démo"));
             let cuts = report["coupures_usb_24h"]["nombre"].as_u64();
             let mut rows: Vec<(Icon, String, String, ui::State)> = vec![
-                (Icon::Power, "Moteur".into(), report["moteur"]["etat"].as_str().unwrap_or("inconnu").to_owned(), if engine_ok { ui::State::Ok } else { ui::State::Warn }),
-                (Icon::Plug, "Coupures USB (24 h)".into(), cuts.map(|n| n.to_string()).unwrap_or_else(|| "Non mesurées".into()), if cuts.unwrap_or(0) == 0 { ui::State::Ok } else { ui::State::Warn }),
+                (Icon::Power, "Moteur".into(), match report["moteur"]["etat"].as_str().unwrap_or("inconnu") { "ok" => "En marche".to_owned(), other => other.to_owned() }, if engine_ok { ui::State::Ok } else { ui::State::Warn }),
+                (Icon::Plug, "Coupures USB (24 h)".into(), cuts.map(|n| if n == 0 { "Aucune".to_owned() } else { n.to_string() }).unwrap_or_else(|| "Non mesurées".into()), if cuts.unwrap_or(0) == 0 { ui::State::Ok } else { ui::State::Warn }),
             ];
             if d["usb"]["found"] == true {
                 let cpu = d["usb"]["controller_cpu"] == true;
@@ -853,15 +853,18 @@ impl Mixer {
                 state = state.child(ui::list_row(Some((glyph, ui::TEXT2)), title, None, ui::status(value, st), n == 0));
             }
             for (i, check) in d["echo"]["checks"].as_array().into_iter().flatten().enumerate() {
-                let label = check["title"].as_str().or(check["label"].as_str()).or(check["id"].as_str()).unwrap_or("Routage").to_owned();
+                // le moteur envoie le titre dans « t » et l'explication dans « d »
+                let label = check["t"].as_str().or(check["title"].as_str()).unwrap_or("Routage").to_owned();
+                let detail = check["d"].as_str().map(|d| SharedString::from(d.to_owned()));
                 let ok = check["ok"] == true;
                 let fix = &check["fix"];
                 let trailing = if let (false, Some(action)) = (ok, ACTIONS.iter().copied().find(|a| fix["action"] == *a)) {
-                    self.act(ui::pill(("diag-fix", i), Some(Icon::Check), "Corriger", ui::Tone::Primary), action, fix["body"].clone(), cx).into_any_element()
+                    let text = fix["label"].as_str().unwrap_or("Corriger").to_owned();
+                    self.act(ui::pill(("diag-fix", i), Some(Icon::Check), text, ui::Tone::Primary), action, fix["body"].clone(), cx).into_any_element()
                 } else {
                     ui::status(if ok { "Bon" } else { "À vérifier" }, if ok { ui::State::Ok } else { ui::State::Warn }).into_any_element()
                 };
-                state = state.child(ui::list_row(Some((Icon::Route, ui::TEXT2)), label, None, trailing, false));
+                state = state.child(ui::list_row(Some((Icon::Route, ui::TEXT2)), label, detail, trailing, false));
             }
             state = state.child(ui::pill("diag-copy", Some(Icon::Bookmark), "Copier le diagnostic anonymisé", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))));
         } else {

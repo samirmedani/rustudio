@@ -186,6 +186,10 @@ impl Mixer {
         if page == Page::Go(crate::goxlr::Section::Microphone) {
             self.load_voice_info(cx);
         }
+        // le diagnostic se lit dès l'ouverture de la page, sans attendre « Actualiser »
+        if page == Page::Go(crate::goxlr::Section::Diagnostic) {
+            self.refresh_diag(cx);
+        }
         if matches!(page, Page::Catalogue | Page::Versions | Page::Help | Page::Settings) {
             self.library_load(page, cx);
         }
@@ -534,7 +538,7 @@ impl Mixer {
                             .overflow_hidden()
                             .child(div().text_size(px(16.5)).font_weight(FontWeight::SEMIBOLD).truncate().child(channel.label.clone()))
                             // une seule ligne, coupée proprement : le texte ne déborde jamais sur la voie voisine
-                            .child(ui::caption(format!("Fader {} · {}", index + 1, channel_hint(&channel.id))).truncate()),
+                            .child(ui::caption(format!("Fader {}", index + 1)).truncate()),
                     )
                     .child(ui::icon(Icon::ChevronDown, 14., rgb(ui::TEXT3)).flex_none())
                     .on_click(cx.listener(move |this, _, _, cx| {
