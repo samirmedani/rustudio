@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 rustudio-windows-desktop = { path = "../windows-desktop" }
 # le manifeste Windows est dans app.rc (même réglage que GPUI), pour partager gpui avec l'installeur
 gpui = { version = "=0.2.2", default-features = false }
@@ -28,3 +28,7 @@ raw-window-handle = "0.6"
 tray-icon = { version = "=0.23.1", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 ureq = { version = "2.12", default-features = false, features = ["json"] }
+
+# aperçu sur Mac (développement) : shaders compilés au lancement, sans la chaîne Metal de Xcode
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }

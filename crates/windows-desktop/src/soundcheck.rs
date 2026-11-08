@@ -948,3 +948,21 @@ mod tests {
         assert_eq!(s.timestamp_errors, 1);
     }
 }
+
+// Aperçu de l'interface sur Mac (développement) : pas d'audio Windows.
+#[cfg(not(windows))]
+pub fn record_mic(_secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
+    Err("Disponible sous Windows.".into())
+}
+#[cfg(not(windows))]
+pub fn play_default(_samples: Vec<f32>, _rate: u32) -> Result<(), String> {
+    Err("Disponible sous Windows.".into())
+}
+#[cfg(not(windows))]
+pub fn echo_test() -> Value {
+    json!({"status": "unavailable", "unsupported": true})
+}
+#[cfg(not(windows))]
+pub fn capture_voice(_stop: &std::sync::atomic::AtomicBool, _started: std::sync::mpsc::SyncSender<(u64, u32)>) -> Result<Vec<u8>, String> {
+    Err("Disponible sous Windows.".into())
+}

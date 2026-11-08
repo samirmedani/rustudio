@@ -7,7 +7,7 @@ use crate::{
     ui::{self, Icon, State, Tone, alpha, rgb},
 };
 use gpui::{
-    AnyElement, Context, Div, ElementId, FontWeight, KeyDownEvent, PathPromptOptions, Stateful,
+    AnimationExt, AnyElement, Context, Div, ElementId, FontWeight, KeyDownEvent, PathPromptOptions, Stateful,
     Window, WindowControlArea, deferred, div, prelude::*, px,
 };
 use serde_json::json;
@@ -37,7 +37,7 @@ pub enum Confirm {
 
 /// Espace d'un appareil dans la barre latérale.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Space {
+pub(crate) enum Space {
     GoXlr,
     Mouse,
 }
@@ -64,7 +64,7 @@ impl Page {
             _ => return None,
         })
     }
-    fn space(self) -> Option<Space> {
+    pub(crate) fn space(self) -> Option<Space> {
         match self {
             Page::Mixer | Page::Go(_) => Some(Space::GoXlr),
             Page::Mouse => Some(Space::Mouse),
@@ -260,7 +260,7 @@ impl Mixer {
                     .child(self.nav(Page::Profiles, Icon::Bookmark, "Profils", cx))
                     .child(self.nav(Page::Catalogue, Icon::Grid, "Modules", cx)),
             );
-        if let Some(space) = self.page.space() {
+        if let Some(space) = self.current_space() {
             let name = match space {
                 Space::GoXlr => "GoXLR Mini",
                 Space::Mouse => "R5 Ultra",
@@ -297,29 +297,113 @@ impl Mixer {
             div()
                 .mt_auto()
                 .pt(px(12.))
-                .px(px(8.))
+                .px(px(6.))
                 .border_t_1()
                 .border_color(alpha(0x000000, 0.07))
                 .child(ui::status(if engine { "Moteur connecté" } else { "Moteur indisponible" }, if engine { State::Ok } else { State::Error }).text_color(rgb(ui::TEXT)))
                 .child(div().pl(px(15.)).child(ui::caption(sub)))
-                .child(ui::hoverable(
-                    div()
-                        .id("version-row")
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .mt(px(12.))
-                        .pt(px(10.))
-                        .border_t_1()
-                        .border_color(alpha(0x000000, 0.07))
-                        .cursor(gpui::CursorStyle::PointingHand)
-                        .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(format!("v{}", crate::VERSION)))
-                        .child(ui::caption("Notes et mises à jour").ml(px(2.)).text_color(ui::lerp(rgb(ui::TEXT3), rgb(ui::ACCENT), ui::hover_t("version-row"))))
-                        .child(div().flex_1().flex().justify_end().child(ui::icon(Icon::ChevronRight, 15., ui::lerp(rgb(ui::TEXT3), rgb(ui::ACCENT), ui::hover_t("version-row")))).relative().left(px(2. * ui::hover_t("version-row"))))
-                        .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx))),
-                    "version-row".to_owned(),
-                )),
+                .child(self.update_widget(cx)),
         )
+    }
+
+    /// Bas de la barre latérale : version, état et bouton de mise à jour (cherche, puis installe d'un clic).
+    fn update_widget(&self, cx: &mut Context<Self>) -> Div {
+        let u = self.update.clone().unwrap_or(serde_json::Value::Null);
+        let phase = u["phase"].as_str().unwrap_or("");
+        let working = matches!(phase, "downloading" | "verifying" | "extracting" | "applying");
+        let checking = u["status"] == "checking" || (self.update_then_install && !working);
+        let ready = u["status"] == "available" && u["installable"] == true;
+        let latest = u["latest"]["version"].as_str().unwrap_or("").to_owned();
+        let version = div()
+            .id("version-label")
+            .text_size(px(13.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .cursor(gpui::CursorStyle::PointingHand)
+            .text_color(ui::lerp(rgb(ui::TEXT), rgb(ui::ACCENT), ui::hover_t("version-label")))
+            .child(format!("v{}", crate::VERSION))
+            .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)));
+        let version = ui::hoverable(version, "version-label".to_owned());
+        let mut root = div().mt(px(12.)).pt(px(10.)).border_t_1().border_color(alpha(0x000000, 0.07)).flex().flex_col().gap(px(8.));
+        if !self.client.is_live() || u["release_build"] == false {
+            return root.child(div().flex().items_center().gap(px(8.)).child(version).child(ui::caption("Version de développement")));
+        }
+        if working {
+            let fraction = if phase == "downloading" { u["progress"].as_f64().unwrap_or(0.) as f32 } else { 1. };
+            let text = match phase {
+                "downloading" => format!("Téléchargement de la {latest}… {} %", (fraction * 100.).round()),
+                "verifying" => "Vérification de l’empreinte…".into(),
+                "extracting" => "Préparation…".into(),
+                _ => "Installation : Rustudio se rouvre tout seul.".into(),
+            };
+            return root.child(version).child(ui::progress(fraction, ui::ACCENT)).child(ui::caption(text));
+        }
+        if ready {
+            return root.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .p(px(10.))
+                    .rounded(px(14.))
+                    .bg(alpha(ui::ACCENT, 0.08))
+                    .border_1()
+                    .border_color(alpha(ui::ACCENT, 0.18))
+                    .child(div().flex().items_center().gap(px(8.)).child(div().size(px(7.)).rounded_full().bg(rgb(ui::ACCENT))).child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(format!("Rustudio {latest} est prête"))))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(ui::pill("update-now", Some(Icon::Download), "Mettre à jour", Tone::Primary).h(px(30.)).px(px(12.)).text_size(px(12.5)).on_click(cx.listener(|this, _, _, cx| this.update_click(cx))))
+                            .child(ui::pill("update-notes", None, "Nouveautés", Tone::Plain).h(px(30.)).px(px(10.)).text_size(px(12.5)).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)))),
+                    )
+                    .child(div().flex().items_center().gap(px(6.)).child(version).child(ui::caption("installée"))),
+            );
+        }
+        let (state, colour) = if checking {
+            ("Recherche…", ui::TEXT3)
+        } else if phase == "failed" {
+            ("Mise à jour interrompue", ui::ORANGE)
+        } else if u["status"] == "up-to-date" {
+            ("À jour", ui::GREEN)
+        } else {
+            ("Rechercher", ui::TEXT3)
+        };
+        let t = ui::hover_t("update-check");
+        root = root.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(version)
+                .child(div().flex().items_center().gap(px(5.)).child(div().size(px(6.)).rounded_full().bg(rgb(colour))).child(ui::caption(state)))
+                .child(div().flex_1())
+                .child(
+                    ui::hoverable(
+                        div()
+                            .id("update-check")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(30.))
+                            .rounded_full()
+                            .cursor(gpui::CursorStyle::PointingHand)
+                            .bg(ui::lerp(alpha(ui::ACCENT, 0.), alpha(ui::ACCENT, 0.12), t))
+                            .child(ui::icon(if checking { Icon::Refresh } else { Icon::Download }, 16., ui::lerp(rgb(ui::TEXT2), rgb(ui::ACCENT), t.max(if checking { 1. } else { 0. }))))
+                            .when(!checking, |d| d.on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))),
+                        "update-check".to_owned(),
+                    ),
+                ),
+        );
+        if checking {
+            root = root.child(ui::caption("Si une version est trouvée, elle s’installe aussitôt."));
+        }
+        root
+    }
+
+    /// Espace d'appareil affiché : celui de la page, ou le dernier ouvert tant qu'on ne revient pas à l'accueil.
+    fn current_space(&self) -> Option<Space> {
+        self.page.space().or(if self.page == Page::Devices { None } else { self.last_space })
     }
 
     fn eyebrow(&self) -> String {
@@ -329,6 +413,7 @@ impl Mixer {
             if self.device(id).is_some_and(|d| d.simulated) { format!("{text} · Simulation") } else { text.to_owned() }
         };
         match self.page.space() {
+            None if self.page == Page::Profiles && self.last_space == Some(Space::GoXlr) => "GOXLR MINI · PROFILS DU MIXEUR".into(),
             Some(Space::GoXlr) => format!("GOXLR MINI · {}", suffix("goxlr-mini").to_uppercase()),
             Some(Space::Mouse) => format!("R5 ULTRA · {}", suffix("attack-shark-r5-ultra").to_uppercase()),
             None if matches!(self.page, Page::Devices | Page::Profiles) => "TON ESPACE PERSONNEL".into(),
@@ -409,7 +494,41 @@ impl Mixer {
             Some(Space::Mouse) => self.module("attack-shark-r5-ultra"),
             None => None,
         };
+        let back = self.history.last().copied().map(|previous| {
+            let t = ui::hover_t("back");
+            ui::hoverable(
+                div()
+                    .id("back")
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .mb(px(8.))
+                    .pl(px(4.))
+                    .pr(px(10.))
+                    .h(px(26.))
+                    .rounded_full()
+                    .cursor(gpui::CursorStyle::PointingHand)
+                    .bg(ui::lerp(alpha(ui::ACCENT, 0.), alpha(ui::ACCENT, 0.1), t))
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(rgb(ui::ACCENT))
+                    .child(div().relative().left(px(-2. * t)).child(ui::icon(Icon::ChevronLeft, 16., rgb(ui::ACCENT))))
+                    .child(previous.title())
+                    .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
+                "back".to_owned(),
+            )
+        });
         div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .when_some(back, |d, b| d.child(b))
+            .child(self.header_main(module, cx))
+    }
+
+    fn header_main(&self, module: Option<&Descriptor>, cx: &mut Context<Self>) -> Div {
+        div()
+            .w_full()
             .flex()
             .items_end()
             .justify_between()
@@ -466,10 +585,21 @@ impl Mixer {
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, cx).into_any_element(),
             Page::Go(section) => self.go_controls(section, cx).into_any_element(),
         };
-        let mut body = div().flex().flex_col().gap(px(16.)).child(page);
+        let mut body = div().flex().flex_col().gap(px(16.));
         if let Some(notice) = &self.notice {
             body = body.child(ui::notice(false, notice.clone()));
         }
+        body = body.child(page);
+        // Changement de page : le contenu glisse et apparaît en douceur.
+        let content = div()
+            .relative()
+            .child(self.header(cx))
+            .child(body)
+            .with_animation(
+                ElementId::NamedInteger("page-in".into(), self.nav_count),
+                gpui::Animation::new(std::time::Duration::from_millis(260)).with_easing(gpui::ease_out_quint()),
+                |d, t| d.opacity(0.2 + 0.8 * t).top(px(14. * (1. - t))),
+            );
         div()
             .id("rustudio")
             .relative()
@@ -498,15 +628,14 @@ impl Mixer {
                             .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(40.)).window_control_area(WindowControlArea::Drag))
                             .child(
                                 div()
-                                    .id("page")
+                                    .id(ElementId::NamedInteger("page".into(), self.nav_count))
                                     .flex_1()
                                     .overflow_y_scroll()
                                     .pt(px(38.))
                                     .pb(px(28.))
                                     .pl(px(28.))
                                     .pr(px(36.))
-                                    .child(self.header(cx))
-                                    .child(body),
+                                    .child(content),
                             ),
                     ),
             )
@@ -904,4 +1033,5 @@ pub fn verify_profiles(client: &Client) -> Result<(), String> {
     println!("OK : inventaire de démonstration, enregistrement, export, import et restauration du mixeur.");
     Ok(())
 }
+
 

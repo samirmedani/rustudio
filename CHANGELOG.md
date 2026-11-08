@@ -1,5 +1,14 @@
 # Nouveautés
 
+## 6.1.0
+
+- **Nouveau design de toutes les pages :** cartes, listes, tuiles et réglages suivent les mêmes règles partout. Plus de boutons isolés seuls sur une ligne ni de texte qui déborde.
+- **Mises à jour en bas à gauche :** un seul bouton cherche et installe. La liste des versions est plus compacte et le retour à une version précédente apparaît au survol.
+- **Faders :** nouveau dessin au sommet arrondi. Le nom et l’usage de chaque voie tiennent sur une ligne.
+- **Voies expliquées simplement :** les sons de ton PC, les prises de la GoXLR et ce que tu entends sont regroupés et décrits.
+- **Égaliseurs :** curseurs verticaux. Sur l’égaliseur du micro, la fréquence et ses flèches sont regroupées sous chaque bande.
+- **Navigation :** bouton Retour (et bouton précédent de la souris) ; ouvrir les profils ne fait plus perdre la page de la GoXLR ; transitions entre les pages.
+
 ## 6.0.3
 
 - **Mise à jour :** Rustudio rouvre sa fenêtre tout seul une fois la mise à jour installée, au lieu de rester caché près de l’horloge.

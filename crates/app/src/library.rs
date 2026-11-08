@@ -1,5 +1,5 @@
 use crate::{
-    desktop::{Page, hint, panel},
+    desktop::{Page, hint},
     mixer::Mixer,
 };
 use gpui::{ClipboardItem, Context, Div, div, prelude::*};
@@ -100,31 +100,30 @@ impl Mixer {
             Page::Versions => root.child(self.versions_view(data, cx)),
             Page::Settings => root.child(self.settings_view(data, cx)),
             _ => {
+                use crate::ui::{self, Icon};
                 let report = serde_json::to_string_pretty(&data["report"]).unwrap_or_default();
-                let card=panel().child(crate::ui::heading("Aide et retours"))
-                    .child(hint("Rustudio n’envoie aucun diagnostic. Relis le rapport avant de le partager."))
-                    .child(crate::ui::pill("help-copy", Some(crate::ui::Icon::Download), "Copier le diagnostic", crate::ui::Tone::Primary).on_click(cx.listener(move |_,_,_,cx|{
-                        cx.write_to_clipboard(ClipboardItem::new_string(report.clone()));
-                    })));
-                let mut links = div().flex().flex_wrap().gap(gpui::px(8.));
-                for (key, label) in [
-                    ("bug_url", "Signaler un problème"),
-                    ("ideas_url", "Proposer une idée"),
-                    ("questions_url", "Poser une question"),
-                    ("device_url", "Demander un appareil"),
+                let mut tiles: Vec<gpui::AnyElement> = vec![];
+                for (key, label, desc, glyph, colour) in [
+                    ("bug_url", "Signaler un problème", "Un formulaire GitHub prérempli : décris ce qui ne va pas.", Icon::Alert, ui::ORANGE),
+                    ("ideas_url", "Proposer une idée", "Une fonction qui te manque ? Partage-la avec la communauté.", Icon::Sparkles, 0x5856d6),
+                    ("questions_url", "Poser une question", "Les discussions de la communauté Rustudio.", Icon::Help, ui::ACCENT),
+                    ("device_url", "Demander un appareil", "Ton matériel n’est pas encore pris en charge ? Dis-le-nous.", Icon::Plug, ui::GREEN),
                 ] {
-                    if let Some(url) = data[key]
-                        .as_str()
-                        .filter(|u| u.starts_with("https://github.com/samirmedani/rustudio/"))
-                    {
+                    if let Some(url) = data[key].as_str().filter(|u| u.starts_with("https://github.com/samirmedani/rustudio/")) {
                         let url = url.to_owned();
-                        links = links.child(
-                            crate::ui::pill(gpui::ElementId::Name(format!("help-{key}").into()), Some(crate::ui::Icon::External), label, crate::ui::Tone::Plain)
-                                .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url))),
+                        tiles.push(
+                            ui::tile(gpui::ElementId::Name(format!("help-{key}").into()), Some((glyph, colour)), label, Some(desc.into()), false, None)
+                                .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)))
+                                .into_any_element(),
                         );
                     }
                 }
-                root.child(card.child(links))
+                let diag = ui::section(Icon::Download, ui::GREEN, "Diagnostic anonyme", None)
+                    .child(hint("Rustudio n’envoie rien tout seul. Ce rapport ne contient ni numéro de série, ni nom de PC, ni chemin personnel : relis-le avant de le partager."))
+                    .child(ui::pill("help-copy", Some(Icon::Download), "Copier le diagnostic", ui::Tone::Primary).on_click(cx.listener(move |_, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(report.clone()));
+                    })));
+                root.child(ui::grid(tiles, 2)).child(diag)
             }
         }
     }

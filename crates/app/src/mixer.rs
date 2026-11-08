@@ -3,8 +3,8 @@ use crate::desktop::{Confirm, Page};
 use crate::profiles::{Profile, Store};
 use crate::ui::{self, Icon, alpha, rgb};
 use gpui::{
-    Bounds, Context, CursorStyle, Div, FocusHandle, FontWeight, IntoElement, MouseButton, Pixels, Render, SharedString,
-    Stateful, Window, canvas, div, linear_color_stop, linear_gradient, prelude::*, px,
+    AnyElement, Bounds, Context, CursorStyle, Div, ElementId, FocusHandle, FontWeight, IntoElement, MouseButton, Pixels,
+    Render, SharedString, Stateful, Window, canvas, div, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use serde_json::{Value, json};
 use std::{
@@ -15,7 +15,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-const TRAVEL: f32 = 200.;
+const TRAVEL: f32 = 214.;
+const FADER_W: f32 = 68.;
+const FADER_R: f32 = 22.;
 const VOLUME_INTERVAL: Duration = Duration::from_millis(45);
 
 struct Gesture {
@@ -52,6 +54,13 @@ pub struct Mixer {
     pending: HashMap<String, (u64, u8)>,
     picker: Option<usize>,
     pub(crate) notice: Option<String>,
+    pub(crate) param_drag: Option<ParamDrag>,
+    pub(crate) param_held: HashMap<String, (f64, Instant)>,
+    pub(crate) history: Vec<Page>,
+    pub(crate) nav_count: u64,
+    pub(crate) last_space: Option<crate::desktop::Space>,
+    pub(crate) update: Option<Value>,
+    pub(crate) update_then_install: bool,
     seq: u64,
     focus: Vec<FocusHandle>,
     received: usize,
@@ -124,6 +133,13 @@ impl Mixer {
             pending: HashMap::new(),
             picker: None,
             notice: None,
+            param_drag: None,
+            param_held: HashMap::new(),
+            history: vec![],
+            nav_count: 0,
+            last_space: None,
+            update: None,
+            update_then_install: false,
             seq: 0,
             focus: (0..15).map(|_| cx.focus_handle()).collect(),
             received: 0,
@@ -134,11 +150,36 @@ impl Mixer {
 
     /// Change de page et règle les lectures en direct de la page visible.
     pub fn go_to(&mut self, page: Page, cx: &mut Context<Self>) {
+        if page != self.page {
+            self.history.push(self.page);
+            if self.history.len() > 40 {
+                self.history.remove(0);
+            }
+        }
+        self.show(page, cx);
+    }
+
+    /// Page précédente (bouton Retour, bouton « précédent » de la souris).
+    pub fn go_back(&mut self, cx: &mut Context<Self>) {
+        if let Some(page) = self.history.pop() {
+            self.show(page, cx);
+        }
+    }
+
+    fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        if page != self.page {
+            self.nav_count += 1;
+        }
+        match page.space() {
+            Some(space) => self.last_space = Some(space),
+            None if page == Page::Devices => self.last_space = None,
+            None => {}
+        }
         self.page = page;
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page == Page::Mouse);
         self.client.set_go_visible(matches!(page, Page::Go(_)));
-        self.client.set_audio_visible(page == Page::WindowsAudio);
+        self.client.set_audio_visible(matches!(page, Page::WindowsAudio | Page::Mixer));
         self.win.cancel();
         if page == Page::Go(crate::goxlr::Section::Microphone) {
             self.load_voice_info(cx);
@@ -190,9 +231,20 @@ impl Mixer {
                 self.picker = None;
             }
             Event::Inventory(inventory) => self.inventory = inventory,
+            Event::Update(update) => {
+                if self.update_then_install {
+                    if update["status"] == "available" && update["installable"] == true {
+                        self.update_then_install = false;
+                        self.update_post("update-install", cx);
+                    } else if update["status"] == "up-to-date" || update["phase"] == "failed" {
+                        self.update_then_install = false;
+                    }
+                }
+                self.update = Some(update);
+            }
             Event::Audio(data) => {
                 self.win.inventory = Some(data);
-                force_render = self.page == Page::WindowsAudio;
+                force_render = matches!(self.page, Page::WindowsAudio | Page::Mixer);
             }
             Event::MicOsd(state) => {
                 crate::win_session::show_mic(&state);
@@ -303,6 +355,42 @@ impl Mixer {
         }
     }
 
+    /// Bouton de mise à jour en bas à gauche : installe si une version est prête, sinon cherche puis installe.
+    pub(crate) fn update_click(&mut self, cx: &mut Context<Self>) {
+        let ready = self.update.as_ref().is_some_and(|u| u["status"] == "available" && u["installable"] == true);
+        if ready {
+            self.update_post("update-install", cx);
+        } else {
+            self.update_then_install = true;
+            self.update_post("update-check", cx);
+        }
+    }
+
+    fn update_post(&mut self, action: &'static str, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let job = cx.background_executor().spawn(async move { client.post_module("/api", action, json!({})) });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    this.update_then_install = false;
+                    this.notice = Some(error);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn finish_param(&mut self, cx: &mut Context<Self>) {
+        if let Some(d) = self.param_drag.take() {
+            self.param_held.insert(d.key.to_string(), (d.value, Instant::now()));
+            (d.commit)(self, d.value, cx);
+            cx.notify();
+        }
+    }
+
     fn commit_drag(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(g) = self.gesture.take() {
             self.set_volume(
@@ -376,33 +464,39 @@ impl Mixer {
         let fill = TRAVEL * fraction;
         let physical = fader.position.filter(|p| p.abs_diff(value) > 3);
         let hover = if self.enabled() { ui::hover_t(&format!("volume-{index}")) } else { 0. };
-        let grip = 24. - 6. * hover;
+        // Remplissage plat en haut, qui épouse le rail : la forme complète du rail, découpée à la hauteur du volume.
+        let shape = div()
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .w(px(FADER_W))
+            .h(px(TRAVEL))
+            .rounded(px(FADER_R))
+            .bg(linear_gradient(180., linear_color_stop(ui::tint(colour, 0.25 + 0.08 * hover), 0.), linear_color_stop(ui::shade(colour, 0.1 - 0.05 * hover), 1.)));
         let mut track = self
             .rail(channel, true, index, cx)
-            .mt(px(12.))
-            .w(px(72.))
+            .mt(px(14.))
+            .w(px(FADER_W))
             .h(px(TRAVEL))
-            .rounded_full()
-            .overflow_hidden()
-            .bg(linear_gradient(180., linear_color_stop(rgb(0xe6e6eb), 0.), linear_color_stop(rgb(0xefeff3), 1.)))
+            .rounded(px(FADER_R))
+            .bg(linear_gradient(180., linear_color_stop(rgb(0xe3e3e8), 0.), linear_color_stop(rgb(0xeeeef2), 1.)))
             .border_1()
-            .border_color(ui::lerp(alpha(0x000000, 0.04), alpha(colour, 0.35), hover))
-            .shadow(vec![gpui::BoxShadow { color: alpha(colour, 0.22 * hover), offset: gpui::point(px(0.), px(8.)), blur_radius: px(22.), spread_radius: px(0.) }])
+            .border_color(ui::lerp(alpha(0x000000, 0.05), alpha(colour, 0.4), hover))
+            .shadow(vec![gpui::BoxShadow { color: alpha(colour, 0.24 * hover), offset: gpui::point(px(0.), px(10.)), blur_radius: px(26.), spread_radius: px(0.) }])
             .child(
                 div()
                     .absolute()
                     .left_0()
-                    .right_0()
                     .bottom_0()
+                    .w(px(FADER_W))
                     .h(px(fill))
-                    .rounded_t(px(24.))
-                    .rounded_b(px(36.))
-                    .bg(linear_gradient(180., linear_color_stop(ui::tint(colour, 0.22 + 0.1 * hover), 0.), linear_color_stop(ui::shade(colour, 0.12 - 0.06 * hover), 1.)))
-                    .when(muted, |d| d.opacity(0.42))
-                    .child(div().absolute().top(px(11.)).left(px(grip)).right(px(grip)).h(px(4.)).rounded_full().bg(alpha(ui::WHITE, 0.92))),
+                    .overflow_hidden()
+                    .when(muted, |d| d.opacity(0.4))
+                    .child(shape)
+                    .when(fill > 30., |d| d.child(div().absolute().top(px(10.)).left(px(FADER_W / 2. - 11. + 3. * hover)).w(px(22. - 6. * hover)).h(px(4.)).rounded_full().bg(alpha(ui::WHITE, 0.9)))),
             );
         if let Some(p) = physical {
-            track = track.child(div().absolute().left(px(4.)).right(px(4.)).top(px(TRAVEL * (1. - f32::from(p) / 255.))).h(px(2.)).rounded_full().bg(alpha(ui::TEXT, 0.45)));
+            track = track.child(div().absolute().left(px(6.)).right(px(6.)).top(px(TRAVEL * (1. - f32::from(p) / 255.))).h(px(2.)).rounded_full().bg(alpha(ui::TEXT, 0.4)));
         }
         let (mute_bg, mute_fg, glyph) = if partial {
             (rgb(ui::ORANGE), rgb(ui::WHITE), Icon::VolumeOff)
@@ -421,23 +515,27 @@ impl Mixer {
                 div()
                     .id(("assign", index))
                     .flex()
+                    .max_w_full()
+                    .min_w(px(0.))
                     .items_center()
                     .gap(px(9.))
                     .px(px(10.))
                     .py(px(6.))
                     .rounded(px(12.))
                     .cursor(CursorStyle::PointingHand)
-
                     .child(ui::icon(channel_icon(&channel.id), 22., rgb(colour)))
                     .child(
                         div()
                             .flex()
                             .flex_col()
+                            .flex_1()
                             .min_w(px(0.))
-                            .child(div().text_size(px(16.5)).font_weight(FontWeight::SEMIBOLD).child(channel.label.clone()))
-                            .child(ui::caption(format!("Fader {} · {}", index + 1, if target == "all" { "partout".to_owned() } else { self.target(&target).to_owned() }))),
+                            .overflow_hidden()
+                            .child(div().text_size(px(16.5)).font_weight(FontWeight::SEMIBOLD).truncate().child(channel.label.clone()))
+                            // une seule ligne, coupée proprement : le texte ne déborde jamais sur la voie voisine
+                            .child(ui::caption(format!("Fader {} · {}", index + 1, channel_hint(&channel.id))).truncate()),
                     )
-                    .child(ui::icon(Icon::ChevronDown, 14., rgb(ui::TEXT3)))
+                    .child(ui::icon(Icon::ChevronDown, 14., rgb(ui::TEXT3)).flex_none())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.picker = if this.picker == Some(index) { None } else { Some(index) };
                         cx.notify();
@@ -449,14 +547,15 @@ impl Mixer {
             .child(track)
             .child(
                 div()
-                    .mt(px(10.))
+                    .mt(px(12.))
                     .flex()
                     .items_baseline()
-                    .child(div().text_size(px(42.)).line_height(px(46.)).font_weight(FontWeight::LIGHT).child(percent(value).to_string()))
-                    .child(div().ml(px(3.)).text_size(px(19.)).text_color(rgb(ui::TEXT3)).child("%")),
+                    .justify_center()
+                    .child(div().text_size(px(40.)).line_height(px(44.)).font_weight(FontWeight::LIGHT).child(percent(value).to_string()))
+                    .child(div().ml(px(2.)).text_size(px(18.)).text_color(rgb(ui::TEXT3)).child("%")),
             )
             .child(
-                ui::round(("mute", index), glyph, 50., mute_bg, mute_fg)
+                ui::round(("mute", index), glyph, 48., mute_bg, mute_fg)
                     .mt(px(10.))
                     .when(muted, |d| d.shadow(vec![gpui::BoxShadow { color: alpha(if partial { ui::ORANGE } else { ui::RED }, 0.3), offset: gpui::point(px(0.), px(6.)), blur_radius: px(18.), spread_radius: px(0.) }]))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle(&c, &target, cx))),
@@ -505,39 +604,81 @@ impl Mixer {
             })))
     }
 
-    fn channel_row(&self, i: usize, ch: &Channel, cx: &mut Context<Self>) -> Div {
+    fn channel_row(&self, i: usize, ch: &Channel, first: bool, cx: &mut Context<Self>) -> Div {
         let channel = ch.clone();
         let colour = channel_colour(ch);
         let muted = ch.mute.is_some();
         let value = self.volume(ch);
+        let used = self.windows_use(&ch.id);
         div()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .h(px(50.))
-            .child(ui::icon(channel_icon(&ch.id), 20., rgb(colour)))
-            .child(div().w(px(112.)).text_size(px(14.)).font_weight(FontWeight::MEDIUM).child(ch.label.clone()))
-            .child(self.rail(ch, false, 4 + i, cx).flex_1().h(px(22.)).child(ui::hslider(f32::from(value) / 255., if muted { alpha(colour, 0.35) } else { rgb(colour) }, if self.enabled() { ui::hover_t(&format!("volume-{}", 4 + i)) } else { 0. })))
-            .child(div().w(px(46.)).flex().justify_end().text_size(px(13.5)).text_color(rgb(ui::TEXT2)).child(format!("{} %", percent(value))))
+            .gap(px(14.))
+            .py(px(10.))
+            .when(!first, |d| d.border_t_1().border_color(alpha(0x000000, 0.07)))
+            .child(ui::chip(channel_icon(&ch.id), colour, 32.))
             .child(
-                ui::round(SharedString::from(format!("mute-other-{}", ch.id)), if muted { Icon::VolumeOff } else { Icon::Volume }, 30., if muted { rgb(ui::RED) } else { alpha(0x767680, 0.) }, if muted { rgb(ui::WHITE) } else { rgb(ui::TEXT2) })
+                div()
+                    .w(px(210.))
+                    .flex()
+                    .flex_col()
+                    .child(div().flex().items_center().gap(px(8.)).child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(ch.label.clone())).when_some(used, |d, u| d.child(ui::badge(u, ui::ACCENT))))
+                    .child(div().text_size(px(12.)).text_color(rgb(ui::TEXT2)).child(channel_hint(&ch.id))),
+            )
+            .child(self.rail(ch, false, 4 + i, cx).flex_1().h(px(22.)).child(ui::hslider(f32::from(value) / 255., if muted { alpha(colour, 0.35) } else { rgb(colour) }, if self.enabled() { ui::hover_t(&format!("volume-{}", 4 + i)) } else { 0. })))
+            .child(div().w(px(48.)).flex().justify_end().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format!("{} %", percent(value))))
+            .child(
+                ui::round(SharedString::from(format!("mute-other-{}", ch.id)), if muted { Icon::VolumeOff } else { Icon::Volume }, 32., if muted { rgb(ui::RED) } else { alpha(0x767680, 0.) }, if muted { rgb(ui::WHITE) } else { rgb(ui::TEXT2) })
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle(&channel, "all", cx))),
             )
     }
 
-    fn others(&self, snap: &Snapshot, cx: &mut Context<Self>) -> Div {
-        let rows: Vec<&Channel> = snap.channels.iter().filter(|ch| !snap.faders.iter().any(|f| f.channel == ch.id)).collect();
-        let column = || div().flex().flex_col().flex_1().min_w(px(0.));
-        let (mut left, mut right) = (column(), column());
-        for (i, ch) in rows.iter().enumerate() {
-            let row = self.channel_row(i, ch, cx).when(i + 2 < rows.len(), |d| d.border_b_1().border_color(alpha(0x000000, 0.07)));
-            if i % 2 == 0 {
-                left = left.child(row);
-            } else {
-                right = right.child(row);
-            }
+    /// Ce que Windows envoie sur cette voie (sortie par défaut, appels), d'après les périphériques actifs.
+    fn windows_use(&self, id: &str) -> Option<&'static str> {
+        let outputs = self.win.inventory.as_ref()?["outputs"].as_array()?;
+        let named = |o: &&serde_json::Value| {
+            let n = o["name"].as_str().unwrap_or("").to_lowercase();
+            let word = match id {
+                "System" => "system",
+                "Game" => "game",
+                "Chat" => "chat",
+                "Music" => "music",
+                "Sample" => "sample",
+                _ => return false,
+            };
+            n.contains("goxlr") && n.contains(word)
+        };
+        let o = outputs.iter().find(named)?;
+        match (o["default"] == true, o["communications"] == true) {
+            (true, true) => Some("Son de Windows et appels"),
+            (true, false) => Some("Son de Windows"),
+            (false, true) => Some("Appels Windows"),
+            _ => None,
         }
-        ui::card().flex_row().gap(px(40.)).px(px(26.)).py(px(6.)).child(left).child(right)
+    }
+
+    fn others(&self, snap: &Snapshot, cx: &mut Context<Self>) -> Div {
+        let free: Vec<&Channel> = snap.channels.iter().filter(|ch| !snap.faders.iter().any(|f| f.channel == ch.id)).collect();
+        let groups: [(&str, &str, Icon, &[&str]); 3] = [
+            ("Sons de ton PC", "Chaque appli choisit sa sortie GoXLR dans ses réglages audio (ou dans les paramètres de son de Windows).", Icon::Monitor, &["System", "Game", "Chat", "Music", "Sample"]),
+            ("Prises de la GoXLR", "Seulement si un appareil est branché derrière la GoXLR.", Icon::Plug, &["LineIn", "Console"]),
+            ("Ce que tu entends", "Le volume final de ton casque, de tes enceintes et de ton propre retour.", Icon::Headphones, &["Headphones", "LineOut", "MicMonitor"]),
+        ];
+        let mut cards: Vec<AnyElement> = vec![];
+        let mut index = 0;
+        for (title, hint, glyph, ids) in groups {
+            let rows: Vec<&&Channel> = free.iter().filter(|c| ids.contains(&c.id.as_str())).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            let mut card = ui::section(glyph, ui::ACCENT, title, None).gap(px(4.)).child(ui::hint(hint).text_size(px(12.)).mb(px(4.)));
+            for (n, ch) in rows.into_iter().enumerate() {
+                card = card.child(self.channel_row(index, ch, n == 0, cx));
+                index += 1;
+            }
+            cards.push(card.into_any_element());
+        }
+        div().flex().flex_col().gap(px(16.)).children(cards)
     }
 
     pub fn mixer_view(&self, cx: &mut Context<Self>) -> Div {
@@ -570,14 +711,33 @@ impl Render for Mixer {
         ui::keep_animating(window);
         shell
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
+                if let Some(d) = this.param_drag.as_mut() {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        let next = d.at(ev.position);
+                        if (next - d.value).abs() > 1e-9 {
+                            d.value = next;
+                            cx.notify();
+                        }
+                    } else {
+                        this.finish_param(cx);
+                    }
+                    return;
+                }
                 if ev.pressed_button == Some(MouseButton::Left) {
                     this.drag_to(ev.position, cx);
                 } else if this.gesture.take().is_some() {
                     cx.notify();
                 }
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| this.commit_drag(ev.position, cx)))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| this.commit_drag(ev.position, cx)))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                this.finish_param(cx);
+                this.commit_drag(ev.position, cx)
+            }))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                this.finish_param(cx);
+                this.commit_drag(ev.position, cx)
+            }))
+            .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Back), cx.listener(|this, _, _, cx| this.go_back(cx)))
     }
 }
 
@@ -601,6 +761,24 @@ fn channel_colour(channel: &Channel) -> u32 {
     if light { ui::TEXT3 } else { c }
 }
 
+/// Ce que transporte une voie, en clair.
+pub(crate) fn channel_hint(id: &str) -> &'static str {
+    match id {
+        "Mic" => "Ta voix",
+        "System" => "Sons de Windows et notifications",
+        "Game" => "Le son de tes jeux",
+        "Chat" => "Discord, Teams et appels",
+        "Music" => "Spotify, YouTube, navigateur",
+        "Sample" => "Les sons du sampler",
+        "LineIn" => "Appareil branché sur la prise Line In",
+        "Console" => "Console branchée sur la prise dédiée",
+        "Headphones" => "Volume général de ton casque",
+        "LineOut" => "Enceintes sur la prise Line Out",
+        "MicMonitor" => "T’entendre dans ton casque",
+        _ => "Voie audio",
+    }
+}
+
 fn channel_icon(id: &str) -> Icon {
     match id {
         "Mic" => Icon::Mic,
@@ -616,4 +794,147 @@ fn channel_icon(id: &str) -> Icon {
     }
 }
 
-pub(crate) use crate::ui::button;
+
+/// Curseur de réglage en cours de glissement (gain, égaliseur, seuils…). La valeur part au relâchement.
+pub(crate) struct ParamDrag {
+    key: SharedString,
+    bounds: Bounds<Pixels>,
+    vertical: bool,
+    min: f64,
+    max: f64,
+    step: f64,
+    value: f64,
+    commit: Rc<dyn Fn(&mut Mixer, f64, &mut Context<Mixer>)>,
+}
+
+impl ParamDrag {
+    fn at(&self, position: gpui::Point<Pixels>) -> f64 {
+        let fraction = position_fraction(self.bounds, position, self.vertical) as f64;
+        let raw = self.min + fraction * (self.max - self.min);
+        ((raw / self.step).round() * self.step).clamp(self.min, self.max)
+    }
+}
+
+impl Mixer {
+    /// Valeur affichée d'un réglage : celle du geste en cours, puis celle envoyée tant que le moteur ne l'a pas relue.
+    pub(crate) fn param_value(&self, key: &str, actual: f64) -> f64 {
+        if let Some(d) = self.param_drag.as_ref().filter(|d| d.key.as_ref() == key) {
+            return d.value;
+        }
+        match self.param_held.get(key) {
+            Some((v, at)) if at.elapsed() < Duration::from_millis(1800) => *v,
+            _ => actual,
+        }
+    }
+
+    /// Zone cliquable d'un curseur ; le dessin (horizontal ou vertical) est ajouté par l'appelant.
+    pub(crate) fn param_area(
+        &self,
+        key: &str,
+        range: (f64, f64),
+        step: f64,
+        vertical: bool,
+        enabled: bool,
+        commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let rect = Rc::new(Cell::new(None::<Bounds<Pixels>>));
+        let layout = rect.clone();
+        let key: SharedString = format!("param-{key}").into();
+        let commit: Rc<dyn Fn(&mut Mixer, f64, &mut Context<Mixer>)> = Rc::new(commit);
+        let id = key.clone();
+        let el = div()
+            .id(ElementId::Name(key.clone()))
+            .relative()
+            .when(enabled, |d| d.cursor(CursorStyle::PointingHand))
+            .when(!enabled, |d| d.opacity(0.5))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                let Some(bounds) = rect.get() else { return };
+                if !enabled {
+                    return;
+                }
+                let mut drag = ParamDrag { key: id.clone(), bounds, vertical, min: range.0, max: range.1, step, value: range.0, commit: commit.clone() };
+                drag.value = drag.at(event.position);
+                this.param_drag = Some(drag);
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .child(canvas(move |bounds, _, _| layout.set(Some(bounds)), |_, _, _, _| {}).absolute().top_0().left_0().size_full());
+        ui::hoverable(el, key.to_string())
+    }
+
+    /// Ligne « libellé … valeur » avec un curseur horizontal dessous.
+    pub(crate) fn slider_row(
+        &self,
+        key: &str,
+        label: impl Into<SharedString>,
+        actual: f64,
+        range: (f64, f64),
+        step: f64,
+        format: impl Fn(f64) -> String,
+        enabled: bool,
+        commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let value = self.param_value(&format!("param-{key}"), actual);
+        let fraction = ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
+        let hover = ui::hover_t(&format!("param-{key}"));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_size(px(13.)).text_color(rgb(ui::TEXT)).child(label.into()))
+                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format(value))),
+            )
+            .child(self.param_area(key, range, step, false, enabled, commit, cx).h(px(22.)).w_full().child(ui::hslider(fraction, rgb(ui::ACCENT), hover)))
+    }
+
+    /// Colonne d'égaliseur : valeur en dB au-dessus, curseur vertical, libellé dessous.
+    pub(crate) fn eq_column(
+        &self,
+        key: &str,
+        actual: f64,
+        range: (f64, f64),
+        step: f64,
+        below: AnyElement,
+        enabled: bool,
+        commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let value = self.param_value(&format!("param-{key}"), actual);
+        let fraction = ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
+        let zero = ((0. - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
+        let hover = ui::hover_t(&format!("param-{key}"));
+        let shown = if value > 0. { format!("+{}", fmt_num(value)) } else { fmt_num(value) };
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .flex_1()
+            .min_w(px(0.))
+            .gap(px(8.))
+            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(if value.abs() < 0.01 { ui::TEXT3 } else { ui::ACCENT })).child(shown))
+            .child(self.param_area(key, range, step, true, enabled, commit, cx).w(px(28.)).h(px(150.)).child(ui::vslider(fraction, zero, rgb(ui::ACCENT), hover, 150.)))
+            .child(below)
+    }
+}
+
+/// 1.5 → « 1,5 », 2.0 → « 2 ».
+pub(crate) fn fmt_num(v: f64) -> String {
+    let r = (v * 10.).round() / 10.;
+    if (r - r.round()).abs() < 1e-6 { format!("{}", r as i64) } else { format!("{r:.1}").replace('.', ",") }
+}
+
+fn position_fraction(bounds: Bounds<Pixels>, at: gpui::Point<Pixels>, vertical: bool) -> f32 {
+    let fraction = if vertical {
+        1. - f32::from(at.y - bounds.origin.y) / f32::from(bounds.size.height).max(1.)
+    } else {
+        f32::from(at.x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
+    };
+    fraction.clamp(0., 1.)
+}

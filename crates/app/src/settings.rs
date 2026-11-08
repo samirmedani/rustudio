@@ -1,9 +1,10 @@
 //! Réglages de l'appli, configuration complète, mises à jour et retours de version.
 use crate::{
-    desktop::{Page, hint, panel},
-    mixer::{Mixer, button},
+    desktop::{Page, panel},
+    mixer::Mixer,
+    ui::{self, Icon, alpha, rgb},
 };
-use gpui::{Context, Div, PathPromptOptions, div, prelude::*, px};
+use gpui::{Context, Div, FontWeight, PathPromptOptions, SharedString, div, prelude::*, px};
 use rustudio_windows_desktop::session;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
@@ -74,18 +75,22 @@ impl Mixer {
     fn confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (message, ..) = self.library.confirm.as_ref()?;
         Some(
-            panel().child(div().child(message.clone())).child(
-                div().flex().gap_2()
-                    .child(button("lib-confirm".into(), "Confirmer".into(), true).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some((_, path, action, body, done)) = this.library.confirm.take() {
-                            this.engine_action(path, action, body, done, cx);
-                        }
-                    })))
-                    .child(button("lib-cancel".into(), "Annuler".into(), false).on_click(cx.listener(|this, _, _, cx| {
-                        this.library.confirm = None;
-                        cx.notify();
-                    }))),
-            ),
+            panel()
+                .flex_row()
+                .items_center()
+                .gap(px(14.))
+                .border_color(alpha(ui::ORANGE, 0.35))
+                .child(ui::chip(Icon::Alert, ui::ORANGE, 34.))
+                .child(div().flex_1().text_size(px(13.5)).child(message.clone()))
+                .child(ui::pill("lib-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+                    this.library.confirm = None;
+                    cx.notify();
+                })))
+                .child(ui::pill("lib-confirm", None, "Confirmer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| {
+                    if let Some((_, path, action, body, done)) = this.library.confirm.take() {
+                        this.engine_action(path, action, body, done, cx);
+                    }
+                }))),
         )
     }
 
@@ -172,7 +177,7 @@ impl Mixer {
         let osd = prefs["osd"] != false;
         let startup = data["startup"] == true;
         let step = |delta: i64| (hold + delta).clamp(250, 1500);
-        let mut root = div().flex().flex_col().gap_3();
+        let mut root = div().flex().flex_col().gap(px(16.));
         if let Some(n) = self.notice_line() {
             root = root.child(n);
         }
@@ -180,45 +185,67 @@ impl Mixer {
             root = root.child(c);
         }
         let (less, more) = (step(-50), step(50));
-        let behaviour = panel().child(crate::ui::heading("Boutons et notifications"))
-            .child(div().flex().items_center().justify_between()
-                .child(hint("Durée d’un appui long"))
-                .child(div().flex().items_center().gap_2()
-                    .child(button("hold-less".into(), "−".into(), false).on_click(cx.listener(move |this, _, _, cx| {
-                        this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"hold_ms": less}}), "Durée enregistrée.", cx)
-                    })))
-                    .child(div().w(px(70.)).child(format!("{:.2} s", hold as f64 / 1000.).replace('.', ",")))
-                    .child(button("hold-more".into(), "+".into(), false).on_click(cx.listener(move |this, _, _, cx| {
-                        this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"hold_ms": more}}), "Durée enregistrée.", cx)
-                    })))))
-            .child(div().flex().items_center().justify_between()
-                .child(hint("Bulle à l’écran quand le micro change"))
-                .child(crate::ui::toggle("osd-toggle", osd, true).on_click(cx.listener(move |this, _, _, cx| {
+        let mut general = ui::section(Icon::Settings, ui::ACCENT, "Comportement", None)
+            .child(ui::list_row(
+                Some((Icon::Mic, ui::RED)),
+                "Bulle à l’écran quand le micro change",
+                Some("Une pastille discrète apparaît au centre de l’écran.".into()),
+                ui::toggle("osd-toggle", osd, true).on_click(cx.listener(move |this, _, _, cx| {
                     this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"osd": !osd}}), "Préférence enregistrée.", cx)
-                }))));
-        root = root.child(behaviour);
+                })),
+                true,
+            ))
+            .child(ui::list_row(
+                Some((Icon::Gauge, ui::ORANGE)),
+                "Durée d’un appui long",
+                Some("Pour les boutons de la GoXLR qui ont deux fonctions.".into()),
+                ui::stepper(
+                    ui::step_button("hold-less", Icon::Minus).on_click(cx.listener(move |this, _, _, cx| {
+                        this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"hold_ms": less}}), "Durée enregistrée.", cx)
+                    })),
+                    format!("{:.2} s", hold as f64 / 1000.).replace('.', ","),
+                    ui::step_button("hold-more", Icon::Plus).on_click(cx.listener(move |this, _, _, cx| {
+                        this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"hold_ms": more}}), "Durée enregistrée.", cx)
+                    })),
+                ),
+                false,
+            ));
         if self.client.is_live() {
-            root = root.child(panel().child(crate::ui::heading("Windows"))
-                .child(div().flex().items_center().justify_between()
-                    .child(hint("Démarrer Rustudio avec Windows (icône près de l’horloge)"))
-                    .child(crate::ui::toggle("startup-toggle", startup, true).on_click(cx.listener(move |this, _, _, cx| {
-                        this.library.notice = Some(match session::set_startup(!startup) {
-                            Ok(()) => (true, "Démarrage avec Windows mis à jour.".into()),
-                            Err(e) => (false, e),
-                        });
-                        this.library_load(Page::Settings, cx);
-                    })))));
+            general = general.child(ui::list_row(
+                Some((Icon::Power, ui::GREEN)),
+                "Démarrer avec Windows",
+                Some("L’icône attend près de l’horloge.".into()),
+                ui::toggle("startup-toggle", startup, true).on_click(cx.listener(move |this, _, _, cx| {
+                    this.library.notice = Some(match session::set_startup(!startup) {
+                        Ok(()) => (true, "Démarrage avec Windows mis à jour.".into()),
+                        Err(e) => (false, e),
+                    });
+                    this.library_load(Page::Settings, cx);
+                })),
+                false,
+            ));
         }
-        root.child(panel().child(crate::ui::heading("Configuration complète"))
-            .child(hint("Sauvegarde toute la configuration de la GoXLR Mini dans un fichier, sans l’empreinte vocale. L’import remplace la configuration après confirmation."))
-            .child(div().flex().gap_2()
-                .child(button("config-export".into(), "Exporter ma configuration".into(), false).on_click(cx.listener(|this, _, _, cx| this.export_config(cx))))
-                .child(button("config-import".into(), "Importer une configuration".into(), false).on_click(cx.listener(|this, _, _, cx| this.import_config(cx))))))
+        let config = ui::section(Icon::Download, 0x5856d6, "Sauvegarde", None)
+            .child(ui::list_row(
+                None,
+                "Exporter ma configuration",
+                Some("Toute la GoXLR Mini dans un fichier, sans l’empreinte vocale.".into()),
+                ui::pill("config-export", Some(Icon::Download), "Exporter", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.export_config(cx))),
+                true,
+            ))
+            .child(ui::list_row(
+                None,
+                "Importer une configuration",
+                Some("Remplace la configuration actuelle, après confirmation.".into()),
+                ui::pill("config-import", Some(Icon::Upload), "Importer", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.import_config(cx))),
+                false,
+            ));
+        root.child(general).child(config)
     }
 
     pub fn versions_view(&self, data: &Value, cx: &mut Context<Self>) -> Div {
         let u = &data["update"];
-        let mut root = div().flex().flex_col().gap_3();
+        let mut root = div().flex().flex_col().gap(px(16.));
         if let Some(n) = self.notice_line() {
             root = root.child(n);
         }
@@ -227,64 +254,110 @@ impl Mixer {
         }
         let current = u["current"].as_str().unwrap_or("?").to_string();
         let busy = UPDATE_BUSY.iter().any(|p| u["phase"] == *p);
-        let mut card = panel().child(crate::ui::heading(format!("Rustudio {current}")));
-        if busy {
-            let progress = u["progress"].as_f64().map(|p| format!(" · {} %", (p * 100.).round())).unwrap_or_default();
-            card = card.child(hint(match u["phase"].as_str() {
-                Some("downloading") => format!("Téléchargement{progress}"),
-                Some("verifying") => "Vérification de l’empreinte…".into(),
-                Some("extracting") => "Préparation…".into(),
-                _ => "Installation : Rustudio redémarre et se rouvre tout seul.".into(),
-            }));
+        let available = u["status"] == "available";
+        let latest = u["latest"]["version"].as_str().unwrap_or("").to_string();
+        let (state, colour) = if busy {
+            ("Installation en cours", ui::ACCENT)
         } else if u["phase"] == "failed" {
-            card = card.child(hint(format!("Échec : {}", u["error"]["msg"].as_str().unwrap_or("mise à jour interrompue"))));
-        } else if u["status"] == "available" {
-            let latest = u["latest"]["version"].as_str().unwrap_or("?").to_string();
-            card = card.child(hint(format!("Rustudio {latest} est disponible.")))
-                .child(div().text_sm().child(u["latest"]["notes"].as_str().unwrap_or("").chars().take(1200).collect::<String>()));
-            if u["installable"] == true {
-                card = card.child(button("update-install".into(), format!("Installer la {latest}"), true).on_click(cx.listener(move |this, _, _, cx| {
-                    this.ask(format!("Installer Rustudio {latest} ? Rustudio redémarre pendant l’installation et revient tout seul."), "/api", "update-install", json!({}), "Installation lancée.", cx)
-                })));
-            } else {
-                card = card.child(hint(u["why_not"].as_str().unwrap_or("Installation automatique indisponible : passe par la page de la release.").to_owned()));
-            }
+            ("Mise à jour interrompue", ui::ORANGE)
+        } else if available {
+            ("Nouvelle version disponible", ui::ACCENT)
         } else if u["release_build"] == false {
-            card = card.child(hint("Version de développement : les mises à jour automatiques sont désactivées."));
+            ("Version de développement", ui::TEXT3)
+        } else if u["status"] == "up-to-date" {
+            ("À jour", ui::GREEN)
         } else {
-            card = card.child(hint(match u["status"].as_str() {
-                Some("up-to-date") => "Rustudio est à jour.",
-                Some("checking") => "Recherche en cours…",
-                _ => "Aucune recherche récente.",
-            }));
+            ("Pas encore vérifiée", ui::TEXT3)
+        };
+        let mut hero = ui::card().flex_row().items_center().gap(px(16.)).p(px(22.))
+            .child(ui::logo(56.))
+            .child(div().flex().flex_col().flex_1().gap(px(4.)).child(ui::title(format!("Rustudio {current}"), 20.)).child(div().flex().child(ui::badge(state, colour))));
+        if self.client.is_live() && u["release_build"] != false {
+            hero = hero.child(if busy {
+                div().w(px(220.)).flex().flex_col().gap(px(6.))
+                    .child(ui::progress(u["progress"].as_f64().unwrap_or(1.) as f32, ui::ACCENT))
+                    .child(ui::caption(match u["phase"].as_str() {
+                        Some("downloading") => format!("Téléchargement · {} %", (u["progress"].as_f64().unwrap_or(0.) * 100.).round()),
+                        Some("verifying") => "Vérification de l’empreinte…".into(),
+                        _ => "Rustudio redémarre et se rouvre tout seul.".into(),
+                    }))
+                    .into_any_element()
+            } else if available && u["installable"] == true {
+                ui::pill("update-install", Some(Icon::Download), format!("Mettre à jour vers la {latest}"), ui::Tone::Primary).h(px(40.)).px(px(18.))
+                    .on_click(cx.listener(|this, _, _, cx| this.update_click(cx))).into_any_element()
+            } else {
+                ui::pill("update-check", Some(Icon::Refresh), "Rechercher une mise à jour", ui::Tone::Plain)
+                    .on_click(cx.listener(|this, _, _, cx| this.update_click(cx))).into_any_element()
+            });
         }
-        if self.client.is_live() && !busy {
-            card = card.child(button("update-check".into(), "Rechercher une mise à jour".into(), false).on_click(cx.listener(|this, _, _, cx| {
-                this.engine_action("/api", "update-check", json!({}), "Recherche terminée.", cx)
-            })));
+        root = root.child(hero);
+        if available {
+            root = root.child(
+                ui::section(Icon::Sparkles, ui::ACCENT, format!("Nouveautés de la {latest}"), None)
+                    .child(ui::rich_text(u["latest"]["notes"].as_str().unwrap_or(""))),
+            );
         }
-        root = root.child(card);
-        for item in data["history"]["versions"].as_array().into_iter().flatten() {
+        if u["phase"] == "failed" {
+            root = root.child(ui::notice(false, format!("Échec : {}", u["error"]["msg"].as_str().unwrap_or("mise à jour interrompue"))));
+        }
+        let mut history = ui::section(Icon::History, 0x8e8e93, "Historique", Some("Survole une ancienne version pour y revenir".into())).gap(px(4.));
+        for (n, item) in data["history"]["versions"].as_array().into_iter().flatten().enumerate() {
             let version = item["version"].as_str().unwrap_or("?").to_string();
             let expanded = self.library.expanded.as_deref() == Some(&version);
+            let key = format!("release-{version}");
+            let t = ui::hover_t(&key);
+            let revertible = item["revertible"] == true && !busy && self.client.is_live();
+            let date = item["published"].as_str().map(short_date).unwrap_or_default();
             let id = version.clone();
-            let label = if item["installed"] == true { format!("{version} · installée") } else { version.clone() };
-            let mut row = panel().child(div().flex().items_center().justify_between()
-                .child(button(format!("release-{version}"), label, expanded).on_click(cx.listener(move |this, _, _, cx| {
+            let target = version.clone();
+            let mut badges = div().flex().gap(px(6.));
+            if item["installed"] == true {
+                badges = badges.child(ui::badge("Installée", ui::GREEN));
+            } else if item["newer"] == true {
+                badges = badges.child(ui::badge("Nouvelle", ui::ACCENT));
+            }
+            let revert = ui::round(SharedString::from(format!("revert-{version}")), Icon::History, 30., alpha(ui::ACCENT, 0.1), rgb(ui::ACCENT))
+                .opacity(t)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.ask(format!("Revenir à Rustudio {target} ? Tes réglages restent ; mêmes vérifications qu’une mise à jour."), "/api", "update-install", json!({"version": target}), "Retour lancé.", cx)
+                }));
+            let row = div()
+                .id(SharedString::from(key.clone()))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .px(px(10.))
+                .h(px(48.))
+                .rounded(px(12.))
+                .cursor(gpui::CursorStyle::PointingHand)
+                .when(n > 0, |d| d.mt(px(2.)))
+                .bg(ui::lerp(alpha(ui::ACCENT, 0.), alpha(ui::ACCENT, 0.05), t.max(if expanded { 1. } else { 0. })))
+                .child(div().w(px(70.)).text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(version.clone()))
+                .child(badges)
+                .child(div().flex_1())
+                .child(ui::caption(date))
+                .when(revertible, |d| d.child(revert))
+                .child(div().relative().top(px(if expanded { 0. } else { 1. * t })).child(ui::icon(if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, 15., rgb(ui::TEXT3))))
+                .on_click(cx.listener(move |this, _, _, cx| {
                     this.library.expanded = if this.library.expanded.as_ref() == Some(&id) { None } else { Some(id.clone()) };
                     cx.notify();
-                })))
-                .when(item["revertible"] == true && !busy && self.client.is_live(), |d| {
-                    let target = version.clone();
-                    d.child(button(format!("revert-{version}"), "Revenir à cette version".into(), false).on_click(cx.listener(move |this, _, _, cx| {
-                        this.ask(format!("Revenir à Rustudio {target} ? Tes réglages restent ; mêmes vérifications qu’une mise à jour."), "/api", "update-install", json!({"version": target}), "Retour lancé.", cx)
-                    })))
                 }));
+            history = history.child(ui::hoverable(row, key));
             if expanded {
-                row = row.child(div().text_sm().child(item["notes"].as_str().unwrap_or("Aucune note.").chars().take(3000).collect::<String>()));
+                history = history.child(div().px(px(14.)).pt(px(6.)).pb(px(12.)).child(ui::rich_text(item["notes"].as_str().unwrap_or("Aucune note."))));
             }
-            root = root.child(row);
         }
-        root
+        root.child(history)
+    }
+}
+
+/// « 2026-11-08T15:34:05Z » → « 8 nov. 2026 ».
+fn short_date(iso: &str) -> String {
+    const MONTHS: [&str; 12] = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+    let mut parts = iso.get(..10).unwrap_or("").split('-');
+    match (parts.next(), parts.next().and_then(|m| m.parse::<usize>().ok()), parts.next().and_then(|d| d.parse::<u32>().ok())) {
+        (Some(y), Some(m), Some(d)) if (1..=12).contains(&m) => format!("{d} {} {y}", MONTHS[m - 1]),
+        _ => String::new(),
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
     backend::Client,
-    desktop::{hint, panel},
-    mixer::{Mixer, button},
+    desktop::hint,
+    mixer::Mixer,
+    ui::{self, Icon, alpha},
 };
 use gpui::{Context, Div, div, prelude::*, px, rgb};
 use serde_json::{Value, json};
@@ -128,41 +129,23 @@ impl Mixer {
     }
 
     pub fn voice_panel(&self, cx: &mut Context<Self>) -> Div {
-        let mut panel = panel()
-            .child(crate::ui::heading("Empreinte vocale"))
-            .child(hint(if self.client.is_live() {
-                "Mesure via Chat Mic : le son est analysé localement et reste en mémoire."
-            } else {
-                "Une voix synthétique est utilisée. Aucun microphone du PC n’est lu."
-            }));
+        let mut panel = ui::section(Icon::Wave, 0x5856d6, "Empreinte vocale", None).child(hint(if self.client.is_live() {
+            "30 secondes : un court silence, un texte à lire, puis une phrase plus forte. Le son est analysé sur ton PC puis oublié."
+        } else {
+            "Démonstration : voix de synthèse, sans micro réel."
+        }).text_size(px(12.)));
         if let Some(cancel) = self.go.voice_cancel.as_ref() {
             let cancel = cancel.clone();
             let j = &self.go.job;
-            panel = panel.child(hint(
-                j["step"].as_str().unwrap_or("Préparation…").to_owned(),
-            ));
+            panel = panel.child(ui::status(j["step"].as_str().unwrap_or("Préparation…").to_owned(), ui::State::Info));
             if j["phase"] == "reading" {
-                panel=panel.child(div().child("Ce matin, le ciel était clair. Je prends le temps de lire cette phrase. Les sons passent doucement, puis ma voix reprend un rythme naturel."));
+                panel = panel.child(div().p(px(14.)).rounded(px(12.)).bg(alpha(ui::ACCENT, 0.06)).text_size(px(15.)).line_height(px(22.)).child("Ce matin, le ciel était clair. Je prends le temps de lire cette phrase. Les sons passent doucement, puis ma voix reprend un rythme naturel."));
             } else if j["phase"] == "loud" {
-                panel = panel.child(div().child("Parle plus fort : « On y va, c’est parti ! »"));
+                panel = panel.child(div().p(px(14.)).rounded(px(12.)).bg(alpha(ui::ORANGE, 0.08)).text_size(px(15.)).child("Parle plus fort : « On y va, c’est parti ! »"));
             }
-            panel = panel.child(
-                button(
-                    "voice-print-cancel".into(),
-                    "Annuler la mesure".into(),
-                    false,
-                )
-                .on_click(cx.listener(move |_, _, _, _| cancel.store(true, Ordering::Relaxed))),
-            );
+            panel = panel.child(ui::pill("voice-print-cancel", Some(Icon::Close), "Annuler la mesure", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, _| cancel.store(true, Ordering::Relaxed))));
         } else if self.go.enabled() {
-            panel = panel.child(
-                button(
-                    "voice-print-start".into(),
-                    "Créer mon empreinte".into(),
-                    true,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.run_voice_print(cx))),
-            );
+            panel = panel.child(ui::pill("voice-print-start", Some(Icon::Mic), "Créer mon empreinte", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.run_voice_print(cx))));
         }
         panel
     }
@@ -281,12 +264,12 @@ impl Mixer {
     }
 
     pub fn echo_panel(&self, cx: &mut Context<Self>) -> Div {
-        let mut p = panel().child(crate::ui::heading("Test d’écho"))
+        let mut p = ui::section(Icon::Chat, ui::ACCENT, "Test d’écho", None)
             .child(hint("Rustudio joue trois bips dans la voie Discord (tu les entends dans le casque) et écoute ton micro. Reste silencieux, et pas pendant un live."));
         if self.voice.echo_running {
-            p = p.child(hint("Test en cours…"));
+            p = p.child(ui::status("Test en cours…", ui::State::Info));
         } else {
-            p = p.child(button("echo-run".into(), "Lancer le test".into(), true).on_click(cx.listener(|this, _, _, cx| this.run_echo(cx))));
+            p = p.child(ui::pill("echo-run", Some(Icon::Play), "Lancer le test", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.run_echo(cx))));
         }
         if let Some(r) = self.voice.echo.as_ref() {
             let loop_route = self.go.view.as_ref().is_some_and(|v| v.state["routing"]["Chat"]["ChatMic"] == true);
@@ -304,27 +287,27 @@ impl Mixer {
                     _ => format!("{}Aucun écho : ton micro n’a rien capté des bips.", if r["simulated"] == true { "Démonstration · " } else { "" }),
                 }
             };
-            p = p.child(div().text_sm().child(text));
+            p = p.child(ui::notice(r["level"] != "strong", text));
         }
         p
     }
 
     pub fn listen_panel(&self, cx: &mut Context<Self>) -> Div {
-        let mut p = panel().child(crate::ui::heading("M’écouter"))
+        let mut p = div().flex().flex_col().gap(px(10.)).pt(px(6.)).child(ui::label("M’écouter comme les autres"))
             .child(hint("Enregistre 8 secondes de « Chat Mic », puis réécoute ta voix telle que la reçoivent Discord et ton stream."));
         if !self.client.is_live() {
             return p.child(hint("Démonstration : aucun micro du PC n’est enregistré."));
         }
-        let mut actions = div().flex().gap_2();
+        let mut actions = div().flex().items_center().gap(px(8.));
         if let Some(stop) = self.voice.recording.clone() {
             actions = actions.child(hint("Enregistrement… parle comme en live.")).child(
-                button("listen-stop".into(), "Arrêter".into(), false).on_click(cx.listener(move |_, _, _, _| stop.store(true, Ordering::Relaxed))),
+                ui::pill("listen-stop", Some(Icon::Stop), "Arrêter", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, _| stop.store(true, Ordering::Relaxed))),
             );
         } else {
-            actions = actions.child(button("listen-rec".into(), if self.voice.take.is_some() { "Refaire".into() } else { "Enregistrer 8 s".into() }, true)
+            actions = actions.child(ui::pill("listen-rec", Some(Icon::Mic), if self.voice.take.is_some() { "Refaire" } else { "Enregistrer 8 s" }, ui::Tone::Primary)
                 .on_click(cx.listener(|this, _, _, cx| this.record_take(cx))));
             if self.voice.take.is_some() {
-                actions = actions.child(button("listen-play".into(), if self.voice.playing { "Lecture…".into() } else { "Réécouter".into() }, false)
+                actions = actions.child(ui::pill("listen-play", Some(Icon::Play), if self.voice.playing { "Lecture…" } else { "Réécouter" }, ui::Tone::Plain)
                     .on_click(cx.listener(|this, _, _, cx| this.play_take(cx))));
             }
         }
@@ -337,7 +320,7 @@ impl Mixer {
 
     /// Ta voix avant et avec le préréglage actif, par bande de fréquence.
     pub fn voice_chart(&self, preset: &str) -> Div {
-        let mut p = panel().child(crate::ui::heading("Ta voix et le préréglage"));
+        let mut p = ui::section(Icon::Activity, ui::ACCENT, "Ta voix et le préréglage", None);
         let Some(info) = self.voice.info.as_ref() else {
             return p.child(hint(if self.voice.loading { "Lecture…" } else { "Crée ton empreinte pour voir ta voix." }));
         };

@@ -1,6 +1,7 @@
 //! Session Windows de l'appli : une seule instance, démarrage avec Windows, relance du service.
 use std::time::Duration;
 
+#[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// Appli lancée avec la session (clé Run du compte, comme l'installeur).
@@ -124,3 +125,21 @@ pub fn round_corners(hwnd: isize) {
         );
     }
 }
+
+/// Aperçu de l'interface sur Mac (développement) : pas d'instance unique ni de coins natifs.
+#[cfg(not(windows))]
+pub struct Instance;
+
+#[cfg(not(windows))]
+impl Instance {
+    pub fn acquire(_name: &str) -> Option<Self> {
+        Some(Self)
+    }
+    pub fn wait_show(&self) -> bool {
+        std::thread::park();
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub fn round_corners(_hwnd: isize) {}

@@ -499,6 +499,7 @@ pub enum Event {
     Go(Option<crate::goxlr::GoView>),
     Audio(Value),
     MicOsd(String),
+    Update(Value),
 }
 
 pub fn start(
@@ -599,7 +600,22 @@ pub fn start(
     let inventory_tx = event_tx.clone();
     std::thread::spawn(move || {
         let mut last = None;
+        let mut last_update: Option<Value> = None;
+        let mut tick = 0u64;
         while !inventory_tx.is_closed() {
+            if inventory_client.is_live() && tick % 3 == 0 {
+                if let Ok(mut update) = inventory_client.get("/api/update") {
+                    // compte à rebours de la recherche manuelle : inutile ici, et il changerait à chaque lecture
+                    update.as_object_mut().map(|o| o.remove("check_wait"));
+                    if last_update.as_ref() != Some(&update) {
+                        last_update = Some(update.clone());
+                        if inventory_tx.send_blocking(Event::Update(update)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            tick += 1;
             let current = inventory_client.inventory().ok();
             if current != last {
                 last = current.clone();

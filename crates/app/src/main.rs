@@ -1,39 +1,39 @@
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod backend;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod desktop;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod goxlr;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod library;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod mixer;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod mouse;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod profiles;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod settings;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod tray;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod tray_panel;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod ui;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod voice;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod win_session;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn main() {
     eprintln!("Rustudio est une application Windows.");
     std::process::exit(1);
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn main() {
     if let Err(err) = run() {
         eprintln!("{err}");
@@ -42,10 +42,10 @@ fn main() {
 }
 
 /// Version de l'appli : la même que celle du moteur livré avec elle.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn run() -> Result<(), String> {
     use gpui::{App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
     use rustudio_windows_desktop::{session, soundcheck};
@@ -253,16 +253,17 @@ fn run() -> Result<(), String> {
     });
     Ok(())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 struct DemoEngine {
     child: std::process::Child,
     _state: tempfile::TempDir,
     port: u16,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl DemoEngine {
     fn start(port: Option<u16>) -> Result<Self, String> {
+        #[cfg(windows)]
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
 
@@ -280,9 +281,12 @@ impl DemoEngine {
             .map_err(|e| format!("Dossier de démonstration inaccessible : {e}"))?;
         let exe = std::env::current_exe()
             .map_err(|e| e.to_string())?
-            .with_file_name("rustudio-engine.exe");
+            .with_file_name(if cfg!(windows) { "rustudio-engine.exe" } else { "rustudio-engine" });
         drop(guard);
-        let child = Command::new(exe)
+        let mut command = Command::new(exe);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let child = command
             .args([
                 "run",
                 "--child",
@@ -295,7 +299,6 @@ impl DemoEngine {
             .env_remove("RUSTUDIO_SUPERVISED")
             .env_remove("RUSTUDIO_SIM_FW")
             .env_remove("RUSTUDIO_DEMO_UPDATE")
-            .creation_flags(0x08000000)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -309,7 +312,7 @@ impl DemoEngine {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl Drop for DemoEngine {
     fn drop(&mut self) {
         let _ = self.child.kill();

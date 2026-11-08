@@ -1,9 +1,10 @@
 use crate::{
     backend::Client,
-    desktop::{hint, panel},
-    mixer::{Mixer, button},
+    desktop::hint,
+    mixer::Mixer,
+    ui::{self, Icon},
 };
-use gpui::{Context, Div, div, prelude::*};
+use gpui::{Context, Div, div, prelude::*, px};
 use rustudio_windows_desktop::{audio, osd, soundcheck};
 use serde_json::{Value, json};
 
@@ -34,9 +35,9 @@ impl WinPage {
 
 impl Mixer {
     pub fn win_audio(&self, cx: &mut Context<Self>) -> Div {
-        let mut root = div().flex().flex_col().gap_3();
+        let mut root = div().flex().flex_col().gap(px(16.));
         if let Some(note) = &self.win.note {
-            root = root.child(hint(note.clone()));
+            root = root.child(ui::notice(true, note.clone()));
         }
         for issue in self.win.inventory.as_ref().and_then(|v| v["issues"].as_array()).into_iter().flatten() {
             let name = issue["name"].as_str().unwrap_or("un autre périphérique");
@@ -48,73 +49,61 @@ impl Mixer {
                 Some("render-other") => format!("Le son {role} part sur « {name} » au lieu de la GoXLR."),
                 _ => format!("Aucune sortie Windows {role}."),
             };
-            root = root.child(crate::ui::notice(false, text));
+            root = root.child(ui::notice(false, text));
         }
+        if self.win.confirm {
+            root = root.child(
+                ui::card()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(ui::chip(Icon::Alert, ui::ORANGE, 34.))
+                    .child(div().flex_1().text_size(px(13.5)).child("Utiliser les entrées et sorties GoXLR recommandées par défaut dans Windows ?"))
+                    .child(ui::pill("windows-fix-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+                        this.win.cancel();
+                        cx.notify();
+                    })))
+                    .child(ui::pill("windows-fix-ok", None, "Confirmer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.fix_audio(cx)))),
+            );
+        }
+        let mut cards: Vec<gpui::AnyElement> = vec![];
         if let Some(data) = self.win.inventory.as_ref().filter(|v| v["status"] == "ok") {
-            for (key, label) in [("outputs", "Sorties audio"), ("inputs", "Entrées audio")] {
-                let mut group = panel().child(crate::ui::heading(label));
-                for row in data[key].as_array().into_iter().flatten() {
+            for (key, label, glyph) in [("outputs", "Sorties audio", Icon::Headphones), ("inputs", "Entrées audio", Icon::Mic)] {
+                let mut group = ui::section(glyph, ui::ACCENT, label, None).gap(px(4.));
+                for (n, row) in data[key].as_array().into_iter().flatten().enumerate() {
                     let name = row["name"].as_str().unwrap_or("Périphérique audio");
-                    let roles = match (row["default"] == true, row["communications"] == true) {
-                        (true, true) => "Par défaut · Appels",
-                        (true, false) => "Par défaut",
-                        (false, true) => "Appels",
-                        _ => "",
-                    };
-                    group = group.child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .gap_2()
-                            .child(div().child(name.to_owned()))
-                            .child(hint(roles)),
-                    );
+                    let mut badges = div().flex().gap(px(6.));
+                    if row["default"] == true {
+                        badges = badges.child(ui::badge("Par défaut", ui::GREEN));
+                    }
+                    if row["communications"] == true {
+                        badges = badges.child(ui::badge("Appels", ui::ACCENT));
+                    }
+                    let goxlr = name.to_lowercase().contains("goxlr");
+                    group = group.child(ui::list_row(Some((if goxlr { Icon::Sliders } else { glyph }, if goxlr { ui::ACCENT } else { ui::TEXT2 })), name.to_owned(), goxlr.then(|| "GoXLR".into()), badges, n == 0));
                 }
                 if data[key].as_array().is_none_or(Vec::is_empty) {
                     group = group.child(hint("Aucun périphérique actif."));
                 }
-                root = root.child(group);
+                cards.push(group.into_any_element());
             }
         } else {
-            root = root.child(panel().child(hint(
-                "Inventaire audio indisponible. Nouvelle lecture automatique.",
-            )));
+            cards.push(ui::card().child(hint("Inventaire audio indisponible. Nouvelle lecture automatique.")).into_any_element());
         }
+        root = root.child(ui::columns(cards));
         if self.client.is_live() {
             root = root.child(
                 div()
                     .flex()
-                    .gap_2()
-                    .child(
-                        button(
-                            "windows-open".into(),
-                            "Ouvrir les paramètres de son".into(),
-                            false,
-                        )
-                        .on_click(cx.listener(|_, _, _, cx| cx.open_url("ms-settings:sound"))),
-                    )
+                    .gap(px(8.))
+                    .child(ui::pill("windows-open", Some(Icon::External), "Paramètres de son de Windows", ui::Tone::Plain).on_click(cx.listener(|_, _, _, cx| cx.open_url("ms-settings:sound"))))
                     .when(!self.win.busy, |d| {
-                        d.child(
-                            button(
-                                "windows-fix".into(),
-                                "Rétablir les défauts GoXLR".into(),
-                                false,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.win.confirm = true;
-                                cx.notify();
-                            })),
-                        )
+                        d.child(ui::pill("windows-fix", Some(Icon::Check), "Rétablir les défauts GoXLR", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| {
+                            this.win.confirm = true;
+                            cx.notify();
+                        })))
                     }),
             );
-        }
-        if self.win.confirm {
-            root=root.child(panel().child(hint("Utiliser les entrées et sorties GoXLR recommandées par défaut dans Windows ?"))
-                .child(div().flex().gap_2()
-                    .child(button("windows-fix-ok".into(),"Confirmer".into(),true)
-                        .on_click(cx.listener(|this,_,_,cx|this.fix_audio(cx))))
-                    .child(button("windows-fix-cancel".into(),"Annuler".into(),false)
-                        .on_click(cx.listener(|this,_,_,cx|{this.win.cancel();cx.notify();})))));
         }
         root
     }

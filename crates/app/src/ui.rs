@@ -268,10 +268,6 @@ pub fn label(text: impl Into<SharedString>) -> Div {
 pub fn eyebrow(text: impl Into<SharedString>) -> Div {
     div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT3)).child(text.into())
 }
-/// Titre d'une carte de réglages.
-pub fn heading(text: impl Into<SharedString>) -> Div {
-    title(text, 15.)
-}
 pub fn title(text: impl Into<SharedString>, size: f32) -> Div {
     div().text_size(px(size)).font_weight(FontWeight::SEMIBOLD).child(text.into())
 }
@@ -616,6 +612,238 @@ pub fn menu_item(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<
         .child(text.into())
         .when(selected, |d| d.child(div().flex_1().flex().justify_end().child(icon(Icon::Check, 15., rgb(ACCENT)))));
     hoverable(el, key)
+}
+
+
+// ── Briques de mise en page ───────────────────────────────────────────────────
+
+/// Carte de réglages avec son en-tête (pastille, titre, mention à droite).
+pub fn section(glyph: Icon, colour: u32, title_text: impl Into<SharedString>, aside: Option<SharedString>) -> Div {
+    card().child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .child(chip(glyph, colour, 28.))
+            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
+            .when_some(aside, |d, a| d.child(div().flex_1().flex().justify_end().text_size(px(12.5)).text_color(rgb(TEXT3)).child(a))),
+    )
+}
+
+/// Ligne d'une liste groupée : icône, titre, sous-titre, contrôle à droite. Filet au-dessus sauf pour la première.
+pub fn list_row(glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>, sub: Option<SharedString>, trailing: impl IntoElement, first: bool) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .min_h(px(48.))
+        .py(px(8.))
+        .when(!first, |d| d.border_t_1().border_color(alpha(0x000000, 0.07)))
+        .when_some(glyph, |d, (i, c)| d.child(icon(i, 18., rgb(c))))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.))
+                .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(title_text.into()))
+                .when_some(sub, |d, s| d.child(div().text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s))),
+        )
+        .child(div().flex_none().flex().items_center().gap(px(8.)).child(trailing))
+}
+
+/// Contrôle segmenté (choix exclusif court) : un rail gris, le choix actif en blanc.
+pub fn segmented() -> Div {
+    div().flex().w_full().p(px(3.)).gap(px(3.)).rounded(px(11.)).bg(alpha(0x767680, 0.12))
+}
+pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let key = key_of(&id);
+    let t = if selected { 0. } else { hover_t(&key) };
+    let el = div()
+        .id(id)
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(30.))
+        .px(px(10.))
+        .rounded(px(8.))
+        .text_size(px(13.))
+        .font_weight(FontWeight::MEDIUM)
+        .cursor(CursorStyle::PointingHand)
+        .when(selected, |d| d.bg(rgb(WHITE)).shadow(vec![shadow(1., 3., 0.1)]))
+        .when(!selected, |d| d.bg(lerp(alpha(WHITE, 0.), alpha(WHITE, 0.55), t)).text_color(lerp(rgb(0x3a3a3c), rgb(TEXT), t)))
+        .child(text.into());
+    hoverable(el, key)
+}
+
+/// Tuile de choix (préréglage, style, scène, thème) : se soulève au survol, cadre bleu quand elle est choisie.
+pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>, desc: Option<SharedString>, selected: bool, badge_text: Option<(SharedString, u32)>) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let key = key_of(&id);
+    let t = hover_t(&key);
+    let el = div()
+        .id(id)
+        .relative()
+        .top(px(-2. * t))
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .flex_1()
+        .min_w(px(0.))
+        .p(px(14.))
+        .rounded(px(16.))
+        .cursor(CursorStyle::PointingHand)
+        .bg(if selected { alpha(ACCENT, 0.06) } else { lerp(alpha(WHITE, 0.7), rgb(WHITE), t) })
+        .border_1()
+        .border_color(if selected { alpha(ACCENT, 0.9) } else { lerp(alpha(0x000000, 0.08), alpha(ACCENT, 0.3), t) })
+        .shadow(if selected { vec![BoxShadow { color: alpha(ACCENT, 0.14), offset: point(px(0.), px(6.)), blur_radius: px(18.), spread_radius: px(0.) }] } else { lift_shadow(t, 0x111827, 0.6) })
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .when_some(glyph, |d, (i, c)| d.child(chip(i, c, 30.)))
+                .child(div().flex_1())
+                .when_some(badge_text, |d, (b, c)| d.child(badge(b, c)))
+                .when(selected, |d| d.child(div().flex().items_center().justify_center().size(px(20.)).rounded_full().bg(rgb(ACCENT)).child(icon(Icon::Check, 12., rgb(WHITE))))),
+        )
+        .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
+        .when_some(desc, |d, s| d.child(div().text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s)));
+    hoverable(el, key)
+}
+
+/// Grille régulière : les éléments sont rangés par lignes de 'cols', toutes de même largeur.
+pub fn grid(items: Vec<AnyElement>, cols: usize) -> Div {
+    let mut root = div().flex().flex_col().gap(px(10.));
+    let mut items = items.into_iter().peekable();
+    while items.peek().is_some() {
+        let mut row = div().flex().gap(px(10.));
+        let mut n = 0;
+        for item in items.by_ref().take(cols) {
+            row = row.child(div().flex().flex_1().min_w(px(0.)).child(item));
+            n += 1;
+        }
+        for _ in n..cols {
+            row = row.child(div().flex_1());
+        }
+        root = root.child(row);
+    }
+    root
+}
+
+/// Étiquette d'état colorée (Installée, Nouvelle, Conseillé…).
+pub fn badge(text: impl Into<SharedString>, colour: u32) -> Div {
+    let fg = if colour == GREEN { GREEN_TEXT } else if colour == ORANGE { ORANGE_TEXT } else if colour == RED { RED_TEXT } else { colour };
+    div()
+        .flex_none()
+        .px(px(8.))
+        .py(px(2.))
+        .rounded_full()
+        .bg(alpha(colour, 0.13))
+        .text_color(rgb(fg))
+        .text_size(px(11.5))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(text.into())
+}
+
+/// Valeur réglable par pas : bouton −, valeur centrée de largeur fixe, bouton +.
+pub fn stepper(less: Stateful<Div>, value: impl Into<SharedString>, more: Stateful<Div>) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(2.))
+        .p(px(3.))
+        .rounded_full()
+        .bg(alpha(0x767680, 0.1))
+        .child(less)
+        .child(div().w(px(70.)).flex().justify_center().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(value.into()))
+        .child(more)
+}
+pub fn step_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
+    round(id, glyph, 28., rgb(WHITE), rgb(TEXT)).shadow(vec![shadow(1., 2., 0.08)])
+}
+
+/// Case d'une matrice (routage) : cercle plein coché, ou anneau vide.
+pub fn check_cell(id: impl Into<ElementId>, on: bool, enabled: bool) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let key = key_of(&id);
+    let t = if enabled { hover_t(&key) } else { 0. };
+    let el = div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(28.))
+        .rounded_full()
+        .cursor(CursorStyle::PointingHand)
+        .when(on, |d| d.bg(lerp(rgb(ACCENT), rgb(0x2b8af0), t)).shadow(vec![BoxShadow { color: alpha(ACCENT, 0.25 + 0.15 * t), offset: point(px(0.), px(3.)), blur_radius: px(8.), spread_radius: px(0.) }]).child(icon(Icon::Check, 15., rgb(WHITE))))
+        .when(!on, |d| d.border_2().border_color(lerp(alpha(0x000000, 0.14), alpha(ACCENT, 0.55), t)).bg(lerp(alpha(WHITE, 0.6), alpha(ACCENT, 0.06), t)))
+        .when(!enabled, |d| d.opacity(0.45));
+    hoverable(el, key)
+}
+
+pub fn swatch(colour: u32, size: f32) -> Div {
+    div().flex_none().size(px(size)).rounded(px(size * 0.3)).bg(rgb(colour)).border_1().border_color(alpha(0x000000, 0.12))
+}
+
+pub fn progress(fraction: f32, colour: u32) -> Div {
+    div().h(px(6.)).w_full().rounded_full().bg(alpha(0x767680, 0.14)).child(div().h_full().w(gpui::relative(fraction.clamp(0., 1.))).rounded_full().bg(rgb(colour)))
+}
+
+/// Curseur vertical (égaliseurs) : rail fin, remplissage depuis le zéro, bouton blanc.
+pub fn vslider(fraction: f32, zero: f32, colour: Hsla, hover: f32, height: f32) -> Div {
+    let f = fraction.clamp(0., 1.);
+    let knob = 20. + 4. * hover;
+    let (lo, hi) = if f < zero { (f, zero) } else { (zero, f) };
+    div()
+        .relative()
+        .w(px(28.))
+        .h(px(height))
+        .child(div().absolute().top_0().bottom_0().left(px(11.)).w(px(6.)).rounded_full().bg(alpha(0x767680, 0.16)))
+        .child(div().absolute().left(px(7.)).w(px(14.)).h(px(2.)).top(px(height * (1. - zero) - 1.)).rounded_full().bg(alpha(0x000000, 0.18)))
+        .child(div().absolute().left(px(11.)).w(px(6.)).rounded_full().top(px(height * (1. - hi))).h(px(height * (hi - lo))).bg(colour))
+        .child(
+            div()
+                .absolute()
+                .left(px(14. - knob / 2.))
+                .top(px(height * (1. - f) - knob / 2.))
+                .size(px(knob))
+                .rounded_full()
+                .bg(rgb(WHITE))
+                .border_1()
+                .border_color(alpha(0x000000, 0.06))
+                .shadow(vec![shadow(1., 3., 0.18), shadow(4. + 2. * hover, 10. + 6. * hover, 0.08 + 0.06 * hover)]),
+        )
+}
+
+/// Texte de notes (CHANGELOG) : listes à puces, intertitres et **gras**, sans afficher la syntaxe.
+pub fn rich_text(markdown: &str) -> Div {
+    fn styled(line: &str) -> gpui::StyledText {
+        let mut text = String::new();
+        let mut bold = vec![];
+        for (i, part) in line.split("**").enumerate() {
+            let start = text.len();
+            text.push_str(part);
+            if i % 2 == 1 {
+                bold.push((start..text.len(), gpui::HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), color: Some(rgb(TEXT)), ..Default::default() }));
+            }
+        }
+        gpui::StyledText::new(text).with_highlights(bold)
+    }
+    let mut root = div().flex().flex_col().gap(px(7.)).text_size(px(13.)).line_height(px(19.)).text_color(rgb(0x3a3a3c));
+    for line in markdown.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if let Some(h) = line.strip_prefix("#### ").or_else(|| line.strip_prefix("### ")) {
+            root = root.child(div().mt(px(6.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT3)).child(h.to_uppercase()));
+        } else if let Some(item) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            root = root.child(div().flex().gap(px(9.)).child(div().flex_none().mt(px(7.)).size(px(5.)).rounded_full().bg(rgb(ACCENT))).child(div().flex_1().min_w(px(0.)).child(styled(item))));
+        } else {
+            root = root.child(div().child(styled(line)));
+        }
+    }
+    root
 }
 
 /// Répartit des cartes sur deux colonnes équilibrées.
