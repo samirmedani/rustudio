@@ -1,9 +1,21 @@
 # Icône Rustudio
 
-Le « R » réunit les faders et le signal audio. Le fond graphite, le cyan, l’indigo et la pointe de corail
-reprennent les couleurs du mixeur. Le fichier de référence est `icon.png` (512 × 512, fond extérieur transparent).
-Les icônes Windows et l’image de l’installeur en sont des exports redimensionnés, avec leur transparence.
+Un carré aux coins arrondis, en dégradé bleu vers violet, porte trois curseurs de mixeur blancs à des hauteurs
+différentes. Le dessin est géométrique, sans texte ni effet décoratif, et reste lisible à 16 pixels.
 
-Création : outil intégré ImageGen de Codex. Prompt de génération :
+Les sources sont vectorielles :
 
-> Use case: logo-brand. Asset type: final Windows desktop application icon for Rustudio, an independent open-source audio mixer and desk-device controller. Create one polished, distinctive icon without any text: a compact sculptural monogram suggesting an R formed by three vertical audio fader tracks and a single sweeping signal ribbon. Dark graphite rounded square tile, generous inset, cyan to indigo light with a subtle warm coral accent, clear high-contrast silhouette readable at 24 pixels. Premium studio equipment feeling, restrained depth and satin finish, crisp geometry and clean edges, nearly frontal orthographic view, no perspective. Centered square composition, tile fills about 90% of image, genuine transparent background outside the rounded tile. No letters written as text, no wordmark, no surrounding glow, no mockup, no extra objects, no watermark. Deliver only the single icon.
+- [brand/rustudio.svg](brand/rustudio.svg) : version détaillée (48 pixels et plus, installeur, documentation) ;
+- [brand/rustudio-small.svg](brand/rustudio-small.svg) : version simplifiée pour 16 à 32 pixels (barre des tâches,
+  icône près de l'horloge), avec des curseurs plus épais.
+
+Les fichiers livrés en sont des exports : [icon.png](icon.png) (512 × 512), `crates/app/icons/icon.ico` (16 à
+256 pixels, la petite version jusqu'à 32), `crates/app/icons/32x32.png` (icône près de l'horloge) et
+`crates/app/assets/logo.png` (barre latérale). Pour les régénérer :
+
+```sh
+rsvg-convert -w 512 -h 512 docs/brand/rustudio.svg -o docs/icon.png
+```
+
+Couleurs : bleu `#3A86FF`, indigo `#5B5CF6`, violet `#9B4CF2`, curseurs blancs. L'interface reprend le bleu
+système `#0071E3` pour les actions.

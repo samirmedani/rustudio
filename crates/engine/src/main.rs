@@ -31,6 +31,9 @@ fn main() {
     let mut cfg = Config::from_env();
     let mut rest = vec![];
     let mut child = false;
+    let has_env = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
+    let mut explicit_port = has_env("RUSTUDIO_PORT");
+    let mut explicit_data_dir = has_env("RUSTUDIO_DATA_DIR");
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -38,19 +41,33 @@ fn main() {
             "--child" => child = true,
             "--port" if i + 1 < args.len() => {
                 cfg.port = args[i + 1].parse().unwrap_or(cfg.port);
+                explicit_port = true;
                 i += 1;
             }
             "--data-dir" if i + 1 < args.len() => {
                 cfg.data_dir = args[i + 1].clone().into();
+                explicit_data_dir = true;
                 i += 1;
             }
             a => rest.push(a.to_string()),
         }
         i += 1;
     }
+    if cfg.simulate {
+        if !explicit_port {
+            cfg.port = rustudio_engine::config::SIMULATION_PORT;
+        }
+        if !explicit_data_dir {
+            cfg.data_dir = rustudio_engine::config::simulation_data_dir();
+        }
+    }
     let cmd = rest.first().cloned().unwrap_or_else(|| "run".into());
     let code = match cmd.as_str() {
         "run" | "daemon" => {
+            if let Err(message) = cfg.validate_simulation() {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
             if child {
                 rustudio_engine::run_engine(cfg)
             } else {

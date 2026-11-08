@@ -14,9 +14,9 @@ use rustudio_goxlr::sim::Sim;
 use rustudio_goxlr::{f32_bytes, level_db, DevError, DevInfo, GoXlr, Loader};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -336,7 +336,9 @@ struct Call {
 
 pub struct Ctl {
     pub cfg: Config,
-    inner: Mutex<Inner>,
+    pub(crate) inner: Mutex<Inner>,
+    pub(crate) mixer_changed: Condvar,
+    pub(crate) mixer_waiters: AtomicUsize,
     pub wake: Arc<Event>,
     pub dev_info: Arc<Mutex<DevInfo>>,
     dev: Mutex<Option<GoXlr>>,
@@ -360,9 +362,9 @@ pub struct Ctl {
     stats_at: Mutex<Option<Instant>>,
 }
 
-pub const DEFAULT_PROFILE: &str = include_str!("../../../ui/profile.json");
+pub const DEFAULT_PROFILE: &str = include_str!("../assets/profile.json");
 
-fn initial_state(cfg: &Config) -> Value {
+fn initial_state(cfg: &Config, simulated: bool, legacy_dir: impl FnOnce() -> Option<std::path::PathBuf>) -> Value {
     let sp = cfg.state_path();
     let bak = std::path::PathBuf::from(format!("{}.bak", sp.display()));
     for p in [sp.clone(), bak] {
@@ -378,7 +380,7 @@ fn initial_state(cfg: &Config) -> Value {
             }
         }
     }
-    if let Some(old) = crate::config::legacy_data_dir().map(|d| d.join("state.json")).filter(|p| p.exists()) {
+    if let Some(old) = (!simulated).then(legacy_dir).flatten().map(|d| d.join("state.json")).filter(|p| p.exists()) {
         if let Ok(v) = std::fs::read_to_string(&old).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string())) {
             log("Réglages repris de GoXLR Mini");
             return v;
@@ -392,7 +394,8 @@ impl Ctl {
         let wake = Arc::new(Event::new());
         // premier lancement (reglages repris de GoXLR Mini ou profil par defaut) : on les ecrit tout de suite
         let first_run = !cfg.state_path().exists();
-        let mut st = state::normalize_state(&initial_state(&cfg));
+        let simulated = cfg.simulate || sim.is_some();
+        let mut st = state::normalize_state(&initial_state(&cfg, simulated, crate::config::legacy_data_dir));
         if theme(&st.lighting.theme).is_some() {
             lighting::apply_theme(&mut st);
         }
@@ -410,13 +413,14 @@ impl Ctl {
             errors: VecDeque::new(), connects: 0, reconnects: 0, fail_streak: 0, auto_active: AutoActive::Off,
             auto_note: None, auto_seen: false, mix2: false, submixes: false, wake: wake.clone(),
         };
-        let simulated = cfg.simulate || sim.is_some();
         let ctl = Arc::new(Ctl {
             updater: crate::updater::Updater::new(&cfg),
             mouse: crate::mouse::MouseHub::new(simulated),
             eqapo: crate::eqapo::EqApo::new(&cfg, simulated),
             cfg,
             inner: Mutex::new(inner),
+            mixer_changed: Condvar::new(),
+            mixer_waiters: AtomicUsize::new(0),
             wake,
             dev_info,
             dev: Mutex::new(Some(dev)),
@@ -505,6 +509,7 @@ impl Ctl {
                 g.want += 1;
             }
         }
+        self.mixer_changed.notify_all();
         logf!("GoXLR connectée : série {serial}, firmware {fw}{}", if mix2 { " (Stream Mix 2)" } else { "" });
         if apply {
             let n = self.flush(dev)?;
@@ -535,6 +540,7 @@ impl Ctl {
         dev.close();
         self.drops.lock().unwrap_or_else(|e| e.into_inner()).reset();
         if was {
+            self.mixer_changed.notify_all();
             logf!("GoXLR perdue : {msg}");
         }
     }
@@ -632,8 +638,14 @@ impl Ctl {
             g.live.mic_db = None;
             g.live.level_t = None;
         }
+        let before = (g.version, g.live.fader_positions);
         g.handle_inputs(mask, vols, now);
         g.live.encoders = enc;
+        let changed = before != (g.version, g.live.fader_positions);
+        drop(g);
+        if changed {
+            self.mixer_changed.notify_all();
+        }
         Ok(())
     }
 
@@ -898,6 +910,7 @@ impl Ctl {
             g.save_dirty = true;
             r
         };
+        self.mixer_changed.notify_all();
         if action.starts_with("hp-eq") {
             self.hp_apply();
         }
@@ -944,3 +957,28 @@ impl Ctl {
     }
 }
 
+
+#[cfg(test)]
+mod demo_state_tests {
+    use super::*;
+
+    #[test]
+    fn simulateur_ignore_le_profil_legacy_et_garde_ses_reglages_de_test() {
+        let root = std::env::temp_dir().join(format!("rustudio-test-demo-{}", std::process::id()));
+        let demo = root.join("simulation");
+        let legacy = root.join("legacy");
+        std::fs::create_dir_all(&demo).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+        let profile = json!({"scene":"exemple-prive"});
+        std::fs::write(legacy.join("state.json"), profile.to_string()).unwrap();
+        let mut cfg = Config::from_env();
+        cfg.data_dir = demo;
+        let initial = initial_state(&cfg, true, || panic!("la simulation ne doit pas chercher le profil installé"));
+        assert_eq!(initial, serde_json::from_str::<Value>(DEFAULT_PROFILE).unwrap());
+        assert_eq!(initial_state(&cfg, false, || Some(legacy)), profile);
+        let fixture = json!({"scene":"demo"});
+        std::fs::write(cfg.state_path(), fixture.to_string()).unwrap();
+        assert_eq!(initial_state(&cfg, true, || None), fixture);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

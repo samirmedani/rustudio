@@ -336,6 +336,20 @@ impl Inner {
                     j.insert("cancel".into(), json!(true));
                 }
             }
+            "mixer-profile" => {
+                let profile: rustudio_core::mixer_profile::MixerSettings = serde_json::from_value(p.clone())
+                    .map_err(|_| ApiError::bad("Format du profil de mixeur invalide"))?;
+                profile.apply_to(&mut self.state).map_err(ApiError::bad)?;
+                self.blink.clear();
+                self.prev_pos = None;
+                if self.state.lighting.theme == "voies" {
+                    lighting::apply_theme(&mut self.state);
+                }
+                let mut keys = vec![Key::Faders, Key::Colours, Key::Buttons];
+                keys.extend(CHANNELS.iter().flat_map(|c| [Key::Volume(ch(c)), Key::Mute(ch(c))]));
+                keys.extend((0..INPUTS.len()).map(Key::Route));
+                self.mark(&keys, true);
+            }
             "profile" => {
                 let keep = self.state.user_scenes.clone();
                 let src = p.get("profile").filter(|v| v.is_object()).unwrap_or(p);

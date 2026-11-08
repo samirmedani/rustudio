@@ -4,6 +4,10 @@ Rustudio organise le matériel par **modules**. Un module apporte le protocole, 
 propres à une famille d'appareils. L'accueil **Mes appareils** présente l'état des modules livrés ; **Modules**
 présente le catalogue de contributions.
 
+Les périphériques audio actifs de Windows apparaissent aussi dans **Mes appareils → Son Windows**, même sans module.
+Ce repérage en lecture seule ne déclare aucune prise en charge du fabricant. Pour un autre type de matériel, conserve
+la même distinction : Windows peut reconnaître un appareil même si Rustudio ne sait pas encore le régler.
+
 Les modules **GoXLR Mini** et **R5 Ultra** sont livrés. Ajouter une fiche de souris ou
 d'écran au catalogue ne suffit pas à le piloter. Ce guide décrit le code, les déclarations et les tests nécessaires.
 
@@ -117,7 +121,7 @@ X-Rustudio: 1
 {"channel":"Music","value":128}
 ```
 
-Dans l'interface, le même appel s'écrit `postModule("goxlr-mini", "volume", {channel: "Music", value: 128})`.
+Dans l’appli, le même appel s’écrit `client.post_module("/api/modules/goxlr-mini", "volume", json!({"channel": "Music", "value": 128}))`.
 L'adaptateur du module valide et applique la commande à son état ; l'API ne parle pas directement au matériel.
 Déclare l'action `volume` dans `actions` seulement si cet adaptateur la prend en charge.
 
@@ -126,24 +130,19 @@ Les mises à jour de Rustudio (`update-*`), le catalogue (`library-refresh`) et 
 dans les `actions` d'un module. Une reconnexion propre à un appareil appartient, elle, à son adaptateur.
 
 Les anciennes routes de la GoXLR Mini, par exemple `/api/volume`, restent compatibles. Pour de nouveaux contrôles,
-utilise l'espace `/api/modules/{id}` et `postModule` afin que la commande désigne explicitement son module.
+utilise l'espace `/api/modules/{id}` et `post_module` afin que la commande désigne explicitement son module.
 
-Les routes générales sont `#devices` et `#modules`. Les pages GoXLR Mini vivent sous `#goxlr-mini/<page>`, par
-exemple `#goxlr-mini/mixer`. Les anciens liens audio restent des alias pour la GoXLR Mini.
+L'appli est native, en Rust avec GPUI, dans [crates/app/src](../crates/app/src) : `backend.rs` (client de l'API
+locale), `desktop.rs` (Mes appareils et navigation), un fichier par appareil (`goxlr.rs`, `mixer.rs`, `mouse.rs`),
+puis `library.rs` et `settings.rs` (modules, versions, aide, réglages) et `tray.rs` (icône près de l'horloge).
+Pour ton module :
 
-L'interface est découpée par rôle dans [ui/js](../ui/js) : `socle.js` (outils, API, navigation), un dossier par
-appareil (`goxlr/`, `attack-shark/`), puis le menu, les mises à jour et `demarrage.js`, toujours chargé en
-dernier. Pour ton module :
-
-1. crée `ui/js/<fabricant>/<appareil>.js`, commençant par `"use strict";`, avec sa fonction `render…` et ses
-   appels `postModule("<id>", …)` ;
-2. ajoute sa page dans `MODULE_VIEWS` et `PAGES` (`socle.js`), sa section `<section class="page">` et sa
-   balise `<script src="/ui/js/…">` dans [ui/index.html](../ui/index.html), avant `menu.js` ;
-3. déclare le fichier dans la liste `ui_assets!` de [crates/engine/src/http.rs](../crates/engine/src/http.rs).
-   Le moteur ne sert que les fichiers de cette liste ; un test échoue si la page et la liste divergent.
-
-Les tests sans navigateur (`scripts/*-ui-test.mjs`) lisent ces fichiers dans l'ordre de la page grâce à
-`scripts/ui-source.mjs`.
+1. crée `crates/app/src/<appareil>.rs` avec sa vue (`impl Mixer { pub fn <appareil>_view(...) }`) et ses appels
+   `client.post_module("/api/modules/<id>", …)` ;
+2. ajoute sa page à l'énumération `Page` de [desktop.rs](../crates/app/src/desktop.rs), son titre, et le bouton qui
+   l'ouvre depuis sa carte dans Mes appareils ;
+3. ajoute une fonction `verify` qui rejoue ses commandes sur le simulateur : `Rustudio.exe --start-demo --self-test`
+   les enchaîne toutes.
 
 ## 4. Découvrir le protocole de ton appareil
 

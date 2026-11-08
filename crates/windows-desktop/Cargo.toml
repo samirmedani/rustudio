@@ -1,0 +1,20 @@
+[package]
+name = "rustudio-windows-desktop"
+description = "Audio de session Windows, diagnostic WASAPI et bulle native Rustudio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Com",
+  "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
+  "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_System_Com_StructuredStorage",
+  "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Variant",
+  "Win32_System_Threading", "Win32_Security", "Win32_Graphics_Dwm",
+] }

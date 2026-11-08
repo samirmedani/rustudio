@@ -1,8 +1,20 @@
 # Nouveautés
 
-## À venir
+## 6.0.2
 
-- **Diagnostic audio :** le test en boucle reconnaît aussi « Stream Mix 1 », le nom donné à « Broadcast Stream Mix » par le pilote GoXLR 5.68. Les anciens noms restent pris en charge.
+- **Boutons de la fenêtre réparés.** Réduire, agrandir et fermer répondent de nouveau : la zone qui sert à déplacer la fenêtre passait sous les trois boutons et prenait leurs clics.
+
+## 6.0.1
+
+- **Animations au survol.** Boutons, cartes, menus, listes, interrupteurs et faders réagissent quand la souris passe dessus : les cartes d’appareil se soulèvent avec un contour bleu, les boutons s’éclaircissent, les faders s’entourent de leur couleur et les curseurs grossissent légèrement. Chaque transition glisse en douceur, à l’aller comme au retour. Les cartes d’appareil et Son Windows s’ouvrent d’un clic n’importe où.
+- **Nouveau look et nouveau logo.** Une interface claire et épurée : fond lumineux, cartes en verre, grands titres, faders colorés et barre latérale qui ouvre l’espace de chaque appareil. Le logo est redessiné en vectoriel (trois curseurs de mixeur sur un dégradé bleu-violet).
+- **Panneau près de l’horloge.** Un clic sur l’icône ouvre un panneau : état de la GoXLR, micro, scènes, mixeur, reconnexion et démarrage avec Windows. Le clic droit garde le menu complet. La bulle du micro passe au même style clair.
+- **Rustudio devient une appli native, écrite en Rust avec GPUI.** Plus de WebView2 ni d’interface web dans l’appli : la fenêtre s’ouvre plus vite, consomme moins de mémoire et les faders suivent la souris sans latence. Le moteur, tes réglages et tes profils restent les mêmes.
+- **Mes appareils** détecte les modules tout seul et ouvre le mixeur de la GoXLR Mini ou les réglages de la R5 Ultra. Le Son Windows liste les entrées et sorties actives, celles utilisées par défaut et les problèmes repérés.
+- **Toutes les pages GoXLR** : mixeur, routage, scènes et scènes automatiques, éclairage, micro (empreinte vocale, réécoute, graphique avant/après), casque et diagnostic (test d’écho compris).
+- **R5 Ultra** : batterie et connexion, paliers X/Y, fréquence, hauteur de décrochage, anti-double clic, veille et options du capteur. Les changements restent en brouillon jusqu’à Enregistrer, puis sont relus sur la souris.
+- **Profils du mixeur** à enregistrer, appliquer, exporter et importer en JSON, et **Réglages** pour exporter ou importer toute la configuration.
+- **Versions** : mises à jour et retour à une version publiée depuis l’appli, avec les mêmes contrôles qu’avant (source GitHub, taille et SHA-256, retour automatique en cas d’échec).
 
 ## 5.6.14
 

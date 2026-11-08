@@ -152,6 +152,17 @@ pub fn ensure_enabled() -> bool {
     false
 }
 
+pub fn unavailable(since: f64, simulated: bool) -> Value {
+    let mut v = summarize("", false, since);
+    v["total"] = Value::Null;
+    v["readable"] = json!(false);
+    v["unsupported"] = json!(true);
+    if simulated {
+        v["simulated"] = json!(true);
+    }
+    v
+}
+
 /// Coupures notées depuis \`since\` (secondes depuis 1970).
 pub fn query(since: f64) -> Value {
     #[cfg(windows)]
@@ -160,11 +171,7 @@ pub fn query(since: f64) -> Value {
     }
     #[cfg(not(windows))]
     {
-        let mut v = summarize("", false, since);
-        v["total"] = Value::Null;
-        v["readable"] = json!(false);
-        v["unsupported"] = json!(true);
-        v
+        unavailable(since, false)
     }
 }
 
