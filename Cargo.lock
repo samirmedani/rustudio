@@ -4602,7 +4602,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-app"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",
@@ -4620,7 +4620,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-attack-shark"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "hidapi",
  "serde",
@@ -4629,7 +4629,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-core"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "indexmap",
  "serde",
@@ -4638,7 +4638,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-engine"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "chrono",
  "indexmap",
@@ -4659,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-goxlr"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "indexmap",
  "libloading 0.9.0",
@@ -4670,7 +4670,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-setup"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",
@@ -4684,7 +4684,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-windows-desktop"
-version = "6.1.0"
+version = "6.1.1"
 dependencies = [
  "serde_json",
  "windows 0.62.2",

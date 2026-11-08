@@ -1,5 +1,9 @@
 # Nouveautés
 
+## 6.1.1
+
+- **Souris sans friction :** chaque réglage s'enregistre tout seul dès que tu le changes, sans bouton Enregistrer. Le bandeau orange « modifications non enregistrées » qui décalait la page a disparu ; l'état (« Enregistrement… », « Enregistré ») s'affiche discrètement en haut, sans rien déplacer.
+
 ## 6.1.0
 
 - **Nouveau design de toutes les pages :** cartes, listes, tuiles et réglages suivent les mêmes règles partout. Plus de boutons isolés seuls sur une ligne ni de texte qui déborde.

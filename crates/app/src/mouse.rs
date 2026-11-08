@@ -50,6 +50,10 @@ pub struct MousePage {
     basis: Option<Settings>,
     busy: bool,
     notice: Option<(bool, String)>,
+    /// numéro de la dernière modification : seul le dernier délai d'enregistrement envoie
+    seq: u64,
+    /// brouillon en cours d'envoi, pour garder ce qui a changé pendant l'échange
+    sent: Option<(BTreeMap<&'static str, Value>, BTreeMap<(usize, bool), String>)>,
 }
 
 impl MousePage {
@@ -94,7 +98,7 @@ impl MousePage {
         })
     }
     fn editable(&self) -> bool {
-        !self.busy && self.live().is_some_and(|s| !self.conflict(s))
+        self.live().is_some_and(|s| !self.conflict(s))
     }
     fn begin(&mut self) -> Option<Settings> {
         if !self.editable() {
@@ -103,6 +107,7 @@ impl MousePage {
         let s = self.live()?.clone();
         self.basis.get_or_insert_with(|| s.clone());
         self.notice = None;
+        self.seq += 1;
         Some(s)
     }
     fn value(&self, s: &Settings, key: &'static str) -> Value {
@@ -140,12 +145,6 @@ impl MousePage {
         if !self.dirty() {
             self.basis = None;
         }
-    }
-    fn clear(&mut self) {
-        self.dpi.clear();
-        self.draft.clear();
-        self.basis = None;
-        self.notice = None;
     }
     fn changes(&self) -> Result<Value, String> {
         let s = self
@@ -255,6 +254,9 @@ impl Mixer {
         };
         self.mouse.busy = true;
         self.mouse.notice = None;
+        if save {
+            self.mouse.sent = Some((self.mouse.draft.clone(), self.mouse.dpi.clone()));
+        }
         cx.notify();
         let client = self.client.clone();
         let work = cx.background_executor().spawn(async move {
@@ -272,15 +274,25 @@ impl Mixer {
                         this.mouse.last = Some(settings.clone());
                         if let Some(view) = this.mouse.status.as_mut() {
                             if view.device.status == "ready" {
-                                view.state = Some(settings);
+                                view.state = Some(settings.clone());
                             }
                         }
-                        if save {
-                            this.mouse.clear();
+                        if let Some((draft, dpi)) = this.mouse.sent.take() {
+                            // ce qui a été envoyé est enregistré ; ce qui a changé entre-temps part au prochain envoi
+                            this.mouse.draft.retain(|k, v| draft.get(k) != Some(v));
+                            this.mouse.dpi.retain(|k, v| dpi.get(k) != Some(v));
+                            this.mouse.basis = this.mouse.dirty().then(|| settings.clone());
                         }
-                        this.mouse.notice = Some((true, if save { "Modifications enregistrées et relues sur la souris." } else { "Réglages relus." }.into()));
+                        this.mouse.notice = Some((true, if save { "Enregistré".into() } else { "Réglages relus".into() }));
+                        this.mouse_fade_notice(cx);
+                        if save && this.mouse.dirty() {
+                            this.mouse_autosave(0, cx);
+                        }
                     }
-                    Err(error) => this.mouse.notice = Some((false, if save { format!("{error} Le brouillon est conservé.") } else { error })),
+                    Err(error) => {
+                        this.mouse.sent = None;
+                        this.mouse.notice = Some((false, error));
+                    }
                 }
                 cx.notify();
             });
@@ -288,21 +300,52 @@ impl Mixer {
         .detach();
     }
 
-    /// Boutons de l'en-tête de la page souris.
+    /// En-tête de la page souris : chaque réglage s'enregistre seul, l'état s'affiche ici sans décaler la page.
     pub(crate) fn mouse_actions(&self, cx: &mut Context<Self>) -> Div {
         let m = &self.mouse;
+        let (colour, text): (u32, Option<String>) = if m.busy || m.dirty() {
+            (ui::TEXT3, Some("Enregistrement…".into()))
+        } else {
+            match &m.notice {
+                Some((true, t)) => (ui::GREEN_TEXT, Some(t.clone())),
+                Some((false, t)) => (ui::RED_TEXT, Some(t.clone())),
+                None => (ui::TEXT3, None),
+            }
+        };
         div()
             .flex()
             .items_center()
-            .gap(px(10.))
-            .when(!m.busy, |d| d.child(ui::pill("r5-refresh", Some(Icon::Refresh), "Actualiser", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.mouse_action(false, cx)))))
-            .when(m.dirty() && !m.busy, |d| {
-                d.child(ui::pill("r5-discard", None, "Annuler", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
-                    this.mouse.clear();
+            .gap(px(12.))
+            .child(div().max_w(px(360.)).truncate().text_size(px(13.)).text_color(rgb(colour)).children(text))
+            .child(ui::pill("r5-refresh", Some(Icon::Refresh), "Actualiser", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.mouse_action(false, cx))))
+    }
+
+    /// Enregistre après une courte pause : plusieurs clics rapides partent en un seul envoi.
+    fn mouse_autosave(&mut self, delay_ms: u64, cx: &mut Context<Self>) {
+        let seq = self.mouse.seq;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(delay_ms)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.mouse.seq == seq && this.mouse.dirty() && !this.mouse.busy && this.mouse.editable() {
+                    this.mouse_action(true, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// « Enregistré » s'efface seul après deux secondes.
+    fn mouse_fade_notice(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.mouse.notice.as_ref().is_some_and(|n| n.0) {
+                    this.mouse.notice = None;
                     cx.notify();
-                })))
-            })
-            .when(m.dirty() && m.editable(), |d| d.child(ui::pill("r5-save", Some(Icon::Check), "Enregistrer", Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.mouse_action(true, cx)))))
+                }
+            });
+        })
+        .detach();
     }
 
     fn dpi_input(&self, s: &Settings, i: usize, y: bool, editing: bool, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -348,12 +391,14 @@ impl Mixer {
                 } else {
                     return;
                 }
+                // DPI tapés au clavier : envoi après une pause de frappe
+                this.mouse_autosave(1200, cx);
                 cx.stop_propagation();
                 cx.notify();
             }))
     }
 
-    /// Liste déroulante d'un réglage de la souris (le choix reste en brouillon jusqu'à Enregistrer).
+    /// Liste déroulante d'un réglage de la souris (enregistré aussitôt choisi).
     fn mouse_select(&self, label: &'static str, key: &'static str, options: Vec<(Value, String)>, s: &Settings, cx: &mut Context<Self>) -> Div {
         let current = self.mouse.value(s, key);
         let text = options.iter().find(|(v, _)| *v == current).map(|(_, l)| l.clone()).unwrap_or_else(|| current.to_string());
@@ -365,22 +410,18 @@ impl Mixer {
             .gap(px(7.))
             .min_w(px(0.))
             .child(ui::label(label))
-            .child(self.dropdown(key, text, items, self.mouse.editable(), move |this, i, _| this.mouse.edit(key, values[i].clone()), cx))
+            .child(self.dropdown(key, text, items, self.mouse.editable(), move |this, i, cx| {
+                this.mouse.edit(key, values[i].clone());
+                this.mouse_autosave(250, cx);
+            }, cx))
     }
 
     pub fn mouse_view(&self, window: &gpui::Window, cx: &mut Context<Self>) -> Div {
         let m = &self.mouse;
         let mut content = div().flex().flex_col().gap(px(14.));
         let state = m.status.as_ref().map(|v| v.device.status.as_str());
-        if let Some((ok, text)) = &m.notice {
-            content = content.child(ui::notice(*ok, text.clone()));
-        }
-        if m.busy {
-            content = content.child(ui::hint("Échange avec la souris…"));
-        } else if m.live().is_some_and(|s| m.conflict(s)) {
+        if m.live().is_some_and(|s| m.conflict(s)) {
             content = content.child(ui::notice(false, "Réglages modifiés ailleurs : annule le brouillon pour repartir de la lecture."));
-        } else if m.dirty() {
-            content = content.child(ui::notice(false, "Modifications non enregistrées : clique sur Enregistrer pour les envoyer à la souris."));
         }
         let waiting = match state {
             Some("asleep") => Some(("La souris dort", "Bouge-la ou clique pour la réveiller ; ses réglages s’affichent aussitôt.")),
@@ -425,7 +466,10 @@ impl Mixer {
                         format!("Palier {active}"),
                         (1..=s.stages.len()).map(|i| (format!("Palier {i}"), i == active)).collect(),
                         m.editable(),
-                        |this, i, _| this.mouse.edit("active_stage", json!(i + 1)),
+                        |this, i, cx| {
+                            this.mouse.edit("active_stage", json!(i + 1));
+                            this.mouse_autosave(250, cx);
+                        },
                         cx,
                     ))),
             )
@@ -501,6 +545,7 @@ impl Mixer {
             toggles = toggles.child(ui::toggle_row(Some(glyph), label, ui::toggle(SharedString::from(format!("r5-{key}")), on, editable).on_click(cx.listener(move |this, _, _, cx| {
                 if editable {
                     this.mouse.edit(key, json!(!on));
+                    this.mouse_autosave(250, cx);
                     cx.notify();
                 }
             }))));
