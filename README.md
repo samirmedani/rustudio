@@ -35,7 +35,12 @@ Chaque module apporte les contrôles propres à son matériel. Dans **Modules**,
 
 <p align="center">
   <img src="docs/captures/devices.jpg" alt="Mes appareils dans Rustudio : deux cartes pour deux périphériques distincts, avec leur état de connexion et leurs réglages" width="900">
-  <br><sub>Capture réalisée avec des périphériques simulés.</sub>
+  <br><sub>Démonstration : la GoXLR Mini et la R5 Ultra illustrent les deux modules fournis. Les cartes ne sont pas un inventaire du PC du mainteneur.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/captures/mixer.jpg" alt="Le mixeur de la GoXLR Mini : quatre grands faders colorés, la coupure de chaque voie et les autres voies en dessous" width="440">
+  <img src="docs/captures/mouse.jpg" alt="Les réglages de la R5 Ultra : batterie, sensibilité par palier, fréquence et options du capteur" width="440">
 </p>
 
 ## Compatibilité
@@ -53,7 +58,7 @@ Chaque module apporte les contrôles propres à son matériel. Dans **Modules**,
 2. Ouvre **Mes appareils** et branche ton matériel. Les prérequis propres à un module sont indiqués dans le tableau.
 3. Ouvre la carte de l’appareil pour le régler. Tu retrouves Rustudio près de l’horloge Windows.
 
-Windows 10 ou 11, 64 bits, avec Microsoft Edge WebView2. Pour désinstaller Rustudio, ouvre **Paramètres → Applications**. Tes réglages restent sur ton PC.
+Windows 10 ou 11, 64 bits. Pour désinstaller Rustudio, ouvre **Paramètres → Applications**. Tes réglages restent sur ton PC.
 
 ## Mises à jour, historique et retour arrière
 
@@ -77,14 +82,14 @@ Tu peux **demander un appareil, tester un module sur ton matériel, écrire du c
 
 ## Développer
 
-Le service Rust gère le matériel et expose une API locale. L’application Windows affiche les appareils et leurs contrôles. Le registre des modules décrit les capacités et les écrans disponibles ; chaque module adapte son protocole au moteur.
+Tout est écrit en Rust. Le service gère le matériel et expose une API locale ; l’appli Windows est native, dessinée avec [GPUI](https://www.gpui.rs), sans navigateur intégré. Le registre des modules décrit les capacités et les écrans disponibles ; chaque module adapte son protocole au moteur.
 
 ```sh
 git clone https://github.com/samirmedani/rustudio.git
 cd rustudio
-cargo run -p rustudio-engine -- run --child --simulate --port 14566
+cargo test
 ```
 
-Ouvre [l’interface du simulateur](http://127.0.0.1:14566/). Tu peux tester les modules fournis sans posséder le matériel. Lance `scripts/check.sh` avant une pull request.
+Sous Windows, `cargo run -p rustudio-app -- --start-demo` ouvre l’appli sur une démonstration : un moteur simulé démarre sur son propre port, sans toucher à ton installation ni à ton matériel. Lance `scripts/check.sh` avant une pull request.
 
 Rustudio est libre sous [licence MIT](LICENSE). Les dépendances et crédits sont listés dans les [mentions tierces](THIRD-PARTY-NOTICES.md).

@@ -2,6 +2,8 @@
 
 Le module Rustudio prend en charge la **TC-Helicon GoXLR Mini** via le pilote officiel. Le firmware 1.2.x a été testé ; le firmware 1.3 est pris en charge avec Stream Mix 2.
 
+<p align="center"><img src="captures/mixer.jpg" width="720" alt="Le mixeur de la GoXLR Mini dans Rustudio (démonstration)"></p>
+
 ## Démarrer
 
 1. Installe le pilote officiel GoXLR de TC-Helicon.

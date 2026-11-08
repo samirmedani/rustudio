@@ -30,6 +30,12 @@ Ensuite :
 réseau local, numéro de série d'appareil, `state.json`, journaux, enregistrements audio, binaires
 (`.exe`, `.dll`, `.zip`). La vérification GitHub refuse ces fichiers et motifs.
 
+Pour une capture publique, démarre le simulateur sur son port de test avec `--data-dir`
+pointant vers un dossier neuf, puis ouvre son adresse dans un navigateur séparé.
+Utilise le profil fourni ou des valeurs inventées. Garde le badge **Démonstration**
+visible et capture uniquement la fenêtre de l’application. Ne réutilise aucun profil,
+journal, enregistrement, ni diagnostic du PC. Relis le texte visible et les métadonnées de l’image avant de la publier.
+
 Toute contribution communautaire suit [le circuit de validation](docs/COMMUNITY.md). Les créateurs sont
 crédités par leur pseudo GitHub public ; utilise une adresse noreply pour tes commits publics.
 

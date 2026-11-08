@@ -42,11 +42,17 @@ $version = (Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^versio
 $commit = ''
 try { $commit = [string](git -C $root rev-parse --short HEAD 2>$null) } catch { }
 Write-Host "Rustudio $version ($commit)"
+# l'appli GPUI compile ses shaders avec fxc.exe du SDK Windows : le plus recent si rien n'est impose
+if (-not $env:GPUI_FXC_PATH) {
+  $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" -ErrorAction SilentlyContinue | Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
+  if ($fxc) { $env:GPUI_FXC_PATH = $fxc.FullName }
+}
 Push-Location $root
 try {
   cargo build --release --locked -p rustudio-engine -p rustudio-app
   if ($LASTEXITCODE -ne 0) { throw 'Compilation du moteur ou de l appli echouee' }
-  $bin = Join-Path $root 'target\release'
+  $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root 'target' }
+  $bin = Join-Path $target 'release'
 
   # 1. archive de l'appli (mise a jour integree)
   $stage = Fresh (Join-Path $Out 'payload')

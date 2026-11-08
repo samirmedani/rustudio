@@ -197,12 +197,12 @@ mod tests {
             n("USB\\ROOT_HUB30\\A", CPU, "Concentrateur racine"),
             n("USB\\ROOT_HUB30\\B", CHIP, "Concentrateur racine"),
             n("USB\\VID_373E&PID_0047\\1", "USB\\ROOT_HUB30\\A", "R5 Ultra Mouse 2.4G"),
-            n("USB\\VID_046D&PID_0892\\2", "USB\\ROOT_HUB30\\A", "HD Pro Webcam C920"),
+            n("USB\\VID_1000&PID_0001\\2", "USB\\ROOT_HUB30\\A", "Webcam de test"),
             n("USB\\VID_1220&PID_8FE4\\3", "USB\\ROOT_HUB30\\B", "GoXLRMini"),
-            n("USB\\VID_0B05&PID_19AF\\4", "USB\\ROOT_HUB30\\B", "AURA LED Controller"),
+            n("USB\\VID_1000&PID_0002\\4", "USB\\ROOT_HUB30\\B", "Éclairage de test"),
             n("USB\\VID_05E3&PID_0608\\5", "USB\\ROOT_HUB30\\B", "USB2.0 Hub"),
-            n("USB\\VID_2516&PID_01D5\\6", "USB\\ROOT_HUB30\\B", "MK770 Hybrid Mechanical Keyboard"),
-            n("USB\\VID_2516&PID_01D5&MI_00\\7", "USB\\VID_2516&PID_01D5\\6", "interface"),
+            n("USB\\VID_1000&PID_0003\\6", "USB\\ROOT_HUB30\\B", "Clavier de test"),
+            n("USB\\VID_1000&PID_0003&MI_00\\7", "USB\\VID_1000&PID_0003\\6", "interface"),
         ]
     }
 
@@ -212,9 +212,9 @@ mod tests {
         assert_eq!(v["found"], true);
         assert_eq!(v["controller_cpu"], false);
         assert_eq!(v["via_hub"], false);
-        assert_eq!(v["shared"], json!(["AURA LED Controller", "MK770 Hybrid Mechanical Keyboard"]));
+        assert_eq!(v["shared"], json!(["Éclairage de test", "Clavier de test"]));
         assert_eq!(v["suggest"]["cpu"], true);
-        assert_eq!(v["suggest"]["anchor"], "HD Pro Webcam C920");
+        assert_eq!(v["suggest"]["anchor"], "Webcam de test");
     }
 
     #[test]
@@ -232,7 +232,7 @@ mod tests {
         nodes.iter_mut().find(|n| n.name == "GoXLRMini").unwrap().parent = Some("USB\\VID_05E3&PID_0608\\5".into());
         let v = summarize(&nodes);
         assert_eq!(v["via_hub"], true);
-        assert_eq!(v["suggest"]["anchor"], "HD Pro Webcam C920");
+        assert_eq!(v["suggest"]["anchor"], "Webcam de test");
     }
 
     #[test]

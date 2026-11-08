@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a86ff"/><stop offset=".5" stop-color="#5b5cf6"/><stop offset="1" stop-color="#9b4cf2"/></linearGradient>
+ <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/></linearGradient>
+ <linearGradient id="knob" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#e9ebff"/></linearGradient>
+ <filter id="sh" x="-40%" y="-60%" width="180%" height="240%"><feDropShadow dx="0" dy="14" stdDeviation="10" flood-color="#1d0f6b" flood-opacity=".38"/></filter>
+</defs>
+<rect x="24" y="24" width="976" height="976" rx="224" fill="url(#bg)"/>
+<rect x="24" y="24" width="976" height="976" rx="224" fill="url(#shine)"/>
+<rect x="24.5" y="24.5" width="975" height="975" rx="223.5" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="3"/>
+<g fill="#fff" fill-opacity="0.32"><rect x="292" y="210" width="56" height="604" rx="28"/><rect x="484" y="210" width="56" height="604" rx="28"/><rect x="676" y="210" width="56" height="604" rx="28"/></g>
+<g filter="url(#sh)"><rect x="228" y="300" width="184" height="132" rx="66" fill="url(#knob)"/><rect x="420" y="590" width="184" height="132" rx="66" fill="url(#knob)"/><rect x="612" y="440" width="184" height="132" rx="66" fill="url(#knob)"/></g>
+
+</svg>
