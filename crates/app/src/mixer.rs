@@ -54,6 +54,7 @@ pub struct Mixer {
     pending: HashMap<String, (u64, u8)>,
     picker: Option<usize>,
     pub(crate) notice: Option<String>,
+    toast_key: String,
     pub(crate) param_drag: Option<ParamDrag>,
     pub(crate) param_held: HashMap<String, (f64, Instant)>,
     pub(crate) history: Vec<Page>,
@@ -133,6 +134,7 @@ impl Mixer {
             pending: HashMap::new(),
             picker: None,
             notice: None,
+            toast_key: String::new(),
             param_drag: None,
             param_held: HashMap::new(),
             history: vec![],
@@ -700,6 +702,34 @@ impl Mixer {
     }
 }
 
+impl Mixer {
+    /// Message passager après une action : affiché en surimpression, il ne décale jamais la page.
+    fn toast(&self) -> Option<(bool, String)> {
+        self.go
+            .notice
+            .clone()
+            .or_else(|| self.profile_notice.clone())
+            .or_else(|| self.library.notice.clone())
+            .or_else(|| self.win.note.clone().map(|t| (true, t)))
+            .or_else(|| self.notice.clone().map(|t| (false, t)))
+    }
+    fn clear_toast(&mut self) {
+        if self.go.notice.take().is_some() {
+            return;
+        }
+        if self.profile_notice.take().is_some() {
+            return;
+        }
+        if self.library.notice.take().is_some() {
+            return;
+        }
+        if self.win.note.take().is_some() {
+            return;
+        }
+        self.notice = None;
+    }
+}
+
 impl Render for Mixer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.renders += 1;
@@ -707,7 +737,27 @@ impl Render for Mixer {
             let start = self.started;
             window.on_next_frame(move |_, _| println!("first_frame_ms={}", start.elapsed().as_millis()));
         }
-        let shell = self.shell(window, cx);
+        let toast = self.toast();
+        let key = toast.as_ref().map(|(ok, t)| format!("{ok}{t}")).unwrap_or_default();
+        if key != self.toast_key {
+            self.toast_key = key.clone();
+            if let Some((ok, _)) = &toast {
+                // les confirmations s'effacent vite, les erreurs restent un peu plus longtemps
+                let wait = std::time::Duration::from_millis(if *ok { 3000 } else { 7000 });
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.toast_key == key {
+                            this.clear_toast();
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
+        let dialog = self.go_confirm_box(cx).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
+        let shell = self.shell(window, cx).children(toast.map(|(ok, text)| ui::toast(ok, text))).children(dialog.map(ui::modal));
         ui::keep_animating(window);
         shell
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {

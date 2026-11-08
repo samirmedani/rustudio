@@ -72,7 +72,7 @@ impl Mixer {
         cx.notify();
     }
 
-    fn confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(crate) fn confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (message, ..) = self.library.confirm.as_ref()?;
         Some(
             panel()
@@ -92,11 +92,6 @@ impl Mixer {
                     }
                 }))),
         )
-    }
-
-    fn notice_line(&self) -> Option<Div> {
-        let (ok, text) = self.library.notice.as_ref()?;
-        Some(crate::ui::notice(*ok, text.clone()))
     }
 
     fn export_config(&mut self, cx: &mut Context<Self>) {
@@ -177,13 +172,7 @@ impl Mixer {
         let osd = prefs["osd"] != false;
         let startup = data["startup"] == true;
         let step = |delta: i64| (hold + delta).clamp(250, 1500);
-        let mut root = div().flex().flex_col().gap(px(16.));
-        if let Some(n) = self.notice_line() {
-            root = root.child(n);
-        }
-        if let Some(c) = self.confirm_box(cx) {
-            root = root.child(c);
-        }
+        let root = div().flex().flex_col().gap(px(16.));
         let (less, more) = (step(-50), step(50));
         let mut general = ui::section(Icon::Settings, ui::ACCENT, "Comportement", None)
             .child(ui::list_row(
@@ -246,12 +235,6 @@ impl Mixer {
     pub fn versions_view(&self, data: &Value, cx: &mut Context<Self>) -> Div {
         let u = &data["update"];
         let mut root = div().flex().flex_col().gap(px(16.));
-        if let Some(n) = self.notice_line() {
-            root = root.child(n);
-        }
-        if let Some(c) = self.confirm_box(cx) {
-            root = root.child(c);
-        }
         let current = u["current"].as_str().unwrap_or("?").to_string();
         let busy = UPDATE_BUSY.iter().any(|p| u["phase"] == *p);
         let available = u["status"] == "available";

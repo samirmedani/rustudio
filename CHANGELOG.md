@@ -1,5 +1,9 @@
 # Nouveautés
 
+## 6.1.2
+
+- **Plus rien ne décale la page :** les messages après une action (« Enregistré », erreur, profil appliqué, mise à jour…) s'affichent en notification flottante en bas de la fenêtre et s'effacent seuls. Les demandes de confirmation s'ouvrent par-dessus la page au lieu de s'insérer en haut. Valable sur toutes les pages : GoXLR, profils, réglages, versions, son Windows.
+
 ## 6.1.1
 
 - **Souris sans friction :** chaque réglage s'enregistre tout seul dès que tu le changes, sans bouton Enregistrer. Le bandeau orange « modifications non enregistrées » qui décalait la page a disparu ; l'état (« Enregistrement… », « Enregistré ») s'affiche discrètement en haut, sans rien déplacer.

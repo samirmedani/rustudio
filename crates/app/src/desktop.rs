@@ -586,9 +586,6 @@ impl Mixer {
             Page::Go(section) => self.go_controls(section, cx).into_any_element(),
         };
         let mut body = div().flex().flex_col().gap(px(16.));
-        if let Some(notice) = &self.notice {
-            body = body.child(ui::notice(false, notice.clone()));
-        }
         body = body.child(page);
         // Changement de page : le contenu glisse et apparaît en douceur.
         let content = div()
@@ -830,9 +827,6 @@ impl Mixer {
                 )
                 .when(!enabled, |el| el.child(hint("Connecte la GoXLR Mini pour enregistrer ou appliquer un profil."))),
         );
-        if let Some((ok, notice)) = &self.profile_notice {
-            page = page.child(ui::notice(*ok, notice.clone()));
-        }
         if self.profile_request.is_some() {
             page = page.child(hint("Application du profil…"));
         }

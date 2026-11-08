@@ -25,7 +25,7 @@ pub struct WinPage {
     pub inventory: Option<Value>,
     busy: bool,
     confirm: bool,
-    note: Option<String>,
+    pub(crate) note: Option<String>,
 }
 impl WinPage {
     pub fn cancel(&mut self) {
@@ -34,25 +34,12 @@ impl WinPage {
 }
 
 impl Mixer {
-    pub fn win_audio(&self, cx: &mut Context<Self>) -> Div {
-        let mut root = div().flex().flex_col().gap(px(16.));
-        if let Some(note) = &self.win.note {
-            root = root.child(ui::notice(true, note.clone()));
+    /// Demande de confirmation du son Windows, en fenêtre par-dessus la page.
+    pub(crate) fn win_confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.win.confirm {
+            return None;
         }
-        for issue in self.win.inventory.as_ref().and_then(|v| v["issues"].as_array()).into_iter().flatten() {
-            let name = issue["name"].as_str().unwrap_or("un autre périphérique");
-            let role = if issue["role"] == "communications" { "pour les appels" } else { "par défaut" };
-            let text = match issue["kind"].as_str() {
-                Some("capture-loop") => format!("Windows enregistre « {name} » {role} au lieu de « Chat Mic » : tes amis entendent le stream en écho."),
-                Some("capture-other") => format!("Le micro de Windows {role} est « {name} » : la GoXLR n’est pas utilisée."),
-                Some("capture-none") => format!("Aucun micro Windows {role}."),
-                Some("render-other") => format!("Le son {role} part sur « {name} » au lieu de la GoXLR."),
-                _ => format!("Aucune sortie Windows {role}."),
-            };
-            root = root.child(ui::notice(false, text));
-        }
-        if self.win.confirm {
-            root = root.child(
+        Some(
                 ui::card()
                     .flex_row()
                     .items_center()
@@ -64,7 +51,22 @@ impl Mixer {
                         cx.notify();
                     })))
                     .child(ui::pill("windows-fix-ok", None, "Confirmer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.fix_audio(cx)))),
-            );
+            )
+    }
+
+    pub fn win_audio(&self, cx: &mut Context<Self>) -> Div {
+        let mut root = div().flex().flex_col().gap(px(16.));
+        for issue in self.win.inventory.as_ref().and_then(|v| v["issues"].as_array()).into_iter().flatten() {
+            let name = issue["name"].as_str().unwrap_or("un autre périphérique");
+            let role = if issue["role"] == "communications" { "pour les appels" } else { "par défaut" };
+            let text = match issue["kind"].as_str() {
+                Some("capture-loop") => format!("Windows enregistre « {name} » {role} au lieu de « Chat Mic » : tes amis entendent le stream en écho."),
+                Some("capture-other") => format!("Le micro de Windows {role} est « {name} » : la GoXLR n’est pas utilisée."),
+                Some("capture-none") => format!("Aucun micro Windows {role}."),
+                Some("render-other") => format!("Le son {role} part sur « {name} » au lieu de la GoXLR."),
+                _ => format!("Aucune sortie Windows {role}."),
+            };
+            root = root.child(ui::notice(false, text));
         }
         let mut cards: Vec<gpui::AnyElement> = vec![];
         if let Some(data) = self.win.inventory.as_ref().filter(|v| v["status"] == "ok") {

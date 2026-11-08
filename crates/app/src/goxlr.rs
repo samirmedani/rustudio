@@ -887,15 +887,12 @@ impl Mixer {
         split(vec![state.into_any_element(), obs.into_any_element()], vec![test.into_any_element(), self.echo_panel(cx).into_any_element()])
     }
 
-    pub fn go_controls(&self, section: Section, cx: &mut Context<Self>) -> Div {
-        let mut root = div().flex().flex_col().gap(px(16.));
-        if let Some((ok, notice)) = &self.go.notice {
-            root = root.child(ui::notice(*ok, notice.clone()));
-        }
+    /// Demande de confirmation GoXLR, affichée en fenêtre par-dessus la page.
+    pub(crate) fn go_confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
         if let Some((action, body, message)) = self.go.confirm.as_ref() {
             let action = *action;
             let body = body.clone();
-            root = root.child(
+            return Some(
                 ui::card()
                     .flex_row()
                     .items_center()
@@ -913,6 +910,11 @@ impl Mixer {
                     }))),
             );
         }
+        None
+    }
+
+    pub fn go_controls(&self, section: Section, cx: &mut Context<Self>) -> Div {
+        let mut root = div().flex().flex_col().gap(px(16.));
         if section == Section::Diagnostic {
             return root.child(self.diagnostic_view(cx));
         }

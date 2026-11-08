@@ -444,6 +444,67 @@ pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// Fenêtre de dialogue centrée, au-dessus d'un voile léger : la page ne bouge pas.
+pub fn modal(content: Div) -> impl IntoElement {
+    use gpui::AnimationExt as _;
+    div()
+        .id("modal")
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(alpha(0x000000, 0.18))
+        .occlude()
+        .child(
+            content
+                .w(px(560.))
+                .bg(rgb(WHITE))
+                .shadow(vec![gpui::BoxShadow { color: alpha(0x000000, 0.2), offset: gpui::point(px(0.), px(18.)), blur_radius: px(48.), spread_radius: px(0.) }]),
+        )
+        .with_animation("modal-in", gpui::Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(t))
+}
+
+/// Notification flottante en bas de la fenêtre (au-dessus de la page, sans la décaler).
+pub fn toast(ok: bool, text: impl Into<SharedString>) -> impl IntoElement {
+    use gpui::AnimationExt as _;
+    let (fg, glyph) = if ok { (GREEN_TEXT, Icon::Check) } else { (ORANGE_TEXT, Icon::Alert) };
+    let text: SharedString = text.into();
+    div()
+        .absolute()
+        .bottom(px(28.))
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .id(SharedString::from(format!("toast-{text}")))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .max_w(px(620.))
+                .px(px(18.))
+                .py(px(12.))
+                .rounded(px(16.))
+                .bg(alpha(WHITE, 0.96))
+                .border_1()
+                .border_color(alpha(0x000000, 0.06))
+                .shadow(vec![gpui::BoxShadow { color: alpha(0x000000, 0.14), offset: gpui::point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.) }])
+                .text_size(px(13.5))
+                .text_color(rgb(TEXT))
+                .child(icon(glyph, 17., rgb(fg)))
+                .child(text)
+                .with_animation(
+                    "toast-in",
+                    gpui::Animation::new(std::time::Duration::from_millis(220)).with_easing(gpui::ease_out_quint()),
+                    |d, t| d.opacity(t).top(px(10. * (1. - t))),
+                ),
+        )
+}
+
 /// Pastille d'icône colorée des cartes.
 pub fn chip(glyph: Icon, colour: u32, size: f32) -> Div {
     div()
