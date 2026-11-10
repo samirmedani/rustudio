@@ -214,6 +214,47 @@ impl Mixer {
                 false,
             ));
         }
+        let mut looks = ui::segmented();
+        for choice in ui::Appearance::ALL {
+            looks = looks.child(ui::seg(gpui::SharedString::from(format!("appearance-{}", choice.name())), choice.label(), ui::appearance() == choice).on_click(cx.listener(move |this, _, _, cx| {
+                if let Err(error) = ui::choose_appearance(choice) {
+                    this.library.notice = Some((false, error));
+                }
+                cx.notify();
+            })));
+        }
+        general = general.child(ui::list_row(
+            Some((Icon::Sun, 0x5856d6)),
+            "Apparence",
+            Some("Automatique suit le mode clair ou sombre de Windows.".into()),
+            div().w(px(320.)).child(looks),
+            false,
+        ));
+        let hotkey = crate::shortcut::current();
+        let choices = rustudio_windows_desktop::hotkey::CHOICES;
+        let hotkey_label = choices.iter().find(|(id, _)| *id == hotkey).map(|(_, label)| *label).unwrap_or("Aucun");
+        general = general.child(ui::list_row(
+            Some((Icon::Keyboard, ui::ACCENT)),
+            "Raccourci clavier du micro",
+            Some(if crate::shortcut::active() { "Coupe ou rétablit le micro depuis n’importe quelle appli." } else { "Démonstration : le raccourci choisi n’est pas activé." }.into()),
+            div().w(px(220.)).child(self.dropdown(
+                "mic-hotkey",
+                hotkey_label.to_owned(),
+                choices.iter().map(|(id, label)| (label.to_string(), *id == hotkey)).collect(),
+                true,
+                move |this, index, cx| {
+                    let (id, label) = choices[index];
+                    this.library.notice = Some(match crate::shortcut::choose(id) {
+                        Ok(()) if id.is_empty() => (true, "Raccourci du micro désactivé.".into()),
+                        Ok(()) => (true, format!("Raccourci du micro : {label}.")),
+                        Err(error) => (false, error),
+                    });
+                    cx.notify();
+                },
+                cx,
+            )),
+            false,
+        ));
         let config = ui::section(Icon::Download, 0x5856d6, "Sauvegarde", None)
             .child(ui::list_row(
                 None,

@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 6.2.0
+
+- **Thème sombre.** Rustudio suit le mode clair ou sombre de Windows, et change tout de suite quand Windows change. Dans Réglages › Apparence, tu peux aussi imposer Clair ou Sombre.
+- **Niveau du micro en direct.** Page Micro, sous le gain : une barre montre ta voix en temps réel et te dit si le niveau est bon, trop faible ou trop fort. La mesure s'arrête dès que tu quittes la page.
+- **Mes appareils d'un coup d'œil.** Chaque carte affiche l'essentiel en direct : micro actif ou coupé et scène en cours pour la GoXLR Mini, batterie pour la R5 Ultra.
+- **Raccourci clavier du micro.** Dans Réglages, choisis une combinaison (Ctrl + Alt + M, F13, Pause…) pour couper ou rétablir le micro depuis n'importe quelle appli. Aucun raccourci n'est actif tant que tu n'en choisis pas un.
+- **Diagnostic audio :** le test en boucle reconnaît aussi « Stream Mix 1 », le nom donné à « Broadcast Stream Mix » par le pilote GoXLR 5.68. Les anciens noms restent pris en charge.
+- **Diagnostic sans programme lancé :** Rustudio lit le journal Windows des coupures du son directement, sans démarrer d'outil externe à chaque ouverture ou actualisation de la page.
+- **Mémoire noyau de Windows :** le diagnostic affiche la mémoire que Windows retient pour lui-même. Quand elle est anormalement haute, il explique que les micro-coupures peuvent venir de Windows et non de la GoXLR, et qu'un redémarrage du PC la remet à zéro.
+
 ## 6.1.4
 
 - **Bouton de mise à jour stable :** le bloc en bas à gauche garde la même hauteur quand une version arrive, se télécharge ou s'installe ; plus rien ne se décale au-dessus.

@@ -82,6 +82,8 @@ pub struct GoPage {
     pub(crate) notice: Option<(bool, String)>,
     pub(crate) voice_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub(crate) job: Value,
+    /// Niveau d'entrée du micro en dB, lu seulement page Micro ouverte.
+    pub(crate) level: Option<f64>,
     confirm: Option<(&'static str, Value, String)>,
     editing: Option<usize>,
     name: String,
@@ -339,7 +341,7 @@ impl Mixer {
                 .items_center()
                 .py(px(8.))
                 .border_t_1()
-                .border_color(alpha(0x000000, if n == 0 { 0.1 } else { 0.06 }))
+                .border_color(alpha(ui::INK, if n == 0 { 0.1 } else { 0.06 }))
                 .child(
                     div()
                         .w(px(190.))
@@ -516,9 +518,9 @@ impl Mixer {
                     .size(px(30.))
                     .rounded_full()
                     .cursor(gpui::CursorStyle::PointingHand)
-                    .bg(rgb(u32::from_str_radix(c, 16).unwrap_or(0)))
+                    .bg(ui::raw(u32::from_str_radix(c, 16).unwrap_or(0)))
                     .border_2()
-                    .border_color(if chosen { rgb(ui::ACCENT) } else { ui::lerp(alpha(0x000000, 0.12), alpha(ui::ACCENT, 0.6), t) })
+                    .border_color(if chosen { rgb(ui::ACCENT) } else { ui::lerp(alpha(ui::INK, 0.12), alpha(ui::ACCENT, 0.6), t) })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.go.colour = c.to_owned();
                         cx.notify();
@@ -540,9 +542,9 @@ impl Mixer {
                     .id(SharedString::from(key.clone()))
                     .size(px(28.))
                     .rounded(px(8.))
-                    .bg(if t > 0.5 { rgb(u32::from_str_radix(&hex, 16).unwrap_or(fill)) } else { rgb(fill) })
+                    .bg(if t > 0.5 { ui::raw(u32::from_str_radix(&hex, 16).unwrap_or(fill)) } else { ui::raw(fill) })
                     .border_2()
-                    .border_color(ui::lerp(alpha(0x000000, 0.12), rgb(ui::ACCENT), t))
+                    .border_color(ui::lerp(alpha(ui::INK, 0.12), rgb(ui::ACCENT), t))
                     .when(valid, |d| d.cursor(gpui::CursorStyle::PointingHand));
                 let values = if i == 0 { json!([hex, null]) } else { json!([null, hex]) };
                 let square = ui::hoverable(square, key);
@@ -578,7 +580,8 @@ impl Mixer {
             .child(ui::list_row(None, "Modèle", None, div().w(px(240.)).child(self.dropdown("mic-model", model_text, models.iter().map(|(id, l)| (l.clone(), id == model)).collect(), enabled, move |this, i, cx| this.go_send("mic-model", json!({"model": ids[i]}), cx), cx)), true))
             .child(ui::label("Type de branchement"))
             .child(kinds)
-            .child(self.slider_row("mic-gain", "Gain", mic["gain_db"].as_f64().unwrap_or(0.), (0., 72.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("mic", json!({"gain_db": v.round() as i64}), cx), cx));
+            .child(self.slider_row("mic-gain", "Gain", mic["gain_db"].as_f64().unwrap_or(0.), (0., 72.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("mic", json!({"gain_db": v.round() as i64}), cx), cx))
+            .child(level_meter(self.go.level));
         for tip in labels(&v.meta["mic_models"][model]["tips"]).take(3) {
             you = you.child(div().flex().gap(px(8.)).child(ui::icon(Icon::Sparkles, 14., rgb(ui::ACCENT))).child(ui::hint(tip.to_owned()).text_size(px(12.)).flex_1()));
         }
@@ -849,8 +852,16 @@ impl Mixer {
             if d["glitches"]["readable"] == true {
                 rows.push((Icon::History, "Journal Windows".into(), format!("{} évènement(s)", d["glitches"]["total"]), ui::State::Info));
             }
+            let kernel = &d["glitches"]["kernel"];
+            if let Some(mb) = kernel["nonpaged_mb"].as_u64() {
+                let high = kernel["high"] == true;
+                rows.push((Icon::Gauge, "Mémoire noyau de Windows".into(), kernel_size(mb), if high { ui::State::Warn } else { ui::State::Ok }));
+            }
             for (n, (glyph, title, value, st)) in rows.into_iter().enumerate() {
                 state = state.child(ui::list_row(Some((glyph, ui::TEXT2)), title, None, ui::status(value, st), n == 0));
+            }
+            if kernel["high"] == true {
+                state = state.child(ui::notice(false, kernel_advice(kernel["nonpaged_mb"].as_u64().unwrap_or(0), kernel["uptime_h"].as_u64().unwrap_or(0))));
             }
             for (i, check) in d["echo"]["checks"].as_array().into_iter().flatten().enumerate() {
                 // le moteur envoie le titre dans « t » et l'explication dans « d »
@@ -1071,7 +1082,7 @@ pub fn verify(client: &Client) -> Result<(), String> {
         return Err("Réglages audio non relus.".into());
     }
     let d = client.diagnostics()?;
-    if d["support"]["windows"] != "Démonstration" || d["glitches"]["simulated"] != true {
+    if d["support"]["windows"] != "Démonstration" || d["glitches"]["simulated"] != true || d["glitches"]["kernel"]["high"] != false {
         return Err("Diagnostic hors démo.".into());
     }
     crate::voice::analyse(client, &std::sync::atomic::AtomicBool::new(false), true)?;
@@ -1084,7 +1095,108 @@ pub fn verify(client: &Client) -> Result<(), String> {
     Ok(())
 }
 
+/// Plage affichée par le niveau d'entrée du micro, en dB.
+const LEVEL_FLOOR: f64 = -72.;
+/// Au-dessus : trop fort, la voix sature bientôt. En dessous de LEVEL_GOOD : trop faible pour un bon rapport au bruit.
+const LEVEL_HOT: f64 = -6.;
+const LEVEL_GOOD: f64 = -24.;
+
+/// Couleur et conseil pour un niveau d'entrée donné.
+fn level_reading(db: f64) -> (u32, &'static str) {
+    if db >= LEVEL_HOT {
+        (ui::RED, "Trop fort : baisse le gain")
+    } else if db >= LEVEL_GOOD {
+        (ui::GREEN, "Bon niveau")
+    } else if db > -50. {
+        (ui::ORANGE, "Faible : parle ou monte le gain")
+    } else {
+        (ui::TEXT3, "Silence")
+    }
+}
+
+/// Niveau d'entrée du micro en direct : barre segmentée de −72 à 0 dB et conseil.
+fn level_meter(level: Option<f64>) -> Div {
+    const SEGMENTS: usize = 36;
+    let lit = level.map(|db| (((db - LEVEL_FLOOR) / -LEVEL_FLOOR).clamp(0., 1.) * SEGMENTS as f64).round() as usize).unwrap_or(0);
+    let mut bar = div().flex().gap(px(3.)).h(px(18.));
+    for n in 0..SEGMENTS {
+        // chaque segment garde la couleur de sa zone : vert jusqu'à −6 dB, rouge au-delà
+        let db = LEVEL_FLOOR + (n as f64 + 0.5) * -LEVEL_FLOOR / SEGMENTS as f64;
+        let zone = if db >= LEVEL_HOT { ui::RED } else if db >= -12. { ui::ORANGE } else { ui::GREEN };
+        bar = bar.child(div().flex_1().h_full().rounded(px(3.)).bg(if n < lit { rgb(zone) } else { alpha(0x767680, 0.14) }));
+    }
+    let (value, colour, advice) = match level {
+        Some(db) => {
+            let (colour, advice) = level_reading(db);
+            (format!("{} dB", db.round()).replace('-', "−"), colour, advice)
+        }
+        None => ("—".to_owned(), ui::TEXT3, "Mesure en attente"),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().text_size(px(13.)).text_color(rgb(ui::TEXT)).child("Niveau d’entrée"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(div().text_size(px(12.)).text_color(rgb(colour)).child(advice))
+                        .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(value)),
+                ),
+        )
+        .child(bar)
+}
+
+/// « 420 Mo » ou « 6,1 Go ».
+fn kernel_size(mb: u64) -> String {
+    if mb < 1024 {
+        format!("{mb} Mo")
+    } else {
+        format!("{},{} Go", mb / 1024, mb % 1024 * 10 / 1024)
+    }
+}
+
+/// Conseil affiché quand la mémoire noyau de Windows est anormalement haute.
+fn kernel_advice(mb: u64, uptime_h: u64) -> String {
+    let since = match uptime_h {
+        0..=47 => format!("{uptime_h} h"),
+        h => format!("{} jours", h / 24),
+    };
+    format!(
+        "Windows retient {} de mémoire noyau, allumé depuis {since}. À ce niveau, il peut retarder le son de toutes les cartes son et provoquer des micro-coupures, sans défaut de ta GoXLR. Redémarrer Windows remet cette mémoire à zéro.",
+        kernel_size(mb)
+    )
+}
+
 /// Bouton qui partage la ligne à parts égales avec ses voisins (jamais seul à la ligne).
 fn even(el: Stateful<Div>) -> Stateful<Div> {
     el.flex_1().min_w(px(0.)).justify_center()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn niveau_du_micro_et_memoire_noyau_en_clair() {
+        assert_eq!(level_reading(-3.).1, "Trop fort : baisse le gain");
+        assert_eq!(level_reading(-6.).0, ui::RED);
+        assert_eq!(level_reading(-12.).1, "Bon niveau");
+        assert_eq!(level_reading(-24.).0, ui::GREEN);
+        assert_eq!(level_reading(-30.).0, ui::ORANGE);
+        assert_eq!(level_reading(-72.).1, "Silence");
+        assert_eq!(kernel_size(640), "640 Mo");
+        assert_eq!(kernel_size(1024), "1,0 Go");
+        assert_eq!(kernel_size(6246), "6,0 Go");
+        let advice = kernel_advice(6246, 62);
+        assert!(advice.contains("6,0 Go") && advice.contains("2 jours") && !advice.contains("  "), "{advice}");
+        assert!(kernel_advice(4096, 20).contains("depuis 20 h"));
+    }
 }

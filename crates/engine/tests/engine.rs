@@ -784,6 +784,8 @@ fn http_routes_et_protections() {
     assert_eq!(glitches["simulated"], true);
     assert_eq!(glitches["readable"], false);
     assert!(glitches["total"].is_null());
+    assert_eq!(glitches["kernel"]["nonpaged_mb"], 640, "mémoire noyau simulée, saine");
+    assert_eq!(glitches["kernel"]["high"], false);
     assert_eq!(get_json("/api/health")["log"], json!([]));
     let report = get_json("/api/support");
     assert_eq!(report["windows"], "Démonstration");

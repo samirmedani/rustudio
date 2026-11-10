@@ -40,6 +40,18 @@ pub struct Device {
 pub struct Inventory {
     pub installed: Vec<Descriptor>,
     pub devices: Vec<Device>,
+    /// Ce qui se lit d'un coup d'œil sur les cartes de « Mes appareils ».
+    #[serde(default)]
+    pub glance: Glance,
+}
+
+/// État en direct résumé sur l'accueil. Chaque valeur manque tant que son appareil n'est pas prêt.
+#[derive(Clone, Default, Deserialize, PartialEq, Debug)]
+pub struct Glance {
+    pub mic_muted: Option<bool>,
+    pub scene: Option<String>,
+    /// Niveau de batterie de la souris (0 à 100) et charge en cours.
+    pub battery: Option<(u8, bool)>,
 }
 
 impl Snapshot {
@@ -115,6 +127,7 @@ pub struct Client {
     mouse_visible: Arc<AtomicBool>,
     go_visible: Arc<AtomicBool>,
     audio_visible: Arc<AtomicBool>,
+    level_visible: Arc<AtomicBool>,
     cached: Arc<Mutex<Option<(u64, Snapshot)>>>,
 }
 
@@ -132,6 +145,7 @@ impl Client {
             mouse_visible: Arc::new(AtomicBool::new(false)),
             go_visible: Arc::new(AtomicBool::new(false)),
             audio_visible: Arc::new(AtomicBool::new(false)),
+            level_visible: Arc::new(AtomicBool::new(false)),
             cached: Arc::new(Mutex::new(None)),
         }
     }
@@ -142,6 +156,10 @@ impl Client {
 
     pub fn set_audio_visible(&self, visible: bool) {
         self.audio_visible.store(visible, Ordering::Relaxed);
+    }
+    /// Page Micro affichée : le moteur mesure le niveau d'entrée tant qu'on le lui demande.
+    pub fn set_level_visible(&self, visible: bool) {
+        self.level_visible.store(visible, Ordering::Relaxed);
     }
     pub fn set_go_visible(&self, visible: bool) {
         self.go_visible.store(visible, Ordering::Relaxed);
@@ -278,12 +296,26 @@ impl Client {
     }
 
     pub fn inventory(&self) -> Result<Inventory, String> {
-        self.live_state()?;
-        let result: Inventory = serde_json::from_value(self.get("/api/modules")?)
+        let live = self.live_state()?;
+        let mut result: Inventory = serde_json::from_value(self.get("/api/modules")?)
             .map_err(|_| "Inventaire des appareils illisible")?;
         if result.devices.iter().any(|d| d.simulated == self.live) {
             return Err("Inventaire issu d’un autre mode.".into());
         }
+        let ready = |id: &str| result.devices.iter().any(|d| d.id == id && d.status == "ready");
+        let mut glance = Glance::default();
+        if ready("goxlr-mini") {
+            glance.mic_muted = live["mic"]["muted"].as_bool();
+            glance.scene = live["scene"].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+        }
+        // Derniers réglages lus par le moteur : cette lecture n'interroge pas la souris.
+        if ready("attack-shark-r5-ultra")
+            && let Ok(mouse) = self.get(&format!("{}/state", crate::mouse::MODULE))
+            && let Some(level) = mouse["state"]["battery"].as_u64()
+        {
+            glance.battery = Some((level.min(100) as u8, mouse["state"]["charging"] == true));
+        }
+        result.glance = glance;
         Ok(result)
     }
 
@@ -499,6 +531,8 @@ pub enum Event {
     Go(Option<crate::goxlr::GoView>),
     Audio(Value),
     MicOsd(String),
+    /// Niveau d'entrée du micro en dB (nul : pas de mesure).
+    MicLevel(Option<f64>),
     Update(Value),
 }
 
@@ -592,6 +626,32 @@ pub fn start(
                 }
             }
             std::thread::sleep(Duration::from_millis(if native_osd { 150 } else { 350 }));
+        }
+    });
+    let level_client = client.clone();
+    let level_tx = event_tx.clone();
+    std::thread::spawn(move || {
+        let mut last: Option<f64> = None;
+        while !level_tx.is_closed() {
+            let visible = level_client.level_visible.load(Ordering::Relaxed);
+            // « level=1 » demande au moteur de mesurer pendant trois secondes : rien n'est lu page fermée
+            let current = if visible {
+                level_client
+                    .get("/api/live?level=1")
+                    .ok()
+                    .filter(|state| state["connected"] == true)
+                    .and_then(|state| state["live"]["mic_db"].as_f64())
+                    .map(f64::round)
+            } else {
+                None
+            };
+            if current != last {
+                last = current;
+                if level_tx.send_blocking(Event::MicLevel(current)).is_err() {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(if visible { 90 } else { 300 }));
         }
     });
     let inventory_client = client.clone();

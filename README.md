@@ -39,6 +39,11 @@ Chaque module apporte les contrôles propres à son matériel. Dans **Modules**,
 </p>
 
 <p align="center">
+  <img src="docs/captures/sombre.jpg" alt="Le mixeur de Rustudio en thème sombre : mêmes faders colorés sur un fond anthracite" width="900">
+  <br><sub>Clair ou sombre : Rustudio suit le mode de Windows, ou celui que tu choisis dans Réglages.</sub>
+</p>
+
+<p align="center">
   <img src="docs/captures/mixer.jpg" alt="Le mixeur de la GoXLR Mini : quatre grands faders colorés, la coupure de chaque voie et les autres voies en dessous" width="440">
   <img src="docs/captures/mouse.jpg" alt="Les réglages de la R5 Ultra : batterie, sensibilité par palier, fréquence et options du capteur" width="440">
 </p>

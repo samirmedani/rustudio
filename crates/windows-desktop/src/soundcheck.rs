@@ -7,6 +7,14 @@
 //!   GoXLR, dans un sens ou dans l'autre, coupe ou décale ce son : on le voit à la milliseconde.
 use serde_json::{json, Value};
 
+/// Les pilotes GoXLR 5.57 et 5.68 nomment différemment les mêmes voies de capture.
+#[cfg(any(windows, test))]
+fn select_goxlr_endpoint(endpoints: Vec<crate::audio::Endpoint>, wanted: &str) -> Option<crate::audio::Endpoint> {
+    endpoints.into_iter().find(|e| {
+        e.goxlr && (e.name == wanted || matches!((wanted, e.name.as_str()), ("Broadcast Stream Mix", "Stream Mix 1") | ("VOD", "Stream Mix 2")))
+    })
+}
+
 /// Ce qu'une voie a donné pendant le test.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stats {
@@ -552,7 +560,7 @@ mod win {
     }
 
     fn goxlr(capture: bool, name: &str) -> Option<Endpoint> {
-        crate::audio::active_endpoints(capture).into_iter().find(|e| e.goxlr && e.name == name)
+        super::select_goxlr_endpoint(crate::audio::active_endpoints(capture), name)
     }
 
 
@@ -816,6 +824,19 @@ pub fn capture_voice(_stop: &std::sync::atomic::AtomicBool, _started: std::sync:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voies_des_pilotes_goxlr_557_et_568() {
+        let ep = |id: &str, name: &str, goxlr| crate::audio::Endpoint { id: id.into(), name: name.into(), goxlr };
+        for name in ["Broadcast Stream Mix", "Stream Mix 1"] {
+            let found = select_goxlr_endpoint(vec![ep("autre", "Stream Mix 1", false), ep("mini", name, true)], "Broadcast Stream Mix");
+            assert_eq!(found.unwrap().id, "mini");
+        }
+        assert!(select_goxlr_endpoint(vec![ep("mauvaise", "Stream Mix 2", true), ep("suffixe", "Stream Mix 10", true)], "Broadcast Stream Mix").is_none());
+        assert!(select_goxlr_endpoint(vec![ep("autre", "Stream Mix 1", false)], "Broadcast Stream Mix").is_none());
+        assert_eq!(select_goxlr_endpoint(vec![ep("vod", "Stream Mix 2", true)], "VOD").unwrap().id, "vod");
+        assert_eq!(select_goxlr_endpoint(vec![ep("sample", "Sample", true)], "Sample").unwrap().id, "sample");
+    }
 
     fn tone(n: usize, fs: f64, amp: f32) -> Vec<f32> {
         (0..n).map(|i| amp * (2.0 * std::f64::consts::PI * LOOP_FREQ * i as f64 / fs).sin() as f32).collect()

@@ -181,6 +181,7 @@ impl Mixer {
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page == Page::Mouse);
         self.client.set_go_visible(matches!(page, Page::Go(_)));
+        self.client.set_level_visible(page == Page::Go(crate::goxlr::Section::Microphone));
         self.client.set_audio_visible(matches!(page, Page::WindowsAudio | Page::Mixer));
         self.win.cancel();
         if page == Page::Go(crate::goxlr::Section::Microphone) {
@@ -255,6 +256,10 @@ impl Mixer {
             Event::MicOsd(state) => {
                 crate::win_session::show_mic(&state);
                 force_render = false;
+            }
+            Event::MicLevel(level) => {
+                self.go.level = level;
+                force_render = self.page == Page::Go(crate::goxlr::Section::Microphone);
             }
             Event::Go(view) => {
                 self.go.receive(view);
@@ -477,7 +482,7 @@ impl Mixer {
             .w(px(FADER_W))
             .h(px(TRAVEL))
             .rounded(px(FADER_R))
-            .bg(linear_gradient(180., linear_color_stop(ui::tint(colour, 0.25 + 0.08 * hover), 0.), linear_color_stop(ui::shade(colour, 0.1 - 0.05 * hover), 1.)));
+            .bg(linear_gradient(180., linear_color_stop(ui::to_white(colour, 0.25 + 0.08 * hover), 0.), linear_color_stop(ui::to_black(colour, 0.1 - 0.05 * hover), 1.)));
         let mut track = self
             .rail(channel, true, index, cx)
             .mt(px(14.))
@@ -486,7 +491,7 @@ impl Mixer {
             .rounded(px(FADER_R))
             .bg(linear_gradient(180., linear_color_stop(rgb(0xe3e3e8), 0.), linear_color_stop(rgb(0xeeeef2), 1.)))
             .border_1()
-            .border_color(ui::lerp(alpha(0x000000, 0.05), alpha(colour, 0.4), hover))
+            .border_color(ui::lerp(alpha(ui::INK, 0.05), alpha(colour, 0.4), hover))
             .shadow(vec![gpui::BoxShadow { color: alpha(colour, 0.24 * hover), offset: gpui::point(px(0.), px(10.)), blur_radius: px(26.), spread_radius: px(0.) }])
             .child(
                 div()
@@ -546,8 +551,8 @@ impl Mixer {
                         cx.notify();
                     })),
                 format!("assign-{index}"),
-                alpha(ui::WHITE, if self.picker == Some(index) { 0.7 } else { 0. }),
-                alpha(ui::WHITE, 0.78),
+                alpha(ui::PAPER, if self.picker == Some(index) { 0.7 } else { 0. }),
+                alpha(ui::PAPER, 0.78),
             ))
             .child(track)
             .child(
@@ -620,7 +625,7 @@ impl Mixer {
             .items_center()
             .gap(px(14.))
             .py(px(10.))
-            .when(!first, |d| d.border_t_1().border_color(alpha(0x000000, 0.07)))
+            .when(!first, |d| d.border_t_1().border_color(alpha(ui::INK, 0.07)))
             .child(ui::chip(channel_icon(&ch.id), colour, 32.))
             .child(
                 div()
@@ -735,6 +740,7 @@ impl Mixer {
 
 impl Render for Mixer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::sync_theme(window);
         self.renders += 1;
         if self.renders == 1 {
             let start = self.started;

@@ -135,8 +135,8 @@ impl TrayPanel {
             .text_size(px(12.5))
             .font_weight(FontWeight::MEDIUM)
             .shadow(vec![gpui::BoxShadow { color: alpha(if on { tone } else { 0x111827 }, if on { 0.18 + 0.14 * t } else { 0.08 * t }), offset: gpui::point(px(0.), px(4. + 4. * t)), blur_radius: px(10. + 8. * t), spread_radius: px(0.) }])
-            .when(on, |d| d.bg(ui::lerp(rgb(tone), ui::tint(tone, 0.14), t)).text_color(rgb(ui::WHITE)))
-            .when(!on, |d| d.bg(ui::lerp(alpha(ui::WHITE, 0.75), rgb(ui::WHITE), t)).border_1().border_color(ui::lerp(alpha(0x000000, 0.07), alpha(ui::ACCENT, 0.28), t)))
+            .when(on, |d| d.bg(ui::lerp(rgb(tone), ui::to_white(tone, 0.14), t)).text_color(rgb(ui::WHITE)))
+            .when(!on, |d| d.bg(ui::lerp(alpha(ui::PAPER, 0.75), rgb(ui::PAPER), t)).border_1().border_color(ui::lerp(alpha(ui::INK, 0.07), alpha(ui::ACCENT, 0.28), t)))
             .child(ui::icon(glyph, 20., if on { rgb(ui::WHITE) } else { rgb(ui::TEXT) }))
             .child(label);
         ui::hoverable(el, id.to_owned())
@@ -193,6 +193,7 @@ impl TrayPanel {
 
 impl Render for TrayPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::sync_theme(window);
         let view = self.view(cx);
         ui::keep_animating(window);
         view
@@ -226,7 +227,7 @@ impl TrayPanel {
                     )
                     .child(Self::row("reconnect", Icon::Refresh, "Reconnecter la GoXLR").on_click(cx.listener(|this, _, _, cx| this.post("reconnect", json!({}), cx))))
                 })
-                .child(div().h(px(1.)).mx(px(4.)).my(px(5.)).bg(alpha(0x000000, 0.07)))
+                .child(div().h(px(1.)).mx(px(4.)).my(px(5.)).bg(alpha(ui::INK, 0.07)))
                 .when(self.live_mode, |d| {
                     let on = session::startup_enabled();
                     d.child(Self::row("startup", Icon::Power, "Démarrer avec Windows").child(div().flex_1().flex().justify_end().child(ui::toggle("startup-toggle", on, true))).on_click(cx.listener(move |_, _, _, cx| {

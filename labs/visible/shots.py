@@ -6,9 +6,16 @@ from measure import Engine, find_window, reveal, running, screenshot_window, unt
 def main():
     root = Path(__file__).resolve().parent
     app = root / "Rustudio.exe"
-    pages = sys.argv[1:] or ["devices", "mixer", "mic", "mouse", "profiles", "headphones", "routing", "lighting", "scenes", "diagnostic", "audio", "modules", "versions", "settings", "help"]
-    out = root / "shots"
-    out.mkdir(exist_ok=True)
+    # Options : --theme=sombre (apparence imposée), --kernel-mb=6200 (alerte mémoire noyau simulée),
+    # --dossier=nom (sous-dossier de shots/, par défaut le nom du thème).
+    options = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--") and "=" in a}
+    theme = options.get("--theme", "clair")
+    if "--kernel-mb" in options:
+        import os
+        os.environ["RUSTUDIO_SIM_KERNEL_MB"] = options["--kernel-mb"]
+    pages = [a for a in sys.argv[1:] if not a.startswith("--")] or ["devices", "mixer", "mic", "mouse", "profiles", "headphones", "routing", "lighting", "scenes", "diagnostic", "audio", "modules", "versions", "settings", "help"]
+    out = root / "shots" / options.get("--dossier", theme)
+    out.mkdir(parents=True, exist_ok=True)
     engine = Engine()
     def ready():
         try:
@@ -20,7 +27,9 @@ def main():
             until(ready, 10, "Le moteur simulé ne répond pas.")
             time.sleep(1.5)
             for page in pages:
-                with running(app, ["--demo", "--hidden", "--page", page, "--profiles-dir", str(Path(folder) / "profiles")], root) as p:
+                # page Micro : la voix simulée parle, pour montrer le niveau d'entrée en direct
+                engine.call("/api/sim/talk", {"on": page == "mic"})
+                with running(app, ["--demo", "--hidden", "--theme", theme, "--page", page, "--profiles-dir", str(Path(folder) / "profiles")], root) as p:
                     hwnd = until(lambda: find_window(p.pid, "Zed::Window", by_class=True), 10, "Fenêtre absente.")
                     reveal(hwnd, 1240, 800)
                     time.sleep(2.2)

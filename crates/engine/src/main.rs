@@ -105,6 +105,16 @@ fn main() {
         "apply-update" => rustudio_engine::apply::run_apply_update(),
         #[cfg(windows)]
         "uninstall" => rustudio_engine::uninstall::run(&args),
+        // Lecture seule du journal Windows des coupures et de la mémoire noyau : ni moteur, ni pilote, ni USB.
+        // « journal 72 » : les 72 dernières heures (24 par défaut).
+        "journal" => {
+            let hours = rest.get(1).and_then(|h| h.parse::<f64>().ok()).filter(|h| *h > 0.0).unwrap_or(24.0);
+            let since = rustudio_engine::config::now_epoch() - hours * 3600.0;
+            let mut v = rustudio_engine::glitches::query(since);
+            v["kernel"] = rustudio_engine::glitches::kernel_now();
+            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+            if v["readable"] == true { 0 } else { 1 }
+        }
         "version" | "--version" => {
             println!("Rustudio {VERSION}");
             0

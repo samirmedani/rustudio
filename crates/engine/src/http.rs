@@ -115,6 +115,7 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                         crate::glitches::query(since)
                     };
                     v["usb"] = ctl.drops.lock().unwrap_or_else(|e| e.into_inner()).json(since);
+                    v["kernel"] = if ctl.simulated() { crate::glitches::kernel_simulated() } else { crate::glitches::kernel_now() };
                     v
                 }
                 "/api/processes" => ctl.user_apps(),

@@ -13,9 +13,10 @@ remplace pas la version distribuée et ne déclenche aucune installation.
 | Session Windows | Icône et bulle facultatives ; l’aperçu ne s’enregistre pas au démarrage |
 | Versions et aide | Historique consultable, diagnostic à copier et liens d’aide |
 
-Restent à porter ou à qualifier pour remplacer la version distribuée :
-la lecture d’un enregistrement court et les graphiques de voix, le test
-acoustique d’écho avec lecture de bips, le démarrage et l’instance unique
-en production, l’installation, les mises à jour et les retours de version.
-Le diagnostic et la capture audio réelle nécessitent aussi une recette
-matérielle distincte ; les données et les écritures du banc restent simulées.
+Depuis la 6.0.1, l’appli native est la version distribuée : installation, instance unique, démarrage avec
+Windows, mises à jour et retour à une version publiée passent par elle. La réécoute d’un enregistrement court, le
+graphique de voix et le test acoustique d’écho sont portés.
+
+Restent à qualifier sur du matériel réel, hors du banc simulé : la capture WASAPI de l’empreinte vocale et le
+diagnostic audio. Le tableau ci-dessus décrit l’aperçu de démonstration, dont les données et les écritures sont
+simulées.

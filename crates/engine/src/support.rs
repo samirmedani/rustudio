@@ -255,6 +255,7 @@ pub fn support(ctl: &Ctl) -> Value {
         "coupures_usb_24h": {"nombre": drops["count"], "perdu_casque_ms": drops["out_ms"], "perdu_pc_ms": drops["in_ms"],
                              "flux_actif": drops["streaming"],
                              "programmes_frequents": drops["top"].as_array().map(|t| t.iter().map(|x| json!({"nom": x["name"], "coupures": x["count"]})).collect::<Vec<_>>())},
+        "memoire_noyau_windows": if ctl.simulated() { Value::Null } else { crate::glitches::kernel_now() },
         "erreurs": h["errors"].as_array().map(|a| a.iter().rev().take(10).map(|e| anon(e["msg"].as_str().unwrap_or(""))).collect::<Vec<_>>()),
         "journal": h["log"].as_array().map(|a| a.iter().map(|l| anon(l.as_str().unwrap_or(""))).collect::<Vec<_>>()),
         "genere_le": chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),

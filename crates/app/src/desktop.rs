@@ -161,6 +161,40 @@ pub(crate) fn device_state(device: Option<&Device>) -> (&'static str, State) {
     }
 }
 
+/// État en direct d'un appareil sur sa carte : micro et scène de la GoXLR, batterie de la souris.
+fn glance_row(module: &str, glance: &crate::backend::Glance) -> Option<Div> {
+    let item = |glyph: Icon, colour: u32, text: String| {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(7.))
+            .px(px(11.))
+            .py(px(6.))
+            .rounded_full()
+            .bg(alpha(colour, 0.1))
+            .child(ui::icon(glyph, 14., rgb(colour)))
+            .child(div().text_size(px(12.5)).font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(colour)).child(text))
+    };
+    let mut row = div().flex().flex_wrap().gap(px(8.));
+    match module {
+        "goxlr-mini" => {
+            let muted = glance.mic_muted?;
+            row = row.child(if muted { item(Icon::MicOff, ui::RED_TEXT, "Micro coupé".into()) } else { item(Icon::Mic, ui::GREEN_TEXT, "Micro actif".into()) });
+            if let Some(scene) = glance.scene.as_deref() {
+                let label = rustudio_core::scenes::scene(scene).map(|s| s.label).unwrap_or(scene);
+                row = row.child(item(Icon::Layers, ui::ACCENT, format!("Scène {label}")));
+            }
+        }
+        "attack-shark-r5-ultra" => {
+            let (level, charging) = glance.battery?;
+            let colour = if level <= 20 && !charging { ui::RED_TEXT } else { ui::GREEN_TEXT };
+            row = row.child(item(Icon::Battery, colour, if charging { format!("{level} % · en charge") } else { format!("{level} %") }));
+        }
+        _ => return None,
+    }
+    Some(row)
+}
+
 /// Ligne « Officiel Rustudio · Créé par … » d'un module.
 pub(crate) fn credit(module: &Descriptor) -> Div {
     let official = module.origin != "community";
@@ -208,12 +242,12 @@ impl Mixer {
             .text_color(rgb(fg))
             .cursor(gpui::CursorStyle::PointingHand)
             .when(on, |d| {
-                d.bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(ui::WHITE), 0.), gpui::linear_color_stop(rgb(0xf3f8ff), 1.)))
+                d.bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(ui::PAPER), 0.), gpui::linear_color_stop(rgb(0xf3f8ff), 1.)))
                     .border_1()
                     .border_color(alpha(ui::ACCENT, 0.14))
                     .shadow(ui::soft_shadow())
             })
-            .when(!on, |d| d.bg(ui::lerp(alpha(ui::WHITE, 0.), alpha(ui::WHITE, 0.75), t)).border_1().border_color(ui::lerp(alpha(ui::WHITE, 0.), alpha(0x000000, 0.04), t)))
+            .when(!on, |d| d.bg(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.75), t)).border_1().border_color(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::INK, 0.04), t)))
             .child(ui::icon(glyph, 19., if on { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
             .child(label)
             .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)));
@@ -231,9 +265,9 @@ impl Mixer {
             .p(px(12.))
             .pt(px(18.))
             .rounded(px(24.))
-            .bg(alpha(ui::WHITE, 0.62))
+            .bg(alpha(ui::PAPER, 0.62))
             .border_1()
-            .border_color(alpha(0x000000, 0.05))
+            .border_color(alpha(ui::INK, 0.05))
             .shadow(ui::soft_shadow())
             .child(
                 div()
@@ -274,7 +308,7 @@ impl Mixer {
                     .mt(px(16.))
                     .pt(px(14.))
                     .border_t_1()
-                    .border_color(alpha(0x000000, 0.07))
+                    .border_color(alpha(ui::INK, 0.07))
                     .child(div().px(px(12.)).child(ui::caption("ESPACE APPAREIL")))
                     .child(div().px(px(12.)).pt(px(2.)).text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(name))
                     .child(list),
@@ -299,7 +333,7 @@ impl Mixer {
                 .pt(px(12.))
                 .px(px(6.))
                 .border_t_1()
-                .border_color(alpha(0x000000, 0.07))
+                .border_color(alpha(ui::INK, 0.07))
                 .child(ui::status(if engine { "Moteur connecté" } else { "Moteur indisponible" }, if engine { State::Ok } else { State::Error }).text_color(rgb(ui::TEXT)))
                 .child(div().pl(px(15.)).child(ui::caption(sub)))
                 .child(self.update_widget(cx)),
@@ -332,7 +366,7 @@ impl Mixer {
             .child(format!("v{}", crate::VERSION))
             .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)));
         let version = ui::hoverable(version, "version-label".to_owned());
-        let mut root = div().mt(px(12.)).pt(px(10.)).border_t_1().border_color(alpha(0x000000, 0.07)).flex().flex_col().gap(px(8.));
+        let mut root = div().mt(px(12.)).pt(px(10.)).border_t_1().border_color(alpha(ui::INK, 0.07)).flex().flex_col().gap(px(8.));
         if preview.is_none() && (!self.client.is_live() || u["release_build"] == false) {
             return root.child(div().flex().items_center().gap(px(8.)).child(version).child(ui::caption("Version de développement")));
         }
@@ -465,7 +499,7 @@ impl Mixer {
                 })));
             }
         acts = acts.child(
-            ui::round("more", Icon::Dots, 40., alpha(ui::WHITE, 0.92), rgb(ui::TEXT))
+            ui::round("more", Icon::Dots, 40., alpha(ui::PAPER, 0.92), rgb(ui::TEXT))
                 .shadow(ui::soft_shadow())
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.menu_open = !this.menu_open;
@@ -560,7 +594,7 @@ impl Mixer {
     fn caption_buttons() -> Div {
         let button = |id: &'static str, glyph: Icon, area: WindowControlArea, close: bool| {
             let t = ui::hover_t(id);
-            let hover = if close { rgb(0xe81123) } else { alpha(0x000000, 0.06) };
+            let hover = if close { rgb(0xe81123) } else { alpha(ui::INK, 0.06) };
             let el = div()
                 .id(id)
                 .flex()
@@ -570,8 +604,8 @@ impl Mixer {
                 .h(px(34.))
                 .window_control_area(area)
                 .occlude()
-                .bg(ui::lerp(alpha(if close { 0xe81123 } else { 0x000000 }, 0.), hover, t))
-                .child(gpui::svg().path(glyph.path()).size(px(if close { 15. } else { 13. })).text_color(ui::lerp(alpha(0x000000, 0.62), if close { rgb(ui::WHITE) } else { alpha(0x000000, 0.85) }, t)));
+                .bg(ui::lerp(alpha(if close { 0xe81123 } else { ui::INK }, 0.), hover, t))
+                .child(gpui::svg().path(glyph.path()).size(px(if close { 15. } else { 13. })).text_color(ui::lerp(alpha(ui::INK, 0.62), if close { rgb(ui::WHITE) } else { alpha(ui::INK, 0.85) }, t)));
             ui::hoverable(el, id.to_owned())
         };
         div()
@@ -934,6 +968,7 @@ impl Mixer {
             )
             .child(credit(module))
             .child(ui::status(status, state))
+            .children(self.inventory.as_ref().and_then(|i| glance_row(&module.id, &i.glance)))
             .child(hint(module.summary.clone()))
             .child(tags)
             .child(div().flex_1())

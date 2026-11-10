@@ -31,26 +31,172 @@ pub const ORANGE: u32 = 0xff9500;
 pub const ORANGE_TEXT: u32 = 0xc66a00;
 pub const WHITE: u32 = 0xffffff;
 
+/// Surface claire (cartes, champs, menus) : blanche en clair, gris anthracite en sombre.
+/// WHITE reste blanc dans les deux thèmes : texte sur une couleur vive, boutons de curseur.
+pub const PAPER: u32 = 0xfffffe;
+/// Encre des filets et des survols : noire en clair, blanche en sombre.
+/// 0x000000 reste noir dans les deux thèmes : ombres et voile des fenêtres de dialogue.
+pub const INK: u32 = 0x000001;
+
+/// Apparence choisie dans Réglages.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Appearance {
+    /// Suit le mode clair ou sombre de Windows.
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Appearance::Auto, Appearance::Light, Appearance::Dark];
+    pub fn label(self) -> &'static str {
+        match self {
+            Appearance::Auto => "Automatique",
+            Appearance::Light => "Clair",
+            Appearance::Dark => "Sombre",
+        }
+    }
+    /// Nom enregistré dans le fichier de préférence et accepté par « --theme ».
+    pub fn name(self) -> &'static str {
+        match self {
+            Appearance::Auto => "auto",
+            Appearance::Light => "clair",
+            Appearance::Dark => "sombre",
+        }
+    }
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.name() == name.trim())
+    }
+    /// Préférence lue sur le disque (absente ou illisible : automatique).
+    pub fn load(file: &std::path::Path) -> Self {
+        std::fs::read_to_string(file).ok().and_then(|text| Self::from_name(&text)).unwrap_or_default()
+    }
+    pub fn save(self, file: &std::path::Path) -> Result<(), String> {
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("Dossier de préférences inaccessible : {e}"))?;
+        }
+        std::fs::write(file, self.name()).map_err(|e| format!("Préférence non enregistrée : {e}"))
+    }
+}
+
+static APPEARANCE_FILE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+static APPEARANCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn appearance() -> Appearance {
+    Appearance::ALL[APPEARANCE.load(std::sync::atomic::Ordering::Relaxed) as usize % 3]
+}
+pub fn set_appearance(choice: Appearance) {
+    let index = Appearance::ALL.iter().position(|a| *a == choice).unwrap_or(0);
+    APPEARANCE.store(index as u8, std::sync::atomic::Ordering::Relaxed);
+}
+/// Au démarrage : lit la préférence dans ce fichier, où les prochains choix seront enregistrés.
+pub fn load_appearance(file: std::path::PathBuf) {
+    set_appearance(Appearance::load(&file));
+    let _ = APPEARANCE_FILE.set(file);
+}
+/// Choix fait dans Réglages : appliqué tout de suite, puis enregistré.
+pub fn choose_appearance(choice: Appearance) -> Result<(), String> {
+    set_appearance(choice);
+    match APPEARANCE_FILE.get() {
+        Some(file) => choice.save(file),
+        None => Ok(()),
+    }
+}
+/// À appeler au début de chaque rendu de fenêtre : applique le choix, ou suit Windows en automatique.
+pub fn sync_theme(window: &gpui::Window) {
+    let dark = match appearance() {
+        Appearance::Auto => matches!(window.appearance(), gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark),
+        Appearance::Light => false,
+        Appearance::Dark => true,
+    };
+    DARK.store(dark, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn is_dark() -> bool {
+    DARK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Surface des cartes en sombre (PAPER translucide) ; un élément en relief, rgb(PAPER), est un peu plus clair.
+const DARK_SURFACE: u32 = 0x3a3a3c;
+
+/// Couleur réellement dessinée pour une couleur de la palette claire.
+fn themed(c: u32, dark: bool) -> u32 {
+    if !dark {
+        return match c {
+            PAPER => WHITE,
+            INK => 0x000000,
+            other => other,
+        };
+    }
+    match c {
+        PAPER => 0x48484a,
+        INK => 0xffffff,
+        BG => 0x161618,
+        TEXT => 0xf5f5f7,
+        0x3a3a3c => 0xd1d1d6,
+        TEXT2 => 0xaeaeb2,
+        TEXT3 => 0x98989d,
+        ACCENT => 0x0a84ff,
+        0x2b8af0 => 0x409cff,
+        GREEN_TEXT => 0x30d158,
+        RED_TEXT => 0xff6961,
+        ORANGE_TEXT => 0xffb340,
+        // rail des faders, panneau près de l'horloge, barres du graphique de voix, onglet actif de la barre latérale
+        0xe3e3e8 => 0x2a2a2c,
+        0xeeeef2 => 0x333336,
+        0xf7f7f9 => 0x1e1e20,
+        0xc7c7cc => 0x636366,
+        0xf3f8ff => 0x3d4656,
+        other => other,
+    }
+}
+fn solid(c: u32) -> Hsla {
+    gpui::rgb(c).into()
+}
+/// Couleur dessinée telle quelle dans les deux thèmes : celles de l'appareil (éclairage, pastilles de choix).
+pub fn raw(c: u32) -> Hsla {
+    solid(c)
+}
+
 /// Couleur avec transparence (0 = invisible, 1 = opaque).
 pub fn alpha(rgb: u32, a: f32) -> Hsla {
-    let mut c: Hsla = gpui::rgb(rgb).into();
-    c.a = a;
+    let dark = is_dark();
+    let mut c = match (rgb, dark) {
+        // une surface translucide reste plus sombre qu'un élément en relief (rgb(PAPER))
+        (PAPER, true) => solid(DARK_SURFACE),
+        _ => solid(themed(rgb, dark)),
+    };
+    c.a = match (rgb, dark) {
+        // filets et remplissages gris : un peu plus marqués sur fond sombre pour rester visibles
+        (INK, true) => (a * 1.5).min(1.),
+        (0x767680 | 0x787880, true) => (a * 1.7).min(1.),
+        _ => a,
+    };
     c
 }
 pub fn rgb(c: u32) -> Hsla {
-    gpui::rgb(c).into()
+    solid(themed(c, is_dark()))
 }
-/// Mélange vers le blanc (t = 0 : couleur pure, t = 1 : blanc).
+/// Fond pastel d'une couleur : mélange vers la surface (t = 0 : couleur pure, t = 1 : surface).
 pub fn tint(c: u32, t: f32) -> Hsla {
-    mix(c, WHITE, t)
+    if is_dark() { blend(c, 0x2c2c2e, t) } else { blend(c, WHITE, t) }
 }
+/// Couleur lisible sur son propre fond pastel : plus sombre en clair, plus claire en sombre.
 pub fn shade(c: u32, t: f32) -> Hsla {
-    mix(c, 0x000000, t)
+    if is_dark() { blend(c, WHITE, t * 2.) } else { blend(c, 0x000000, t) }
 }
-fn mix(a: u32, b: u32, t: f32) -> Hsla {
+/// Mélange vers le blanc ou le noir, identique dans les deux thèmes (reliefs d'un élément coloré).
+pub fn to_white(c: u32, t: f32) -> Hsla {
+    blend(c, WHITE, t)
+}
+pub fn to_black(c: u32, t: f32) -> Hsla {
+    blend(c, 0x000000, t)
+}
+fn blend(a: u32, b: u32, t: f32) -> Hsla {
+    let t = t.clamp(0., 1.);
     let ch = |c: u32, s: u32| ((c >> s) & 255) as f32;
     let m = |s| (ch(a, s) + (ch(b, s) - ch(a, s)) * t).round() as u32;
-    rgb((m(16) << 16) | (m(8) << 8) | m(0))
+    solid((m(16) << 16) | (m(8) << 8) | m(0))
 }
 
 fn shadow(y: f32, blur: f32, a: f32) -> BoxShadow {
@@ -192,7 +338,7 @@ pub fn lift(card: Div, id: impl Into<ElementId>) -> Stateful<Div> {
             .relative()
             .top(px(-3. * t))
             .cursor(CursorStyle::PointingHand)
-            .border_color(lerp(alpha(0x000000, 0.05), alpha(ACCENT, 0.32), t))
+            .border_color(lerp(alpha(INK, 0.05), alpha(ACCENT, 0.32), t))
             .shadow(lift_shadow(t, if t > 0. { 0x0b4fae } else { 0x111827 }, 1.)),
         key,
     )
@@ -222,7 +368,8 @@ pub fn icon(name: Icon, size: f32, colour: impl Into<Hsla>) -> Svg {
 
 /// Fond de l'appli : lumière douce et halos pastel, sous toutes les cartes.
 pub fn ambient() -> impl IntoElement {
-    img(AMBIENT.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover)
+    // en sombre, l'image claire ne laisse qu'un halo coloré discret sur le fond
+    img(AMBIENT.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).opacity(if is_dark() { 0.1 } else { 1. })
 }
 pub fn logo(size: f32) -> impl IntoElement {
     img(LOGO.clone()).flex_none().size(px(size))
@@ -236,9 +383,9 @@ pub fn card() -> Div {
         .gap(px(14.))
         .p(px(20.))
         .rounded(px(22.))
-        .bg(alpha(WHITE, 0.74))
+        .bg(alpha(PAPER, 0.74))
         .border_1()
-        .border_color(alpha(0x000000, 0.05))
+        .border_color(alpha(INK, 0.05))
         .shadow(soft_shadow())
 }
 /// Ancien nom, gardé pour les vues qui empilent des réglages.
@@ -291,7 +438,7 @@ pub fn pill(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<Share
         Tone::Soft => (alpha(ACCENT, 0.1), rgb(ACCENT), alpha(ACCENT, 0.17)),
         Tone::Danger => (alpha(RED, 0.12), rgb(RED_TEXT), alpha(RED, 0.2)),
         Tone::Warn => (alpha(ORANGE, 0.14), rgb(ORANGE_TEXT), alpha(ORANGE, 0.22)),
-        Tone::Plain => (alpha(WHITE, 0.86), rgb(TEXT), rgb(WHITE)),
+        Tone::Plain => (alpha(PAPER, 0.86), rgb(TEXT), rgb(PAPER)),
     };
     let mut base = div();
     // dans une colonne, le bouton garde sa largeur au lieu de s'étirer
@@ -313,7 +460,7 @@ pub fn pill(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<Share
         .text_size(px(13.5))
         .font_weight(FontWeight::MEDIUM)
         .cursor(CursorStyle::PointingHand)
-        .when(tone == Tone::Plain, |d| d.border_1().border_color(lerp(alpha(0x000000, 0.08), alpha(0x000000, 0.12), t)).shadow(vec![shadow(1. + 2. * t, 2. + 8. * t, 0.04 + 0.05 * t)]))
+        .when(tone == Tone::Plain, |d| d.border_1().border_color(lerp(alpha(INK, 0.08), alpha(INK, 0.12), t)).shadow(vec![shadow(1. + 2. * t, 2. + 8. * t, 0.04 + 0.05 * t)]))
         .when(tone == Tone::Primary, |d| d.shadow(vec![BoxShadow { color: alpha(ACCENT, 0.24 + 0.14 * t), offset: point(px(0.), px(5. + 3. * t)), blur_radius: px(14. + 8. * t), spread_radius: px(0.) }]))
         .when_some(glyph, move |d, i| d.child(icon(i, 16., fg)))
         .child(text.into());
@@ -331,7 +478,7 @@ pub fn round(id: impl Into<ElementId>, glyph: Icon, size: f32, bg: Hsla, fg: Hsl
     let key = key_of(&id);
     let t = hover_t(&key);
     // au survol : un fond discret apparaît, un fond plein fonce légèrement
-    let hover = if bg.a < 0.3 { alpha(0x767680, 0.2) } else { lerp(bg, alpha(0x000000, bg.a), 0.08) };
+    let hover = if bg.a < 0.3 { alpha(0x767680, 0.2) } else { lerp(bg, alpha(INK, bg.a), 0.08) };
     let el = div()
         .id(id)
         .relative()
@@ -379,7 +526,7 @@ pub fn toggle_row(glyph: Option<Icon>, text: impl Into<SharedString>, control: i
         .gap(px(16.))
         .py(px(10.))
         .border_t_1()
-        .border_color(alpha(0x000000, 0.07))
+        .border_color(alpha(INK, 0.07))
         .child(
             div()
                 .flex()
@@ -440,8 +587,9 @@ pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
         .bg(alpha(bg, 0.12))
         .text_color(rgb(fg))
         .text_size(px(13.))
-        .child(icon(glyph, 16., rgb(fg)))
-        .child(text.into())
+        .child(icon(glyph, 16., rgb(fg)).flex_none())
+        // un message long passe à la ligne au lieu de sortir de la carte
+        .child(div().flex_1().min_w(px(0.)).line_height(px(19.)).child(text.into()))
 }
 
 /// Fenêtre de dialogue centrée, au-dessus d'un voile léger : la page ne bouge pas.
@@ -456,12 +604,12 @@ pub fn modal(content: Div) -> impl IntoElement {
         .flex()
         .items_center()
         .justify_center()
-        .bg(alpha(0x000000, 0.18))
+        .bg(alpha(0x000000, if is_dark() { 0.45 } else { 0.18 }))
         .occlude()
         .child(
             content
                 .w(px(560.))
-                .bg(rgb(WHITE))
+                .bg(alpha(PAPER, 1.))
                 .shadow(vec![gpui::BoxShadow { color: alpha(0x000000, 0.2), offset: gpui::point(px(0.), px(18.)), blur_radius: px(48.), spread_radius: px(0.) }]),
         )
         .with_animation("modal-in", gpui::Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(t))
@@ -489,9 +637,9 @@ pub fn toast(ok: bool, text: impl Into<SharedString>) -> impl IntoElement {
                 .px(px(18.))
                 .py(px(12.))
                 .rounded(px(16.))
-                .bg(alpha(WHITE, 0.96))
+                .bg(alpha(PAPER, 0.96))
                 .border_1()
-                .border_color(alpha(0x000000, 0.06))
+                .border_color(alpha(INK, 0.06))
                 .shadow(vec![gpui::BoxShadow { color: alpha(0x000000, 0.14), offset: gpui::point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.) }])
                 .text_size(px(13.5))
                 .text_color(rgb(TEXT))
@@ -538,7 +686,7 @@ pub fn hslider(fraction: f32, colour: Hsla, hover: f32) -> Div {
                 .rounded_full()
                 .bg(rgb(WHITE))
                 .border_1()
-                .border_color(alpha(0x000000, 0.06))
+                .border_color(alpha(INK, 0.06))
                 .shadow(vec![shadow(1., 3., 0.18), shadow(4. + 2. * hover, 10. + 6. * hover, 0.08 + 0.06 * hover)]),
         )
 }
@@ -559,9 +707,9 @@ pub fn field(id: impl Into<ElementId>, focus: &FocusHandle, text: &str, placehol
         .h(px(36.))
         .px(px(12.))
         .rounded(px(11.))
-        .bg(alpha(WHITE, 0.95))
+        .bg(alpha(PAPER, 0.95))
         .border_1()
-        .border_color(if editing { alpha(ACCENT, 0.7) } else { lerp(alpha(0x000000, 0.1), alpha(ACCENT, 0.38), t) })
+        .border_color(if editing { alpha(ACCENT, 0.7) } else { lerp(alpha(INK, 0.1), alpha(ACCENT, 0.38), t) })
         .text_size(px(13.5))
         .text_color(rgb(if empty { TEXT3 } else { TEXT }))
         .when(enabled, |d| d.cursor(CursorStyle::IBeam))
@@ -630,9 +778,9 @@ pub fn select_button(id: impl Into<ElementId>, text: impl Into<SharedString>, op
         .h(px(38.))
         .px(px(12.))
         .rounded(px(11.))
-        .bg(lerp(alpha(WHITE, 0.92), rgb(WHITE), t))
+        .bg(lerp(alpha(PAPER, 0.92), rgb(PAPER), t))
         .border_1()
-        .border_color(if open { alpha(ACCENT, 0.6) } else { lerp(alpha(0x000000, 0.1), alpha(ACCENT, 0.38), t) })
+        .border_color(if open { alpha(ACCENT, 0.6) } else { lerp(alpha(INK, 0.1), alpha(ACCENT, 0.38), t) })
         .shadow(vec![shadow(1. + t, 2. + 6. * t, 0.03 + 0.05 * t)])
         .text_size(px(13.5))
         .when(enabled, |d| d.cursor(CursorStyle::PointingHand))
@@ -647,9 +795,9 @@ pub fn menu_panel() -> Div {
         .flex_col()
         .p(px(6.))
         .rounded(px(14.))
-        .bg(alpha(WHITE, 0.98))
+        .bg(alpha(PAPER, 0.98))
         .border_1()
-        .border_color(alpha(0x000000, 0.08))
+        .border_color(alpha(INK, 0.08))
         .shadow(vec![shadow(2., 6., 0.06), shadow(18., 44., 0.14)])
 }
 pub fn menu_item(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
@@ -699,7 +847,7 @@ pub fn list_row(glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>,
         .gap(px(12.))
         .min_h(px(48.))
         .py(px(8.))
-        .when(!first, |d| d.border_t_1().border_color(alpha(0x000000, 0.07)))
+        .when(!first, |d| d.border_t_1().border_color(alpha(INK, 0.07)))
         .when_some(glyph, |d, (i, c)| d.child(icon(i, 18., rgb(c))))
         .child(
             div()
@@ -733,8 +881,9 @@ pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bo
         .text_size(px(13.))
         .font_weight(FontWeight::MEDIUM)
         .cursor(CursorStyle::PointingHand)
-        .when(selected, |d| d.bg(rgb(WHITE)).shadow(vec![shadow(1., 3., 0.1)]))
-        .when(!selected, |d| d.bg(lerp(alpha(WHITE, 0.), alpha(WHITE, 0.55), t)).text_color(lerp(rgb(0x3a3a3c), rgb(TEXT), t)))
+        // en sombre, l'onglet choisi doit trancher sur le rail : un gris plus clair que les surfaces
+        .when(selected, |d| d.bg(if is_dark() { raw(0x636366) } else { rgb(PAPER) }).shadow(vec![shadow(1., 3., 0.1)]))
+        .when(!selected, |d| d.bg(lerp(alpha(PAPER, 0.), alpha(PAPER, 0.55), t)).text_color(lerp(rgb(0x3a3a3c), rgb(TEXT), t)))
         .child(text.into());
     hoverable(el, key)
 }
@@ -756,9 +905,9 @@ pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: im
         .p(px(14.))
         .rounded(px(16.))
         .cursor(CursorStyle::PointingHand)
-        .bg(if selected { alpha(ACCENT, 0.06) } else { lerp(alpha(WHITE, 0.7), rgb(WHITE), t) })
+        .bg(if selected { alpha(ACCENT, 0.06) } else { lerp(alpha(PAPER, 0.7), rgb(PAPER), t) })
         .border_1()
-        .border_color(if selected { alpha(ACCENT, 0.9) } else { lerp(alpha(0x000000, 0.08), alpha(ACCENT, 0.3), t) })
+        .border_color(if selected { alpha(ACCENT, 0.9) } else { lerp(alpha(INK, 0.08), alpha(ACCENT, 0.3), t) })
         .shadow(if selected { vec![BoxShadow { color: alpha(ACCENT, 0.14), offset: point(px(0.), px(6.)), blur_radius: px(18.), spread_radius: px(0.) }] } else { lift_shadow(t, 0x111827, 0.6) })
         .child(
             div()
@@ -824,7 +973,7 @@ pub fn stepper(less: Stateful<Div>, value: impl Into<SharedString>, more: Statef
         .child(more)
 }
 pub fn step_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
-    round(id, glyph, 28., rgb(WHITE), rgb(TEXT)).shadow(vec![shadow(1., 2., 0.08)])
+    round(id, glyph, 28., rgb(PAPER), rgb(TEXT)).shadow(vec![shadow(1., 2., 0.08)])
 }
 
 /// Case d'une matrice (routage) : cercle plein coché, ou anneau vide.
@@ -841,13 +990,13 @@ pub fn check_cell(id: impl Into<ElementId>, on: bool, enabled: bool) -> Stateful
         .rounded_full()
         .cursor(CursorStyle::PointingHand)
         .when(on, |d| d.bg(lerp(rgb(ACCENT), rgb(0x2b8af0), t)).shadow(vec![BoxShadow { color: alpha(ACCENT, 0.25 + 0.15 * t), offset: point(px(0.), px(3.)), blur_radius: px(8.), spread_radius: px(0.) }]).child(icon(Icon::Check, 15., rgb(WHITE))))
-        .when(!on, |d| d.border_2().border_color(lerp(alpha(0x000000, 0.14), alpha(ACCENT, 0.55), t)).bg(lerp(alpha(WHITE, 0.6), alpha(ACCENT, 0.06), t)))
+        .when(!on, |d| d.border_2().border_color(lerp(alpha(INK, 0.14), alpha(ACCENT, 0.55), t)).bg(lerp(alpha(PAPER, 0.6), alpha(ACCENT, 0.06), t)))
         .when(!enabled, |d| d.opacity(0.45));
     hoverable(el, key)
 }
 
 pub fn swatch(colour: u32, size: f32) -> Div {
-    div().flex_none().size(px(size)).rounded(px(size * 0.3)).bg(rgb(colour)).border_1().border_color(alpha(0x000000, 0.12))
+    div().flex_none().size(px(size)).rounded(px(size * 0.3)).bg(raw(colour)).border_1().border_color(alpha(INK, 0.12))
 }
 
 pub fn progress(fraction: f32, colour: u32) -> Div {
@@ -864,7 +1013,7 @@ pub fn vslider(fraction: f32, zero: f32, colour: Hsla, hover: f32, height: f32) 
         .w(px(28.))
         .h(px(height))
         .child(div().absolute().top_0().bottom_0().left(px(11.)).w(px(6.)).rounded_full().bg(alpha(0x767680, 0.16)))
-        .child(div().absolute().left(px(7.)).w(px(14.)).h(px(2.)).top(px(height * (1. - zero) - 1.)).rounded_full().bg(alpha(0x000000, 0.18)))
+        .child(div().absolute().left(px(7.)).w(px(14.)).h(px(2.)).top(px(height * (1. - zero) - 1.)).rounded_full().bg(alpha(INK, 0.18)))
         .child(div().absolute().left(px(11.)).w(px(6.)).rounded_full().top(px(height * (1. - hi))).h(px(height * (hi - lo))).bg(colour))
         .child(
             div()
@@ -875,7 +1024,7 @@ pub fn vslider(fraction: f32, zero: f32, colour: Hsla, hover: f32, height: f32) 
                 .rounded_full()
                 .bg(rgb(WHITE))
                 .border_1()
-                .border_color(alpha(0x000000, 0.06))
+                .border_color(alpha(INK, 0.06))
                 .shadow(vec![shadow(1., 3., 0.18), shadow(4. + 2. * hover, 10. + 6. * hover, 0.08 + 0.06 * hover)]),
         )
 }
@@ -918,4 +1067,46 @@ pub fn columns(items: Vec<AnyElement>) -> Div {
         }
     }
     div().flex().items_start().gap(px(16.)).child(left).child(right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn luminance(c: u32) -> f32 {
+        let ch = |s: u32| ((c >> s) & 255) as f32 / 255.;
+        0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+    }
+
+    #[test]
+    fn theme_clair_inchange_et_theme_sombre_lisible() {
+        // le thème clair dessine exactement la palette d'origine
+        for c in [BG, TEXT, TEXT2, TEXT3, ACCENT, GREEN, GREEN_TEXT, RED, RED_TEXT, ORANGE, ORANGE_TEXT, WHITE] {
+            assert_eq!(themed(c, false), c);
+        }
+        assert_eq!(themed(PAPER, false), WHITE);
+        assert_eq!(themed(INK, false), 0x000000);
+        // en sombre : fond foncé, surfaces plus claires que le fond, textes clairs, blanc et noir conservés
+        assert!(luminance(themed(BG, true)) < 0.12);
+        assert!(luminance(DARK_SURFACE) > luminance(themed(BG, true)));
+        assert!(luminance(themed(PAPER, true)) > luminance(DARK_SURFACE));
+        for text in [TEXT, TEXT2, TEXT3, GREEN_TEXT, RED_TEXT, ORANGE_TEXT, ACCENT] {
+            assert!(luminance(themed(text, true)) - luminance(DARK_SURFACE) > 0.2, "{text:06x} illisible sur une carte sombre");
+        }
+        assert_eq!(themed(WHITE, true), WHITE);
+        assert_eq!(themed(0x000000, true), 0x000000);
+    }
+
+    #[test]
+    fn apparence_enregistree_puis_relue() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("prefs").join("apparence.txt");
+        assert_eq!(Appearance::load(&file), Appearance::Auto, "sans fichier : automatique");
+        for choice in Appearance::ALL {
+            choice.save(&file).unwrap();
+            assert_eq!(Appearance::load(&file), choice);
+        }
+        std::fs::write(&file, "fluo").unwrap();
+        assert_eq!(Appearance::load(&file), Appearance::Auto, "valeur inconnue : automatique");
+    }
 }

@@ -16,6 +16,24 @@ pub fn hidden(cmd: &str) -> Command {
     c
 }
 
+/// Mémoire noyau non paginée (octets) et temps écoulé depuis le démarrage de Windows (secondes).
+pub fn kernel_memory() -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::ProcessStatus::{K32GetPerformanceInfo, PERFORMANCE_INFORMATION};
+        let mut info: PERFORMANCE_INFORMATION = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+        info.cb = size;
+        if unsafe { K32GetPerformanceInfo(&mut info, size) } == 0 {
+            return None;
+        }
+        let uptime = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() } / 1000;
+        Some((info.KernelNonpaged as u64 * info.PageSize as u64, uptime))
+    }
+    #[cfg(not(windows))]
+    None
+}
+
 pub fn run_hidden(cmd: &str, args: &[&str]) -> Option<Output> {
     hidden(cmd).args(args).output().ok()
 }

@@ -89,3 +89,20 @@ retire les événements de plus de 24 heures, même si le son ne coupe plus.
    champ avance exactement au même moment ; c'est le compteur de pertes.
 3. Ajouter l'identifiant du produit et les offsets dans [`crates/goxlr/src/stream.rs`](../crates/goxlr/src/stream.rs),
    avec un test sur un bloc fabriqué, puis un relevé daté dans ce document.
+
+## Mémoire noyau de Windows
+
+Le diagnostic affiche la mémoire noyau non paginée (celle que Windows et ses pilotes gardent en permanence), lue
+par `GetPerformanceInfo`, et la signale à partir de 3 Gio.
+
+Mesure du 4 novembre 2026 sur un PC sous Windows 11 26H1 (build 28000.3231), allumé depuis trois jours :
+
+- 6,1 Gio de mémoire non paginée, portée par aucun processus vivant (fuite de Windows) ;
+- pour la récupérer, le noyau compacte son tas sous verrou : pendant 4 à 6 ms, le traitement des interruptions USB
+  attend, et le pilote audio perd une ou deux trames ;
+- sur 600 s de son, aucun paquet USB en erreur et aucune trame manquante côté contrôleur : l'appareil, son firmware
+  et son pilote ne sont pas en cause.
+
+Chaque lancement de programme laissait un peu de mémoire non rendue. Rustudio lit donc le journal Windows par l'API
+`wevtapi`, dans le processus du moteur, au lieu de lancer `wevtutil`. Le seul remède immédiat connu est de redémarrer
+Windows.

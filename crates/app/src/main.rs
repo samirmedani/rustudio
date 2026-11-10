@@ -17,6 +17,8 @@ mod profiles;
 #[cfg(any(windows, unix))]
 mod settings;
 #[cfg(any(windows, unix))]
+mod shortcut;
+#[cfg(any(windows, unix))]
 mod tray;
 #[cfg(any(windows, unix))]
 mod tray_panel;
@@ -83,6 +85,8 @@ fn run() -> Result<(), String> {
     let mut self_test = false;
     let mut relaunch = None;
     let mut start_page = None;
+    let mut theme = None;
+    let mut hotkey = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--port" => {
@@ -102,6 +106,10 @@ fn run() -> Result<(), String> {
             "--start-demo" => start_demo = true,
             "--mixer" => open_mixer = true,
             "--page" => start_page = Some(desktop::Page::from_name(&args.next().ok_or("Page manquante.")?).ok_or("Page inconnue.")?),
+            // apparence imposée pour cette exécution, sans toucher à la préférence (captures, essais)
+            "--theme" => theme = Some(args.next().as_deref().and_then(ui::Appearance::from_name).ok_or("Apparence attendue : auto, clair ou sombre.")?),
+            // raccourci du micro imposé pour un essai, y compris en démonstration (jamais enregistré)
+            "--hotkey" => hotkey = Some(args.next().ok_or("Raccourci manquant.")?),
             "--inspect" => inspect = true,
             "--profiles-dir" => profiles_dir = Some(std::path::PathBuf::from(args.next().ok_or("Dossier de profils manquant.")?)),
             "--self-test" => self_test = true,
@@ -131,6 +139,10 @@ fn run() -> Result<(), String> {
             std::env::temp_dir().join("Rustudio Démo").join("profils")
         }
     });
+    match theme {
+        Some(choice) => ui::set_appearance(choice),
+        None => ui::load_appearance(dir.parent().unwrap_or(&dir).join("apparence.txt")),
+    }
     let client = backend::Client::new(port, live);
     if inspect {
         let inventory = client.inventory()?;
@@ -157,6 +169,13 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    // Raccourci du micro : seulement pour l'appli installée (ou un essai explicite avec « --hotkey »).
+    shortcut::start(
+        dir.parent().unwrap_or(&dir).join("raccourci-micro.txt"),
+        client.clone(),
+        instance.is_some() || hotkey.is_some(),
+        hotkey,
+    );
     // Avec le moteur installé, l'icône près de l'horloge garde Rustudio ouvert, fenêtre fermée ou non.
     let resident = live || tray_mode;
     let initial = start_page.unwrap_or(if open_mixer { desktop::Page::Mixer } else { desktop::Page::Devices });
@@ -178,6 +197,7 @@ fn run() -> Result<(), String> {
             let dir = dir.clone();
             // RUSTUDIO_WINDOW_HEIGHT (développement) : fenêtre plus haute pour voir une page entière
             let height = std::env::var("RUSTUDIO_WINDOW_HEIGHT").ok().and_then(|h| h.parse().ok()).unwrap_or(800.);
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
             let mut bounds = Bounds::centered(None, size(px(1240.), px(height)), cx);
             // Aperçu sur Mac (développement, RUSTUDIO_PREVIEW) : fenêtre presque hors de l'écran, voir preview_float.
             #[cfg(target_os = "macos")]
@@ -205,6 +225,8 @@ fn run() -> Result<(), String> {
                     #[cfg(target_os = "macos")]
                     preview_float(_window, cx);
                     cx.new(|cx| {
+                        // Windows passe du clair au sombre : la fenêtre se redessine aussitôt
+                        cx.observe_window_appearance(_window, |_, _, cx| cx.notify()).detach();
                         let mut mixer = mixer::Mixer::new(
                             client,
                             profiles::Store::new(dir),
