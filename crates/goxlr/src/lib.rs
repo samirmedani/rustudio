@@ -69,6 +69,18 @@ pub struct Stats {
     pub resyncs: u64,
     pub index_resets: u64,
     pub opens: u64,
+    /// Temps de réponse de la dernière commande (envoi → réponse de la GoXLR), en millisecondes.
+    pub reply_ms: f64,
+    /// Moyenne glissante de ce temps de réponse (les dix dernières commandes environ).
+    pub reply_avg_ms: f64,
+}
+
+impl Stats {
+    /// Note un aller-retour réussi ; simple horodatage, aucun échange USB en plus.
+    pub fn note_reply(&mut self, ms: f64) {
+        self.reply_avg_ms = if self.reply_avg_ms > 0.0 { self.reply_avg_ms * 0.9 + ms * 0.1 } else { ms };
+        self.reply_ms = ms;
+    }
 }
 
 /// Ce que les autres fils peuvent lire sans toucher a l'USB (diagnostic).
@@ -269,6 +281,7 @@ impl GoXlr {
         frame.extend_from_slice(&idx.to_le_bytes());
         frame.extend_from_slice(&[0u8; 8]);
         frame.extend_from_slice(body);
+        let sent = Instant::now();
         self.req_out(2, &frame)?;
         self.info.lock().unwrap().stats.commands += 1;
         let t0 = Instant::now();
@@ -294,6 +307,7 @@ impl GoXlr {
                 let ridx = u16::from_le_bytes([resp[6], resp[7]]);
                 if ridx == idx {
                     let end = (16 + rlen).min(resp.len());
+                    self.info.lock().unwrap().stats.note_reply(sent.elapsed().as_secs_f64() * 1000.0);
                     return Ok(resp[16..end].to_vec());
                 }
             }

@@ -32,19 +32,25 @@ impl Ctl {
     pub fn live_snapshot(&self, want_level: bool) -> Value {
         let brief = self.updater.brief();
         let v = self.version();
-        let firmware = self.dev_info.lock().unwrap().firmware.clone();
+        let (firmware, reply) = {
+            let info = self.dev_info.lock().unwrap();
+            (info.firmware.clone(), (info.stats.reply_ms, info.stats.reply_avg_ms))
+        };
         let mut g = self.lock();
         if want_level {
             g.level_until = Some(Instant::now() + Duration::from_secs(3));
         }
         let s = &g.state;
         let listening = g.listen_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0);
+        // temps de réponse des commandes USB, chronométré par le fil USB lui-même : lu ici sans toucher à l'appareil
+        let usb_reply = (g.connected && reply.1 > 0.0)
+            .then(|| json!({"last_ms": (reply.0 * 10.0).round() / 10.0, "avg_ms": (reply.1 * 10.0).round() / 10.0}));
         json!({"v": v, "boot": self.boot_id, "connected": g.connected, "live": live_json(&g.live),
                "job": g.job.clone().map(Value::Object), "mic": {"muted": s.muted("Mic"), "partial": s.partial_of("Mic")},
                "health": self.health_status(&g), "sim": self.simulated(), "osd": s.prefs.osd, "scene": s.scene,
                "modules": {"devices": self.module_devices_locked(&g, firmware)},
                "app_version": VERSION, "update": brief, "usb": g.usb, "listening": listening,
-               "sound_test": g.sound_test_until.is_some(),
+               "sound_test": g.sound_test_until.is_some(), "usb_reply": usb_reply,
                "ab": g.ab_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0)})
     }
 

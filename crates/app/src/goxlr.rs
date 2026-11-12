@@ -92,6 +92,10 @@ pub struct GoPage {
     colour: String,
     diagnostics: Option<Value>,
     sound_test: Option<Value>,
+    /// Latence en direct (page Diagnostic ouverte) : réponse USB et estimation de Windows.
+    pub(crate) latency: Option<Value>,
+    latency_test: Option<Value>,
+    latency_running: bool,
 }
 impl Drop for GoPage {
     fn drop(&mut self) {
@@ -802,6 +806,91 @@ impl Mixer {
             .child(eq_card)
     }
 
+    pub(crate) fn run_latency_test(&mut self, cx: &mut Context<Self>) {
+        if !self.go.enabled() {
+            return;
+        }
+        self.go.busy = true;
+        self.go.latency_running = true;
+        let client = self.client.clone();
+        let work = cx.background_executor().spawn(async move { crate::win_session::latency_test(&client) });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.go.busy = false;
+                this.go.latency_running = false;
+                this.go.latency_test = Some(result.unwrap_or_else(|error| json!({"status": "error", "error": error})));
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn latency_card(&self, cx: &mut Context<Self>) -> Div {
+        let ms = |v: f64| format!("{} ms", crate::mixer::fmt_num(v));
+        let mut card = ui::section(Icon::Activity, ui::ACCENT, "Latence", None)
+            .child(hint("Mise à jour chaque seconde tant que cette page est ouverte.").text_size(px(12.)));
+        let live = self.go.latency.as_ref();
+        let usb = live.and_then(|l| l["usb"]["avg_ms"].as_f64());
+        card = card.child(ui::list_row(
+            Some((Icon::Plug, ui::TEXT2)),
+            "Réponse aux réglages",
+            Some("Temps pour que la GoXLR confirme un réglage. N’ajoute rien au son.".into()),
+            match usb {
+                Some(v) => ui::status(ms(v), if v < 100. { ui::State::Ok } else { ui::State::Warn }).into_any_element(),
+                None => ui::caption("—").into_any_element(),
+            },
+            true,
+        ));
+        // le pilote GoXLR annonce 0 ms de latence propre : seule la période de Windows est un chiffre fiable
+        if let Some(period) = live.and_then(|l| l["windows"]["output"]["period_ms"].as_f64()) {
+            card = card.child(ui::list_row(
+                Some((Icon::Wave, ui::TEXT2)),
+                "Cycle audio de Windows",
+                Some("Windows échange le son par paquets de cette durée.".into()),
+                ui::status(ms(period), ui::State::Info),
+                false,
+            ));
+        }
+        card = card.child(hint("« Mesurer » joue trois sons aigus très courts, envoyés seulement vers le Stream Mix, et chronomètre leur retour. Évite pendant un live.").text_size(px(12.)));
+        card = if self.go.latency_running {
+            card.child(ui::status("Mesure en cours…", ui::State::Info))
+        } else {
+            card.child(ui::pill("latency-run", Some(Icon::Play), "Mesurer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.run_latency_test(cx))))
+        };
+        if let Some(r) = self.go.latency_test.as_ref() {
+            if let (Some("ok"), Some(total)) = (r["status"].as_str(), r["total_ms"].as_f64()) {
+                let (state, advice) = if total <= 40. {
+                    (ui::State::Ok, "Très bon : imperceptible en jeu comme en appel.")
+                } else if total <= 80. {
+                    (ui::State::Info, "Correct : se remarque seulement si tu t’écoutes en direct ou joues d’un instrument.")
+                } else {
+                    (ui::State::Warn, "Élevé : un tampon audio trop grand dans le pilote GoXLR peut en être la cause.")
+                };
+                let detail = format!(
+                    "{}Aller {} · retour {} · de {} à {} sur {} essai(s)",
+                    if r["simulated"] == true { "Démonstration · " } else { "" },
+                    ms(r["out_ms"].as_f64().unwrap_or(0.)),
+                    ms(r["back_ms"].as_f64().unwrap_or(0.)),
+                    ms(r["min_ms"].as_f64().unwrap_or(total)),
+                    ms(r["max_ms"].as_f64().unwrap_or(total)),
+                    r["trials"].as_u64().unwrap_or(1)
+                );
+                card = card
+                    .child(ui::list_row(Some((Icon::Gauge, ui::TEXT2)), "Aller-retour mesuré", Some(detail.into()), ui::status(ms(total), state), false))
+                    .child(hint(advice).text_size(px(12.)));
+            } else {
+                let text = match r["status"].as_str() {
+                    Some("no-signal") => "Le son de mesure n’est pas revenu : vérifie que la voie Sample n’est ni coupée ni à zéro.".to_owned(),
+                    _ => format!("Mesure impossible : {}", r["error"].as_str().unwrap_or("erreur inconnue")),
+                };
+                card = card.child(ui::notice(false, text));
+            }
+        }
+        card
+    }
+
     pub(crate) fn run_sound_test(&mut self, cx: &mut Context<Self>) {
         if !self.go.enabled() {
             return;
@@ -897,7 +986,10 @@ impl Mixer {
         let obs = ui::section(Icon::Monitor, 0x5856d6, "Incrustation OBS", None)
             .child(hint("Ajoute une « Source navigateur » dans OBS avec ce lien : la pastille du micro s’affiche dans ton live.").text_size(px(12.)))
             .child(ui::list_row(None, url.clone(), None, ui::pill("obs-url", Some(Icon::Bookmark), "Copier", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone())))), true));
-        split(vec![state.into_any_element(), obs.into_any_element()], vec![test.into_any_element(), self.echo_panel(cx).into_any_element()])
+        split(
+            vec![state.into_any_element(), obs.into_any_element()],
+            vec![self.latency_card(cx).into_any_element(), test.into_any_element(), self.echo_panel(cx).into_any_element()],
+        )
     }
 
     /// Demande de confirmation GoXLR, affichée en fenêtre par-dessus la page.

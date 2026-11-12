@@ -182,6 +182,7 @@ impl Mixer {
         self.client.set_mouse_visible(page == Page::Mouse);
         self.client.set_go_visible(matches!(page, Page::Go(_)));
         self.client.set_level_visible(page == Page::Go(crate::goxlr::Section::Microphone));
+        self.client.set_latency_visible(page == Page::Go(crate::goxlr::Section::Diagnostic));
         self.client.set_audio_visible(matches!(page, Page::WindowsAudio | Page::Mixer));
         self.win.cancel();
         if page == Page::Go(crate::goxlr::Section::Microphone) {
@@ -260,6 +261,10 @@ impl Mixer {
             Event::MicLevel(level) => {
                 self.go.level = level;
                 force_render = self.page == Page::Go(crate::goxlr::Section::Microphone);
+            }
+            Event::Latency(value) => {
+                self.go.latency = Some(value);
+                force_render = self.page == Page::Go(crate::goxlr::Section::Diagnostic);
             }
             Event::Go(view) => {
                 self.go.receive(view);

@@ -106,3 +106,37 @@ Mesure du 4 novembre 2026 sur un PC sous Windows 11 26H1 (build 28000.3231), all
 Chaque lancement de programme laissait un peu de mémoire non rendue. Rustudio lit donc le journal Windows par l'API
 `wevtapi`, dans le processus du moteur, au lieu de lancer `wevtutil`. Le seul remède immédiat connu est de redémarrer
 Windows.
+
+## Latence
+
+La carte « Latence » de la page Diagnostic se met à jour chaque seconde, et seulement tant que la page est ouverte :
+
+- **Réponse aux réglages** : le fil USB chronomètre déjà chaque commande, de l'envoi à la réponse de la GoXLR, et
+  garde une moyenne glissante. `/api/live` la publie dans `usb_reply` (`last_ms`, `avg_ms`). La lire n'envoie
+  aucune commande. Ce temps comprend l'attente volontaire de 30 ms avant la première lecture, qui évite de
+  bloquer le tube de contrôle. Il ne retarde pas le son.
+- **Cycle audio de Windows** : la période du moteur audio de Windows (`GetDevicePeriod`), relue toutes les 30 s
+  sans rien jouer. Le pilote GoXLR 5.57 annonce 0 ms de latence propre (`GetStreamLatency`) : Windows ne sait donc
+  pas estimer la latence réelle, d'où la mesure.
+
+« Mesurer » donne la vraie valeur. Le moteur isole la voie Sample vers le Stream Mix (action `sound-test`),
+Rustudio y joue trois balayages de 2 à 12 kHz de 120 ms (-20 dBFS), puis les retrouve dans le Stream Mix par
+corrélation. Chaque paquet enregistré porte l'heure d'enregistrement donnée par Windows et l'heure de sa réception
+par Rustudio, relevée toutes les millisecondes. Pour chaque balayage :
+
+- **aller** : du démarrage de la lecture à son enregistrement par la GoXLR ;
+- **retour** : de cet enregistrement à la réception du paquet par Rustudio ;
+- **total** : la médiane des trois essais.
+
+Windows livre l'enregistrement par paquets de 10 ms : selon l'endroit où le balayage tombe dans son paquet, le
+retour varie de 0 à 10 ms. Les balayages sont espacés de 403,3 ms pour que chaque essai tombe ailleurs dans le paquet.
+
+Mesure du 12 novembre 2026 (GoXLR Mini, pilote 5.57, mode partagé), trois passages de `Rustudio.exe --latency-test` :
+aller de 25 à 26 ms, très stable ; total médian de 31 à 33 ms, essais entre 28 et 37 ms. La commande écrit aussi la
+période annoncée par Windows. Elle n'isole pas la voie Sample : envoyer d'abord l'action `sound-test` au moteur.
+L'avis affiché suit ces seuils : jusqu'à 40 ms très bon, jusqu'à 80 ms correct, au-delà élevé.
+
+La mesure suit le chemin d'une application Windows en mode partagé, avec un tampon de lecture de 200 ms
+dont le premier échantillon part dès le démarrage. Une appli en mode exclusif ou en ASIO peut descendre plus bas.
+Le relevé toutes les millisecondes ajoute jusqu'à 1 ms au retour. Au-delà de 380 ms, un balayage n'est plus
+cherché : il serait confondu avec le suivant.

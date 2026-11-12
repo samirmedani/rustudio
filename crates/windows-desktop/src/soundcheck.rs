@@ -309,12 +309,8 @@ fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
     }
 }
 
-/// Retour des bips dans le micro : niveau (« none », « light », « strong »), corrélation, dB et retard (ms).
-/// offset : position, dans l'enregistrement, du début de la lecture.
-pub fn echo_analyse(rec: &[f32], reference: &[f32], offset: usize, sr: f64) -> Value {
-    if rec.len() < reference.len() || reference.is_empty() {
-        return json!({"level": "none", "ncc": 0.0, "db": -120.0, "delay_ms": 0.0});
-    }
+/// Corrélation croisée par FFT : c[lag] = Σ rec[lag + i] · reference[i].
+fn xcorr(rec: &[f32], reference: &[f32]) -> Vec<f64> {
     let mut n = 1;
     while n < rec.len() + reference.len() {
         n <<= 1;
@@ -335,11 +331,21 @@ pub fn echo_analyse(rec: &[f32], reference: &[f32], offset: usize, sr: f64) -> V
         ai[i] = im;
     }
     fft(&mut ar, &mut ai, true);
+    ar.iter().map(|v| v / n as f64).collect()
+}
+
+/// Retour des bips dans le micro : niveau (« none », « light », « strong »), corrélation, dB et retard (ms).
+/// offset : position, dans l'enregistrement, du début de la lecture.
+pub fn echo_analyse(rec: &[f32], reference: &[f32], offset: usize, sr: f64) -> Value {
+    if rec.len() < reference.len() || reference.is_empty() {
+        return json!({"level": "none", "ncc": 0.0, "db": -120.0, "delay_ms": 0.0});
+    }
+    let corr = xcorr(rec, reference);
     let lo = offset.saturating_sub((0.05 * sr) as usize);
     let hi = (offset + (0.8 * sr) as usize).min(rec.len() - reference.len()).max(lo);
     let (mut best, mut lag) = (0.0f64, lo);
-    for (i, a) in ar.iter().enumerate().take(hi + 1).skip(lo) {
-        let v = a.abs() / n as f64;
+    for (i, a) in corr.iter().enumerate().take(hi + 1).skip(lo) {
+        let v = a.abs();
         if v > best {
             best = v;
             lag = i;
@@ -369,6 +375,105 @@ pub fn resample(x: &[f32], from: u32, to: u32) -> Vec<f32> {
     }).collect()
 }
 
+// ---------- latence ----------
+
+/// Balayage de mesure : 2 → 12 kHz en 120 ms à -20 dBFS, facile à retrouver même avec une voix dans le Stream Mix.
+pub const LAT_CHIRP_S: f64 = 0.12;
+/// Écart entre le début de deux balayages ; trois essais par mesure. Windows livre l'enregistrement par paquets de
+/// 10 ms : 3,3 ms de plus qu'un nombre rond de paquets fait tomber chaque essai à un autre endroit du paquet, et la
+/// médiane représente ce qu'une appli reçoit en moyenne.
+pub const LAT_SPACING_S: f64 = 0.4033;
+pub const LAT_TRIALS: usize = 3;
+/// Retard maximal cherché après chaque balayage.
+const LAT_MAX_S: f64 = 0.5;
+
+fn round1(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
+}
+
+pub fn latency_chirp(sr: f64) -> Vec<f32> {
+    let n = (LAT_CHIRP_S * sr).round() as usize;
+    let (f0, f1) = (2_000.0f64, 12_000.0f64);
+    let k = (f1 - f0) / LAT_CHIRP_S;
+    let fade = 0.005 * sr;
+    (0..n)
+        .map(|i| {
+            let t = i as f64 / sr;
+            let ph = 2.0 * std::f64::consts::PI * (f0 * t + 0.5 * k * t * t);
+            let env = 1f64.min(i as f64 / fade).min((n - i) as f64 / fade);
+            (LOOP_AMP as f64 * env * ph.sin()) as f32
+        })
+        .collect()
+}
+
+/// Les balayages à jouer, séparés de silence (un tous les LAT_SPACING_S).
+pub fn latency_signal(sr: f64) -> Vec<f32> {
+    let chirp = latency_chirp(sr);
+    let step = (LAT_SPACING_S * sr).round() as usize;
+    let mut out = vec![0.0f32; step * (LAT_TRIALS - 1) + chirp.len()];
+    for k in 0..LAT_TRIALS {
+        out[k * step..k * step + chirp.len()].copy_from_slice(&chirp);
+    }
+    out
+}
+
+/// Mesure aller-retour à partir de l'enregistrement du Stream Mix. Toutes les heures sont en secondes, sur l'horloge
+/// commune de Windows (QPC).
+/// - rec : voie mono à sr ; son échantillon 0 a été enregistré à rec_t0 ;
+/// - arrivals : (premier échantillon du paquet, heure à laquelle Rustudio a reçu ce paquet) ;
+/// - play_t0 : démarrage de la lecture, à la fréquence out_rate.
+///
+/// Aller : de la lecture demandée à l'enregistrement par la GoXLR. Retour : de l'enregistrement à la remise du paquet
+/// à Rustudio. Total : ce qu'une appli entend, de « je joue » à « j'ai reçu ».
+pub fn latency_analyse(rec: &[f32], sr: f64, rec_t0: f64, arrivals: &[(usize, f64)], play_t0: f64, out_rate: f64) -> Value {
+    let chirp = latency_chirp(sr);
+    let eref: f64 = chirp.iter().map(|v| (*v as f64).powi(2)).sum();
+    let step_s = (LAT_SPACING_S * out_rate).round() / out_rate;
+    let mut trials: Vec<(f64, f64)> = vec![];
+    for k in 0..LAT_TRIALS {
+        let sent = play_t0 + k as f64 * step_s;
+        // 2 ms de marge avant l'envoi : petites erreurs entre les deux horloges de Windows
+        let lo = ((sent - rec_t0 - 0.002) * sr).floor().max(0.0) as usize;
+        let hi = (((sent - rec_t0 + LAT_MAX_S) * sr).ceil().max(0.0) as usize).min(rec.len());
+        if hi < lo + chirp.len() {
+            continue;
+        }
+        let seg = &rec[lo..hi];
+        let corr = xcorr(seg, &chirp);
+        let (mut best, mut lag) = (0.0f64, 0usize);
+        for (i, c) in corr.iter().enumerate().take(seg.len() - chirp.len() + 1) {
+            if c.abs() > best {
+                best = c.abs();
+                lag = i;
+            }
+        }
+        let eseg: f64 = seg[lag..lag + chirp.len()].iter().map(|v| (*v as f64).powi(2)).sum();
+        if best / (eref * eseg + 1e-12).sqrt() < 0.3 {
+            continue;
+        }
+        let at = lo + lag;
+        let Some(&(_, received)) = arrivals.iter().rev().find(|(start, _)| *start <= at) else {
+            continue;
+        };
+        let recorded = rec_t0 + at as f64 / sr;
+        trials.push((((recorded - sent) * 1000.0).max(0.0), ((received - recorded) * 1000.0).max(0.0)));
+    }
+    if trials.is_empty() {
+        return json!({"status": "no-signal"});
+    }
+    let mut totals: Vec<f64> = trials.iter().map(|(a, b)| a + b).collect();
+    totals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = |mut v: Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        v[v.len() / 2]
+    };
+    json!({
+        "status": "ok", "total_ms": round1(totals[totals.len() / 2]),
+        "out_ms": round1(mid(trials.iter().map(|t| t.0).collect())), "back_ms": round1(mid(trials.iter().map(|t| t.1).collect())),
+        "min_ms": round1(totals[0]), "max_ms": round1(totals[totals.len() - 1]), "trials": trials.len(),
+    })
+}
+
 #[cfg(windows)]
 mod win {
     use super::*;
@@ -383,6 +488,7 @@ mod win {
         WAVEFORMATEX,
     };
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED};
+    use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
     const LOOPBACK: u32 = 0x0002_0000;
     const FLOAT_SUBTYPE: [u8; 16] = [3, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71];
@@ -700,6 +806,132 @@ mod win {
         Ok(samples)
     }
 
+    /// Horloge commune aux horodatages audio de Windows (QPC), en secondes.
+    fn qpc_s() -> f64 {
+        let (mut c, mut f) = (0i64, 0i64);
+        unsafe {
+            let _ = QueryPerformanceCounter(&mut c);
+            let _ = QueryPerformanceFrequency(&mut f);
+        }
+        if f > 0 { c as f64 / f as f64 } else { 0.0 }
+    }
+
+    struct Timed {
+        rate: u32,
+        samples: Vec<f32>,
+        /// heure d'enregistrement de l'échantillon 0 (s, QPC)
+        t0: Option<f64>,
+        /// (premier échantillon du paquet, heure de réception par Rustudio)
+        arrivals: Vec<(usize, f64)>,
+    }
+
+    /// Enregistre une voie en mono, chaque paquet daté par Windows (enregistrement) et par Rustudio (réception).
+    unsafe fn capture_timed(id: &str, secs: f64, stop: &AtomicBool) -> Result<Timed, String> {
+        let dev = device(id)?;
+        let (client, f) = open(&dev, 0)?;
+        let cap: IAudioCaptureClient = client.GetService().map_err(|e| e.to_string())?;
+        let mut out = Timed { rate: f.rate, samples: vec![], t0: None, arrivals: vec![] };
+        let mut first: Option<u64> = None;
+        client.Start().map_err(|e| e.to_string())?;
+        let started = Instant::now();
+        let mut read = || -> Result<(), String> {
+            while started.elapsed().as_secs_f64() < secs && !stop.load(Ordering::SeqCst) {
+                // relève toutes les millisecondes : la réception est datée à 1 ms près
+                std::thread::sleep(Duration::from_millis(1));
+                while cap.GetNextPacketSize().map_err(|e| e.to_string())? > 0 {
+                    let (mut data, mut frames, mut flags, mut pos, mut qpc) = (std::ptr::null_mut(), 0u32, 0u32, 0u64, 0u64);
+                    cap.GetBuffer(&mut data, &mut frames, &mut flags, Some(&mut pos), Some(&mut qpc)).map_err(|e| e.to_string())?;
+                    let now = qpc_s();
+                    if frames == 0 {
+                        break;
+                    }
+                    let ch = f.channels.max(1) as usize;
+                    let mono: Vec<f32> = if flags & 2 != 0 || data.is_null() {
+                        vec![0.0; frames as usize]
+                    } else {
+                        to_f32(std::slice::from_raw_parts(data, frames as usize * f.block as usize), f.float, f.block_bits)
+                            .chunks_exact(ch)
+                            .map(|fr| fr.iter().sum::<f32>() / ch as f32)
+                            .collect()
+                    };
+                    let idx = pos.saturating_sub(*first.get_or_insert(pos)) as usize;
+                    if idx > out.samples.len() && idx - out.samples.len() < f.rate as usize {
+                        out.samples.resize(idx, 0.0); // paquet perdu : du silence à sa place garde les heures justes
+                    }
+                    let start = out.samples.len();
+                    out.samples.extend_from_slice(&mono);
+                    out.arrivals.push((start, now));
+                    if out.t0.is_none() && flags & 4 == 0 && qpc > 0 {
+                        out.t0 = Some(qpc as f64 / 1e7 - start as f64 / f.rate as f64);
+                    }
+                    cap.ReleaseBuffer(frames).map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(())
+        };
+        let r = read();
+        let _ = client.Stop();
+        r.map(|_| out)
+    }
+
+    /// Aller-retour réel : balayages joués sur Sample, réécoutés dans le Stream Mix.
+    pub fn latency() -> Value {
+        let (Some(out), Some(inp)) = (goxlr(false, "Sample"), goxlr(true, "Broadcast Stream Mix")) else {
+            return json!({"status": "unavailable", "error": "Windows ne voit pas les voies Sample et Broadcast Stream Mix de la GoXLR."});
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let s2 = stop.clone();
+        let rec = com(move || unsafe { capture_timed(&inp.id, 4.0, &s2) });
+        std::thread::sleep(Duration::from_millis(300));
+        let (tx, rx) = std::sync::mpsc::channel::<(f64, u32)>();
+        let play = com(move || unsafe {
+            play_buffer(&out.id, &|r| latency_signal(r as f64), &mut |r| {
+                let _ = tx.send((qpc_s(), r));
+            })
+        });
+        let played = play.join().unwrap_or(Err("lecture interrompue".into()));
+        std::thread::sleep(Duration::from_millis(600));
+        stop.store(true, Ordering::SeqCst);
+        let captured = rec.join().unwrap_or(Err("écoute interrompue".into()));
+        match (captured, played, rx.try_recv()) {
+            (Ok(c), Ok(()), Ok((t_play, rate))) => match c.t0 {
+                Some(t0) => latency_analyse(&c.samples, c.rate as f64, t0, &c.arrivals, t_play, rate as f64),
+                None => json!({"status": "error", "error": "Windows n’a pas daté l’enregistrement."}),
+            },
+            (Err(e), _, _) | (_, Err(e), _) => json!({"status": "error", "error": e}),
+            _ => json!({"status": "error", "error": "Le son de mesure n’a pas été joué."}),
+        }
+    }
+
+    /// Latence que Windows annonce pour une voie (mode partagé), sans rien jouer ni enregistrer.
+    unsafe fn announced_one(capture: bool, name: &str) -> Value {
+        let Some(e) = goxlr(capture, name) else {
+            return Value::Null;
+        };
+        let read = || -> Result<(f64, f64), String> {
+            let dev = device(&e.id)?;
+            let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
+            let (mut period, mut min) = (0i64, 0i64);
+            client.GetDevicePeriod(Some(&mut period), Some(&mut min)).map_err(|e| e.to_string())?;
+            let fmt = client.GetMixFormat().map_err(|e| e.to_string())?;
+            let init = client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 0, 0, fmt, None);
+            CoTaskMemFree(Some(fmt as *const core::ffi::c_void));
+            init.map_err(|e| e.to_string())?;
+            let stream = client.GetStreamLatency().map_err(|e| e.to_string())?;
+            Ok((stream as f64 / 10_000.0, period as f64 / 10_000.0))
+        };
+        match read() {
+            Ok((stream, period)) => json!({"name": e.name, "stream_ms": round1(stream), "period_ms": round1(period), "estimate_ms": round1(stream + period)}),
+            Err(err) => json!({"name": e.name, "error": err}),
+        }
+    }
+
+    pub fn announced() -> Value {
+        com(|| unsafe { json!({"output": announced_one(false, crate::audio::SOUND), "input": announced_one(true, crate::audio::MIC)}) })
+            .join()
+            .unwrap_or_else(|_| json!({"error": "lecture interrompue"}))
+    }
+
     pub fn run(secs: f64) -> Value {
         let mut targets: Vec<(Endpoint, bool)> = vec![];
         for e in crate::audio::active_endpoints(true).into_iter().filter(|e| e.goxlr) {
@@ -770,6 +1002,18 @@ pub fn echo_test() -> Value {
     win::echo()
 }
 
+/// Latence annoncée par Windows pour la sortie System et l'entrée Chat Mic : une estimation, rien n'est joué.
+#[cfg(windows)]
+pub fn announced_latency() -> Value {
+    win::announced()
+}
+
+/// Aller-retour réel (le moteur doit avoir isolé la voie Sample : action « sound-test »).
+#[cfg(windows)]
+pub fn latency_test() -> Value {
+    win::latency()
+}
+
 #[cfg(windows)]
 pub fn capture_voice(stop:&std::sync::atomic::AtomicBool,
     started:std::sync::mpsc::SyncSender<(u64,u32)>) -> Result<Vec<u8>,String> {
@@ -814,6 +1058,14 @@ pub fn play_default(_samples: Vec<f32>, _rate: u32) -> Result<(), String> {
 }
 #[cfg(not(windows))]
 pub fn echo_test() -> Value {
+    json!({"status": "unavailable", "unsupported": true})
+}
+#[cfg(not(windows))]
+pub fn announced_latency() -> Value {
+    json!({"unsupported": true})
+}
+#[cfg(not(windows))]
+pub fn latency_test() -> Value {
     json!({"status": "unavailable", "unsupported": true})
 }
 #[cfg(not(windows))]
@@ -865,6 +1117,57 @@ mod tests {
         let x: Vec<f32> = (0..44_100).map(|i| (i as f32 * 0.01).sin()).collect();
         assert_eq!(resample(&x, 44_100, 48_000).len(), 48_000);
         assert_eq!(resample(&x, 48_000, 48_000), x);
+    }
+
+    /// Stream Mix simulé : les balayages reviennent après `delay` s, par-dessus une voix et du bruit ;
+    /// paquets de 10 ms remis à Rustudio 3 ms après leur dernier échantillon.
+    fn stream_mix(delay: f64, skip: Option<usize>) -> (Vec<f32>, Vec<(usize, f64)>) {
+        let sr = 48_000.0;
+        let (rec_t0, play_t0) = (100.0, 100.3);
+        let mut rec = vec![0.0f32; (2.5 * sr) as usize];
+        let mut seed = 11u32;
+        for (i, v) in rec.iter_mut().enumerate() {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            *v = 0.05 * (2.0 * std::f32::consts::PI * 180.0 * i as f32 / 48_000.0).sin() + ((seed >> 16) as f32 / 65_536.0 - 0.5) * 0.01;
+        }
+        let chirp = latency_chirp(sr);
+        for k in (0..LAT_TRIALS).filter(|k| Some(*k) != skip) {
+            let at = ((play_t0 - rec_t0 + k as f64 * LAT_SPACING_S + delay) * sr).round() as usize;
+            for (i, c) in chirp.iter().enumerate() {
+                rec[at + i] += c * 0.7;
+            }
+        }
+        let arrivals = (0..rec.len()).step_by(480).map(|s| (s, rec_t0 + (s + 480) as f64 / sr + 0.003)).collect();
+        (rec, arrivals)
+    }
+
+    #[test]
+    fn latence_aller_retour_retrouvee() {
+        let (rec, arrivals) = stream_mix(0.023, None);
+        let v = latency_analyse(&rec, 48_000.0, 100.0, &arrivals, 100.3, 48_000.0);
+        assert_eq!((v["status"].as_str(), v["trials"].as_u64()), (Some("ok"), Some(3)), "{v}");
+        assert!((v["out_ms"].as_f64().unwrap() - 23.0).abs() <= 0.1, "{v}");
+        // retour : le paquet qui contient le début du balayage arrive entre 3 et 13 ms après lui
+        let back = v["back_ms"].as_f64().unwrap();
+        assert!((3.0..=13.1).contains(&back), "{v}");
+        assert!((v["total_ms"].as_f64().unwrap() - 23.0 - back).abs() <= 0.2, "{v}");
+    }
+
+    #[test]
+    fn latence_avec_un_balayage_perdu_ou_aucun() {
+        let (rec, arrivals) = stream_mix(0.140, Some(1));
+        let v = latency_analyse(&rec, 48_000.0, 100.0, &arrivals, 100.3, 48_000.0);
+        assert_eq!(v["trials"], 2, "{v}");
+        assert!((v["out_ms"].as_f64().unwrap() - 140.0).abs() <= 0.1, "{v}");
+        let silence = vec![0.0f32; 48_000 * 2];
+        assert_eq!(latency_analyse(&silence, 48_000.0, 100.0, &arrivals, 100.3, 48_000.0)["status"], "no-signal");
+    }
+
+    #[test]
+    fn signal_de_latence() {
+        let s = latency_signal(48_000.0);
+        assert_eq!(s.len(), (LAT_SPACING_S * 48_000.0) as usize * 2 + (LAT_CHIRP_S * 48_000.0) as usize);
+        assert!(s.iter().all(|v| v.abs() <= LOOP_AMP + 1e-6));
     }
 
     #[test]

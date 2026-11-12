@@ -1,5 +1,10 @@
 # Nouveautés
 
+## 6.2.1
+
+- **Latence en direct.** Page Diagnostic, nouvelle carte « Latence » : le temps de réponse de la GoXLR aux réglages et le cycle audio de Windows, mis à jour chaque seconde tant que la page est ouverte.
+- **Mesurer la latence réelle.** Le bouton « Mesurer » joue trois sons aigus très courts, envoyés seulement vers le Stream Mix, et chronomètre leur aller-retour entre le PC et la GoXLR : aller, retour et total, avec un avis simple sur le résultat.
+
 ## 6.2.0
 
 - **Thème sombre.** Rustudio suit le mode clair ou sombre de Windows, et change tout de suite quand Windows change. Dans Réglages › Apparence, tu peux aussi imposer Clair ou Sombre.

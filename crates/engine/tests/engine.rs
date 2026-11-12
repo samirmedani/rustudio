@@ -1013,3 +1013,17 @@ fn profil_du_mixeur_ne_modifie_que_les_reglages_du_mixeur() {
         assert_eq!(before[key], after[key], "Le profil a modifié {key}");
     }
 }
+
+#[test]
+fn temps_de_reponse_usb_publie() {
+    let b = Bench::new();
+    let reply = b.ctl.live_snapshot(false)["usb_reply"].clone();
+    assert!(reply["avg_ms"].as_f64().is_some_and(|ms| ms >= 0.0), "{reply}");
+    b.sim.lock().latency = Duration::from_millis(20);
+    for value in [90, 110, 130] {
+        b.act("volume", json!({"channel": "Music", "value": value}));
+        b.settle();
+    }
+    let last = b.ctl.live_snapshot(false)["usb_reply"]["last_ms"].as_f64().unwrap();
+    assert!(last >= 19.0, "la fausse GoXLR répond après 20 ms : {last}");
+}

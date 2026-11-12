@@ -165,6 +165,23 @@ pub fn sound_test(client: &Client) -> Result<Value, String> {
     Ok(json!({"simulated":false,"scan":scan,"loop":loop_result}))
 }
 
+/// Mesure aller-retour : la voie Sample est isolée vers le Stream Mix le temps des trois balayages.
+pub fn latency_test(client: &Client) -> Result<Value, String> {
+    if !client.is_live() {
+        return Ok(json!({"simulated": true, "status": "ok", "total_ms": 27.4, "out_ms": 16.2, "back_ms": 11.2,
+                         "min_ms": 26.9, "max_ms": 28.1, "trials": 3}));
+    }
+    client.live_state()?;
+    let route = client.post_module("/api/modules/goxlr-mini", "sound-test", json!({"seconds": 10}))?;
+    if route["ok"] != true {
+        return Err("Le moteur n’a pas isolé la voie Samples.".into());
+    }
+    // la durée côté moteur rétablit aussi le routage si l’application se ferme pendant la mesure
+    let result = soundcheck::latency_test();
+    client.post_module("/api/modules/goxlr-mini", "sound-test", json!({"seconds": 0}))?;
+    Ok(result)
+}
+
 pub fn show_mic(state: &str) {
     let muted = !state.is_empty();
     let subtitle = match state {

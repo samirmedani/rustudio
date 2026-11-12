@@ -55,6 +55,16 @@ fn run() -> Result<(), String> {
 
     let all: Vec<String> = std::env::args().skip(1).collect();
     // Diagnostic sans fenêtre : Rustudio.exe --sound-check|--loop-test <secondes> [fichier.json] [--exclusive]
+    // Rustudio.exe --latency-test [fichier.json] : estimation de Windows et aller-retour mesuré
+    // (la voie Sample doit être isolée vers le Stream Mix : action « sound-test » du moteur).
+    if let Some(i) = all.iter().position(|a| a == "--latency-test") {
+        let out = serde_json::json!({"announced": soundcheck::announced_latency(), "measured": soundcheck::latency_test()}).to_string();
+        match all.get(i + 1).filter(|f| !f.starts_with("--")) {
+            Some(f) => std::fs::write(f, out).map_err(|e| e.to_string())?,
+            None => println!("{out}"),
+        }
+        return Ok(());
+    }
     if let Some(i) = all.iter().position(|a| a == "--sound-check" || a == "--loop-test") {
         let secs = all.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(30.0);
         let out = if all[i] == "--loop-test" {

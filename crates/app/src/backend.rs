@@ -128,6 +128,7 @@ pub struct Client {
     go_visible: Arc<AtomicBool>,
     audio_visible: Arc<AtomicBool>,
     level_visible: Arc<AtomicBool>,
+    latency_visible: Arc<AtomicBool>,
     cached: Arc<Mutex<Option<(u64, Snapshot)>>>,
 }
 
@@ -146,6 +147,7 @@ impl Client {
             go_visible: Arc::new(AtomicBool::new(false)),
             audio_visible: Arc::new(AtomicBool::new(false)),
             level_visible: Arc::new(AtomicBool::new(false)),
+            latency_visible: Arc::new(AtomicBool::new(false)),
             cached: Arc::new(Mutex::new(None)),
         }
     }
@@ -160,6 +162,10 @@ impl Client {
     /// Page Micro affichée : le moteur mesure le niveau d'entrée tant qu'on le lui demande.
     pub fn set_level_visible(&self, visible: bool) {
         self.level_visible.store(visible, Ordering::Relaxed);
+    }
+    /// Page Diagnostic affichée : latence lue en direct, rien n'est lu page fermée.
+    pub fn set_latency_visible(&self, visible: bool) {
+        self.latency_visible.store(visible, Ordering::Relaxed);
     }
     pub fn set_go_visible(&self, visible: bool) {
         self.go_visible.store(visible, Ordering::Relaxed);
@@ -533,6 +539,8 @@ pub enum Event {
     MicOsd(String),
     /// Niveau d'entrée du micro en dB (nul : pas de mesure).
     MicLevel(Option<f64>),
+    /// Latence en direct : temps de réponse USB (moteur) et estimation de Windows.
+    Latency(Value),
     Update(Value),
 }
 
@@ -656,6 +664,43 @@ pub fn start(
     });
     let inventory_client = client.clone();
     let inventory_tx = event_tx.clone();
+    let latency_client = client.clone();
+    let latency_tx = event_tx.clone();
+    std::thread::spawn(move || {
+        let mut last = Value::Null;
+        let mut announced: Option<(std::time::Instant, Value)> = None;
+        while !latency_tx.is_closed() {
+            if !latency_client.latency_visible.load(Ordering::Relaxed) {
+                announced = None;
+                std::thread::sleep(Duration::from_millis(300));
+                continue;
+            }
+            // Ce que Windows annonce ne bouge qu'avec ses réglages : relu à l'ouverture puis toutes les 30 s.
+            if announced.as_ref().is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(30)) {
+                let value = if latency_client.is_live() {
+                    rustudio_windows_desktop::soundcheck::announced_latency()
+                } else {
+                    json!({"simulated": true, "output": {"name": "System", "stream_ms": 10.0, "period_ms": 10.0, "estimate_ms": 20.0},
+                           "input": {"name": "Chat Mic", "stream_ms": 10.0, "period_ms": 10.0, "estimate_ms": 20.0}})
+                };
+                announced = Some((std::time::Instant::now(), value));
+            }
+            let usb = latency_client
+                .get("/api/live")
+                .ok()
+                .filter(|state| state["connected"] == true)
+                .map(|state| state["usb_reply"].clone())
+                .unwrap_or(Value::Null);
+            let current = json!({"usb": usb, "windows": announced.as_ref().map(|a| a.1.clone())});
+            if current != last {
+                last = current.clone();
+                if latency_tx.send_blocking(Event::Latency(current)).is_err() {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
     std::thread::spawn(move || {
         let mut last = None;
         let mut last_update: Option<Value> = None;
