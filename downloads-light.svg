@@ -1,19 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640" role="img" aria-labelledby="titre desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" style="font-variant-numeric: tabular-nums">
-<title id="titre">Téléchargements de Rustudio</title><desc id="desc">318 téléchargements de Rustudio, 35 versions, 1 étoiles.</desc>
+<title id="titre">Téléchargements de Rustudio</title><desc id="desc">319 téléchargements de Rustudio, 35 versions, 2 étoiles.</desc>
 <defs><linearGradient id="aire" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a84ff" stop-opacity="0.30"/><stop offset="1" stop-color="#0a84ff" stop-opacity="0"/></linearGradient></defs>
 <rect x="0.5" y="0.5" width="959" height="639" rx="16" fill="#ffffff" stroke="#d1d9e0"/>
 <text x="32.0" y="58.0" font-size="15" font-weight="600" fill="#59636e" text-anchor="start">Téléchargements</text>
-<text x="30.0" y="114.0" font-size="54" font-weight="700" fill="#1f2328" text-anchor="start">318</text>
+<text x="30.0" y="114.0" font-size="54" font-weight="700" fill="#1f2328" text-anchor="start">319</text>
 <text x="32.0" y="142.0" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Installeur et mises à jour, toutes versions confondues</text>
 <rect x="458" y="36" width="150" height="70" rx="12" fill="#f6f8fa" stroke="#d1d9e0"/>
 <text x="474.0" y="62.0" font-size="12" font-weight="500" fill="#59636e" text-anchor="start">Version v6.2.2</text>
-<text x="474.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">6</text>
+<text x="474.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">7</text>
 <rect x="618" y="36" width="150" height="70" rx="12" fill="#f6f8fa" stroke="#d1d9e0"/>
 <text x="634.0" y="62.0" font-size="12" font-weight="500" fill="#59636e" text-anchor="start">7 derniers jours</text>
-<text x="634.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">+95</text>
+<text x="634.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">+96</text>
 <rect x="778" y="36" width="150" height="70" rx="12" fill="#f6f8fa" stroke="#d1d9e0"/>
 <text x="794.0" y="62.0" font-size="12" font-weight="500" fill="#59636e" text-anchor="start">Étoiles GitHub</text>
-<text x="794.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">★ 1</text>
+<text x="794.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">★ 2</text>
 <text x="32.0" y="196.0" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">Au fil du temps</text>
 <line x1="72" y1="372.0" x2="928" y2="372.0" stroke="#d1d9e0"/>
 <text x="60.0" y="376.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">0</text>
@@ -25,15 +25,15 @@
 <text x="60.0" y="259.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">300</text>
 <line x1="72" y1="216.0" x2="928" y2="216.0" stroke="#d1d9e0" stroke-dasharray="3 5"/>
 <text x="60.0" y="220.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">400</text>
-<path d="M72.0,295.2 L84.1,288.1 L103.0,285.0 L183.0,285.0 L253.5,285.0 L334.6,285.0 L408.8,285.0 L481.6,285.0 L552.5,284.6 L604.6,275.7 L615.6,265.5 L625.9,260.9 L696.4,256.2 L740.5,255.8 L811.1,255.8 L884.7,251.9 L905.9,249.2 L928.0,248.0 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
-<path d="M72.0,295.2 L84.1,288.1 L103.0,285.0 L183.0,285.0 L253.5,285.0 L334.6,285.0 L408.8,285.0 L481.6,285.0 L552.5,284.6 L604.6,275.7 L615.6,265.5 L625.9,260.9 L696.4,256.2 L740.5,255.8 L811.1,255.8 L884.7,251.9 L905.9,249.2 L928.0,248.0" fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="928.0" cy="248.0" r="5" fill="#0a84ff" stroke="#ffffff" stroke-width="2.5"/>
-<text x="918.0" y="236.0" font-size="13" font-weight="700" fill="#1f2328" text-anchor="end" stroke="#ffffff" stroke-width="8" stroke-linejoin="round" paint-order="stroke">318</text>
+<path d="M72.0,295.2 L83.9,288.1 L102.4,285.0 L181.0,285.0 L250.2,285.0 L329.8,285.0 L402.6,285.0 L474.2,285.0 L543.7,284.6 L594.9,275.7 L605.8,265.5 L615.9,260.9 L685.1,256.2 L728.4,255.8 L797.7,255.8 L869.9,251.9 L890.7,249.2 L912.4,248.0 L928.0,247.6 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
+<path d="M72.0,295.2 L83.9,288.1 L102.4,285.0 L181.0,285.0 L250.2,285.0 L329.8,285.0 L402.6,285.0 L474.2,285.0 L543.7,284.6 L594.9,275.7 L605.8,265.5 L615.9,260.9 L685.1,256.2 L728.4,255.8 L797.7,255.8 L869.9,251.9 L890.7,249.2 L912.4,248.0 L928.0,247.6" fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="928.0" cy="247.6" r="5" fill="#0a84ff" stroke="#ffffff" stroke-width="2.5"/>
+<text x="918.0" y="235.6" font-size="13" font-weight="700" fill="#1f2328" text-anchor="end" stroke="#ffffff" stroke-width="8" stroke-linejoin="round" paint-order="stroke">319</text>
 <text x="72.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">31 oct.</text>
-<text x="286.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">3 nov.</text>
+<text x="286.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">4 nov.</text>
 <text x="500.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">7 nov.</text>
 <text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">10 nov.</text>
-<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">13 nov.</text>
+<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">14 nov.</text>
 <text x="32.0" y="432.0" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">Par version</text>
 <text x="928.0" y="432.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">20 dernières versions sur 35</text>
 <line x1="72" y1="572" x2="928" y2="572" stroke="#d1d9e0"/>
@@ -94,8 +94,8 @@
 <rect x="851.0" y="478.5" width="25.7" height="93.5" rx="4.0" fill="#0a84ff" fill-opacity="0.5"/>
 <text x="863.8" y="471.5" font-size="12" font-weight="600" fill="#1f2328" text-anchor="middle">11</text>
 <text x="863.8" y="592.0" font-size="11.5" font-weight="400" fill="#59636e" text-anchor="middle">6.2.1</text>
-<rect x="893.8" y="521.0" width="25.7" height="51.0" rx="4.0" fill="#0a84ff" fill-opacity="1"/>
-<text x="906.6" y="514.0" font-size="12" font-weight="600" fill="#1f2328" text-anchor="middle">6</text>
+<rect x="893.8" y="512.5" width="25.7" height="59.5" rx="4.0" fill="#0a84ff" fill-opacity="1"/>
+<text x="906.6" y="505.5" font-size="12" font-weight="600" fill="#1f2328" text-anchor="middle">7</text>
 <text x="906.6" y="592.0" font-size="11.5" font-weight="600" fill="#1f2328" text-anchor="middle">6.2.2</text>
-<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 13 nov. 2026 à 18 h 53 (heure de Paris)</text>
+<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 14 nov. 2026 à 0 h 43 (heure de Paris)</text>
 </svg>
