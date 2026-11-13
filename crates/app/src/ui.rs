@@ -594,6 +594,11 @@ pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
 
 /// Fenêtre de dialogue centrée, au-dessus d'un voile léger : la page ne bouge pas.
 pub fn modal(content: Div) -> impl IntoElement {
+    modal_sized(content, 560.)
+}
+
+/// Fenêtre par-dessus la page, de la largeur demandée (fenêtre de mise à jour : 640).
+pub fn modal_sized(content: Div, width: f32) -> impl IntoElement {
     use gpui::AnimationExt as _;
     div()
         .id("modal")
@@ -608,7 +613,7 @@ pub fn modal(content: Div) -> impl IntoElement {
         .occlude()
         .child(
             content
-                .w(px(560.))
+                .w(px(width))
                 .bg(alpha(PAPER, 1.))
                 .shadow(vec![gpui::BoxShadow { color: alpha(0x000000, 0.2), offset: gpui::point(px(0.), px(18.)), blur_radius: px(48.), spread_radius: px(0.) }]),
         )

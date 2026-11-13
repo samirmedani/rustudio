@@ -25,6 +25,8 @@ mod tray_panel;
 #[cfg(any(windows, unix))]
 mod ui;
 #[cfg(any(windows, unix))]
+mod update_sheet;
+#[cfg(any(windows, unix))]
 mod voice;
 #[cfg(any(windows, unix))]
 mod win_session;

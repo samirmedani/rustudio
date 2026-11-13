@@ -7,12 +7,16 @@ def main():
     root = Path(__file__).resolve().parent
     app = root / "Rustudio.exe"
     # Options : --theme=sombre (apparence imposée), --kernel-mb=6200 (alerte mémoire noyau simulée),
+    # --sheet=update|downloading|failed|done|current (fenêtre de mise à jour ouverte dans cet état),
     # --dossier=nom (sous-dossier de shots/, par défaut le nom du thème).
     options = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--") and "=" in a}
     theme = options.get("--theme", "clair")
     if "--kernel-mb" in options:
         import os
         os.environ["RUSTUDIO_SIM_KERNEL_MB"] = options["--kernel-mb"]
+    if "--sheet" in options:
+        import os
+        os.environ["RUSTUDIO_PREVIEW_SHEET"] = options["--sheet"]
     pages = [a for a in sys.argv[1:] if not a.startswith("--")] or ["devices", "mixer", "mic", "mouse", "profiles", "headphones", "routing", "lighting", "scenes", "diagnostic", "audio", "modules", "versions", "settings", "help"]
     out = root / "shots" / options.get("--dossier", theme)
     out.mkdir(parents=True, exist_ok=True)

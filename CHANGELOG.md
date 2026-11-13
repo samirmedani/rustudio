@@ -1,9 +1,25 @@
 # Nouveautés
 
-## 6.2.1
+## 6.2.2 — 13 novembre 2026
 
-- **Latence en direct.** Page Diagnostic, nouvelle carte « Latence » : le temps de réponse de la GoXLR aux réglages et le cycle audio de Windows, mis à jour chaque seconde tant que la page est ouverte.
-- **Mesurer la latence réelle.** Le bouton « Mesurer » joue trois sons aigus très courts, envoyés seulement vers le Stream Mix, et chronomètre leur aller-retour entre le PC et la GoXLR : aller, retour et total, avec un avis simple sur le résultat.
+Rustudio 6.2.2 te montre toute la mise à jour, des nouveautés jusqu’au redémarrage.
+
+**Nouveau**
+- **Fenêtre de mise à jour** : le bouton en bas à gauche ouvre d’abord les nouveautés, en rubriques claires (Nouveau, Amélioré, Corrigé), avec une carte par version à rattraper. L’installation ne démarre qu’avec « Mettre à jour ».
+- **Installation pas à pas** : Téléchargement, Vérification, Installation et Redémarrage s’affichent tour à tour, avec « Annuler » tant que rien n’est remplacé. En cas d’échec, la raison, « Réessayer » et la page de la release.
+- **Mise à jour confirmée** : après le redémarrage, Rustudio rouvre la fenêtre sur « Rustudio 6.2.2 est installé. » et ses nouveautés, même hors ligne.
+- **Nouveautés de cette version** : page Versions, pour relire à tout moment ce qu’apporte la version installée.
+
+**Amélioré**
+- **Recherche d’une mise à jour** : un message dit tout de suite si Rustudio est à jour, hors ligne ou limité par GitHub.
+
+## 6.2.1 — 12 novembre 2026
+
+Rustudio 6.2.1 mesure la latence de ta GoXLR, en direct et pour de vrai.
+
+**Nouveau**
+- **Latence en direct** : page Diagnostic, la carte « Latence » montre le temps de réponse de la GoXLR aux réglages et le cycle audio de Windows, mis à jour chaque seconde tant que la page est ouverte.
+- **Mesurer la latence réelle** : le bouton « Mesurer » joue trois sons aigus très courts, envoyés seulement vers le Stream Mix, et chronomètre leur aller-retour entre le PC et la GoXLR : aller, retour et total, avec un avis simple sur le résultat.
 
 ## 6.2.0
 

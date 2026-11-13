@@ -61,7 +61,15 @@ pub struct Mixer {
     pub(crate) nav_count: u64,
     pub(crate) last_space: Option<crate::desktop::Space>,
     pub(crate) update: Option<Value>,
-    pub(crate) update_then_install: bool,
+    /// recherche demandée à la main : roue dans la barre latérale jusqu'à la réponse
+    pub(crate) update_then_open: bool,
+    /// fenêtre de mise à jour (notes, installation, « installé »)
+    pub(crate) sheet: Option<crate::update_sheet::Sheet>,
+    /// l'installation qui vient de finir a déjà rouvert sa fenêtre
+    pub(crate) installed_seen: bool,
+    /// résultat d'une recherche à la main (« Rustudio est à jour »…)
+    pub(crate) update_notice: Option<(bool, String)>,
+    pub(crate) sheet_preview_done: bool,
     seq: u64,
     focus: Vec<FocusHandle>,
     received: usize,
@@ -141,7 +149,11 @@ impl Mixer {
             nav_count: 0,
             last_space: None,
             update: None,
-            update_then_install: false,
+            update_then_open: false,
+            sheet: None,
+            installed_seen: false,
+            update_notice: None,
+            sheet_preview_done: false,
             seq: 0,
             focus: (0..15).map(|_| cx.focus_handle()).collect(),
             received: 0,
@@ -240,14 +252,8 @@ impl Mixer {
             }
             Event::Inventory(inventory) => self.inventory = inventory,
             Event::Update(update) => {
-                if self.update_then_install {
-                    if update["status"] == "available" && update["installable"] == true {
-                        self.update_then_install = false;
-                        self.update_post("update-install", cx);
-                    } else if update["status"] == "up-to-date" || update["phase"] == "failed" {
-                        self.update_then_install = false;
-                    }
-                }
+                self.note_installed(&update, cx);
+                force_render = force_render || self.sheet.is_some();
                 self.update = Some(update);
             }
             Event::Audio(data) => {
@@ -371,25 +377,59 @@ impl Mixer {
         }
     }
 
-    /// Bouton de mise à jour en bas à gauche : installe si une version est prête, sinon cherche puis installe.
+    /// Bouton de mise à jour : ouvre la fenêtre de mise à jour si une version est là (ou s'installe), sinon cherche
+    /// tout de suite ; la fenêtre s'ouvre sur les notes si la recherche trouve une version. Rien ne s'installe sans
+    /// le bouton « Mettre à jour » de cette fenêtre.
     pub(crate) fn update_click(&mut self, cx: &mut Context<Self>) {
-        let ready = self.update.as_ref().is_some_and(|u| u["status"] == "available" && u["installable"] == true);
-        if ready {
-            self.update_post("update-install", cx);
-        } else {
-            self.update_then_install = true;
-            self.update_post("update-check", cx);
+        let u = self.update.clone().unwrap_or(Value::Null);
+        let phase = u["phase"].as_str().unwrap_or("");
+        if u["status"] == "available" || matches!(phase, "downloading" | "verifying" | "extracting" | "applying" | "failed") {
+            self.open_update_sheet(crate::update_sheet::SheetKind::Update, cx);
+            return;
         }
+        if self.update_then_open {
+            return;
+        }
+        self.update_then_open = true;
+        self.update_notice = None;
+        let client = self.client.clone();
+        let job = cx.background_executor().spawn(async move { client.post_module("/api", "update-check", json!({})) });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.update_then_open = false;
+                match result {
+                    Ok(r) if r["update"].is_object() => {
+                        let u = r["update"].clone();
+                        let found = u["status"] == "available";
+                        this.update_notice = match u["result"].as_str() {
+                            _ if found => None,
+                            Some("offline") => Some((false, "Recherche impossible : vérifie ta connexion, puis réessaie.".into())),
+                            Some("rate-limited") => Some((false, "GitHub limite les recherches : réessaie plus tard.".into())),
+                            _ => Some((true, "Rustudio est à jour.".into())),
+                        };
+                        this.update = Some(u);
+                        if found {
+                            this.open_update_sheet(crate::update_sheet::SheetKind::Update, cx);
+                        }
+                    }
+                    Ok(_) => this.update_notice = Some((false, "Réponse du moteur illisible.".into())),
+                    Err(error) => this.update_notice = Some((false, error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
-    fn update_post(&mut self, action: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn update_post(&mut self, action: &'static str, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let job = cx.background_executor().spawn(async move { client.post_module("/api", action, json!({})) });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
                 if let Err(error) = result {
-                    this.update_then_install = false;
                     this.notice = Some(error);
                 }
                 cx.notify();
@@ -721,6 +761,7 @@ impl Mixer {
         self.go
             .notice
             .clone()
+            .or_else(|| self.update_notice.clone())
             .or_else(|| self.profile_notice.clone())
             .or_else(|| self.library.notice.clone())
             .or_else(|| self.win.note.clone().map(|t| (true, t)))
@@ -728,6 +769,9 @@ impl Mixer {
     }
     fn clear_toast(&mut self) {
         if self.go.notice.take().is_some() {
+            return;
+        }
+        if self.update_notice.take().is_some() {
             return;
         }
         if self.profile_notice.take().is_some() {
@@ -771,7 +815,13 @@ impl Render for Mixer {
             }
         }
         let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
-        let shell = self.shell(window, cx).children(toast.map(|(ok, text)| ui::toast(ok, text))).children(dialog.map(ui::modal));
+        self.sheet_tick(cx);
+        let sheet = self.update_sheet_view(cx);
+        let shell = self
+            .shell(window, cx)
+            .children(toast.map(|(ok, text)| ui::toast(ok, text)))
+            .children(sheet.map(|s| ui::modal_sized(s, 640.)))
+            .children(dialog.map(ui::modal));
         ui::keep_animating(window);
         shell
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {

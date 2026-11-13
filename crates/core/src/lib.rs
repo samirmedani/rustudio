@@ -5,6 +5,7 @@ pub mod hpeq;
 pub mod lighting;
 pub mod mics;
 pub mod mixer_profile;
+pub mod notes;
 pub mod modules;
 pub mod release;
 pub mod routing;

@@ -27,3 +27,13 @@ pour ajouter un appareil.
 - Ne jamais lancer GoXLR Utility pendant un test sur une vraie GoXLR.
 - Mettre à jour [CHANGELOG.md](CHANGELOG.md) avec tout changement visible. Une release = un tag `vX.Y.Z` identique à
   `version` dans [Cargo.toml](Cargo.toml) : GitHub fabrique, teste l'installation et publie.
+
+## Publier une version (même processus que Wispad)
+
+- Section du CHANGELOG : `## X.Y.Z — 13 novembre 2026`, une phrase d'accroche (« Rustudio X.Y.Z … »), puis les
+  rubriques `**Nouveau**`, `**Amélioré**`, `**Corrigé**` (seulement celles qui servent), chaque point sous la forme
+  `- **Titre court** : ce qui change pour l'utilisateur`. Tutoiement, sans jargon ni détail interne ; exemples inventés.
+- Ces notes sont publiées telles quelles sur GitHub (`scripts/release_notes.py`) et affichées par l'appli : fenêtre
+  de mise à jour avant l'installation, puis « Rustudio X.Y.Z est installé. » après le redémarrage. Comportement :
+  [docs/MISES-A-JOUR.md](docs/MISES-A-JOUR.md), à tenir à jour dans le même commit qu'un changement de ce comportement.
+- Rien ne s'installe sans le clic « Mettre à jour » de l'utilisateur, après lecture des notes.

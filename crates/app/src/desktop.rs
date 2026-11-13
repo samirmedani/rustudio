@@ -354,7 +354,7 @@ impl Mixer {
         };
         let phase = u["phase"].as_str().unwrap_or("");
         let working = matches!(phase, "downloading" | "verifying" | "extracting" | "applying");
-        let checking = u["status"] == "checking" || (self.update_then_install && !working);
+        let checking = u["status"] == "checking" || (self.update_then_open && !working);
         let ready = u["status"] == "available" && u["installable"] == true;
         let latest = u["latest"]["version"].as_str().unwrap_or("").to_owned();
         let version = div()
@@ -406,9 +406,9 @@ impl Mixer {
                 .size(px(30.))
                 .rounded_full()
                 .bg(bg)
-                .when(!working, |d| d.cursor(gpui::CursorStyle::PointingHand))
+                .when(!checking, |d| d.cursor(gpui::CursorStyle::PointingHand))
                 .child(ui::icon(if checking || working { Icon::Refresh } else { Icon::Download }, 16., fg))
-                .when(!checking && !working, |d| d.on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))),
+                .when(!checking, |d| d.on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))),
             "update-check".to_owned(),
         );
         let below: AnyElement = if working {
@@ -420,7 +420,7 @@ impl Mixer {
                 .text_color(ui::lerp(rgb(ui::TEXT3), rgb(ui::ACCENT), ui::hover_t("update-notes")))
                 .cursor(gpui::CursorStyle::PointingHand)
                 .child("Voir les nouveautés")
-                .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)))
+                .on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))
                 .into_any_element()
         } else {
             div().into_any_element()

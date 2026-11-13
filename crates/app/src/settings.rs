@@ -310,8 +310,12 @@ impl Mixer {
                 ui::pill("update-install", Some(Icon::Download), format!("Mettre à jour vers la {latest}"), ui::Tone::Primary).h(px(40.)).px(px(18.))
                     .on_click(cx.listener(|this, _, _, cx| this.update_click(cx))).into_any_element()
             } else {
-                ui::pill("update-check", Some(Icon::Refresh), "Rechercher une mise à jour", ui::Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.update_click(cx))).into_any_element()
+                div().flex().gap(px(8.))
+                    .child(ui::pill("update-whats-new", Some(Icon::Sparkles), "Nouveautés de cette version", ui::Tone::Plain)
+                        .on_click(cx.listener(|this, _, _, cx| this.open_update_sheet(crate::update_sheet::SheetKind::Current, cx))))
+                    .child(ui::pill("update-check", Some(Icon::Refresh), "Rechercher", ui::Tone::Plain)
+                        .on_click(cx.listener(|this, _, _, cx| this.update_click(cx))))
+                    .into_any_element()
             });
         }
         root = root.child(hero);

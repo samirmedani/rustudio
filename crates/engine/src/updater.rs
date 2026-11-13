@@ -38,22 +38,7 @@ const STATE_BACKUPS: usize = 5;
 
 /// Sections « ## x.y.z » du CHANGELOG, dans l'ordre du fichier : (version, notes). « ## À venir » est ignore.
 pub fn changelog_sections(text: &str) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = vec![];
-    let mut cur: Option<(String, String)> = None;
-    for line in text.lines() {
-        if let Some(h) = line.strip_prefix("## ") {
-            out.extend(cur.take());
-            let v = h.trim().trim_start_matches('[').split([']', ' ']).next().unwrap_or("").to_string();
-            cur = semver::parse(&v).is_some().then(|| (v, String::new()));
-            continue;
-        }
-        if let Some((_, n)) = cur.as_mut() {
-            n.push_str(line);
-            n.push('\n');
-        }
-    }
-    out.extend(cur);
-    out.into_iter().map(|(v, n)| (v, n.trim().to_string())).collect()
+    rustudio_core::notes::changelog(text).into_iter().map(|e| (e.version, e.notes)).collect()
 }
 
 fn newest_first(a: &str, b: &str) -> std::cmp::Ordering {
