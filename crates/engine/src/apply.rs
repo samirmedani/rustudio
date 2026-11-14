@@ -242,11 +242,18 @@ impl Hooks for WinHooks {
             .filter_map(|(pid, u)| pid.map(|pid| (pid, u)))
             .collect()
     }
-    /// L'appli se relance seule quand le moteur annonce la nouvelle version ; si elle reste sur l'ancien exe, on la
-    /// ferme et on rouvre la nouvelle dans la session de son compte.
+    /// L'appli se relance seule quand le moteur annonce la nouvelle version. Si elle reste sur l'ancien exe, on la
+    /// ferme ; et chaque compte qui l'avait ouverte doit la retrouver : sinon, on l'ouvre dans sa session.
     fn restart_apps(&self, plan: &Plan, before: Vec<(u32, String)>) {
         if before.is_empty() {
             return;
+        }
+        let old: Vec<u32> = before.iter().map(|(pid, _)| *pid).collect();
+        let mut users: Vec<String> = vec![];
+        for (_, user) in &before {
+            if !users.contains(user) {
+                users.push(user.clone());
+            }
         }
         let t0 = std::time::Instant::now();
         let mut stuck = before;
@@ -254,15 +261,23 @@ impl Hooks for WinHooks {
             std::thread::sleep(Duration::from_secs(1));
             stuck.retain(|(pid, _)| crate::win::pid_alive(*pid));
         }
-        let exe = plan.to.join("Rustudio.exe").to_string_lossy().to_string();
-        let mut users: Vec<String> = vec![];
-        for (pid, user) in stuck {
-            crate::win::kill_pid(pid);
-            if !users.contains(&user) {
-                users.push(user);
-            }
+        for (pid, _) in &stuck {
+            crate::win::kill_pid(*pid);
         }
-        for user in users {
+        // la relance faite par l'appli elle-même a 20 s pour apparaître ; une appli fermée de force n'en fera pas
+        let wait = Duration::from_secs(if stuck.is_empty() { 20 } else { 2 });
+        let t1 = std::time::Instant::now();
+        let mut missing = users;
+        loop {
+            let now = self.list_apps(plan);
+            missing.retain(|user| !now.iter().any(|(pid, owner)| owner == user && !old.contains(pid)));
+            if missing.is_empty() || t1.elapsed() >= wait {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        let exe = plan.to.join("Rustudio.exe").to_string_lossy().to_string();
+        for user in missing {
             crate::win::powershell(&format!(
                 "$t = 'Rustudio (relance)'; $a = New-ScheduledTaskAction -Execute {}; \
                  $p = New-ScheduledTaskPrincipal -UserId {} -LogonType Interactive -RunLevel Limited; \
@@ -270,7 +285,7 @@ impl Hooks for WinHooks {
                  Start-ScheduledTask -TaskName $t; Start-Sleep 3; Unregister-ScheduledTask -TaskName $t -Confirm:$false",
                 crate::win::ps_quote(&exe), crate::win::ps_quote(&user)
             ));
-            log("Appli relancée après la mise à jour");
+            log("Appli rouverte après la mise à jour (elle ne s’était pas relancée seule)");
         }
     }
 }

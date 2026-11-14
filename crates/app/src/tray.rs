@@ -115,20 +115,24 @@ fn build_menu(st: Option<&Value>, live_mode: bool) -> Result<Menu, String> {
     Ok(menu)
 }
 
-/// Version écrite sur le disque à côté de l'appli (manifeste de l'installation).
-fn installed_version() -> Option<String> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let m: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
-    m["version"].as_str().map(String::from)
-}
-
 /// Mise à jour ou retour de version appliqué : le moteur annonce la version du disque, différente de la nôtre.
 pub fn should_relaunch(engine: &str, running: &str, disk: Option<&str>) -> bool {
     engine != running && disk == Some(engine)
 }
 
-fn relaunch(cx: &mut App) -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
+/// Exécutable de la version installée : le dossier de l'appli en cours, ou l'un de ses parents quand Windows
+/// donne le chemin de la copie mise de côté par l'installation (dossier « backup »).
+fn installed_exe(engine: &str) -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors().skip(1).take(5).find_map(|dir| {
+        let m: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
+        let candidate = dir.join("Rustudio.exe");
+        (m["version"].as_str() == Some(engine) && candidate.is_file()).then_some(candidate)
+    })
+}
+
+fn relaunch(engine: &str, cx: &mut App) -> bool {
+    let Some(exe) = installed_exe(engine) else { return false };
     let mut c = std::process::Command::new(exe);
     c.args(["--relaunch", &std::process::id().to_string()]);
     if cx.windows().is_empty() {
@@ -243,7 +247,7 @@ pub fn start(
                     last_ok = Instant::now();
                     if live_mode
                         && let Some(v) = l["app_version"].as_str()
-                            && should_relaunch(v, crate::VERSION, installed_version().as_deref()) && cx.update(relaunch).unwrap_or(false) {
+                            && should_relaunch(v, crate::VERSION, installed_exe(v).map(|_| v)) && cx.update(|cx| relaunch(v, cx)).unwrap_or(false) {
                                 return;
                             }
                     if goxlr_connected(l) {

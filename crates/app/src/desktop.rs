@@ -144,6 +144,10 @@ fn module_page(id: &str) -> Option<Page> {
         _ => None,
     }
 }
+/// Espace de la barre latérale propre à un module.
+fn module_space(id: &str) -> Option<Space> {
+    module_page(id).and_then(Page::space)
+}
 fn capability(id: &str) -> &str {
     match id {
         "mixer" => "Mixeur",
@@ -268,6 +272,70 @@ impl Mixer {
         ui::hoverable(el, key)
     }
 
+    /// Un appareil dans la barre latérale : icône, nom et pastille d'état ; un clic ouvre sa page principale.
+    fn device_nav(&self, module: &Descriptor, open: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let target = module_page(&module.id);
+        let single = module_space(&module.id).is_some_and(|s| space_pages(s).len() == 1);
+        let on = open && (single || Some(self.page) == target);
+        let key = format!("devnav-{}", module.id);
+        let t = if on { 0. } else { ui::hover_t(&key) };
+        let (_, state) = device_state(self.device(&module.id));
+        let dot = match state {
+            State::Ok => ui::GREEN,
+            State::Info => ui::ACCENT,
+            State::Warn => ui::ORANGE,
+            State::Error => ui::RED,
+            State::Idle => 0xb0b0b6,
+        };
+        let el = div()
+            .id(ElementId::Name(key.clone().into()))
+            .flex()
+            .items_center()
+            .gap(px(11.))
+            .h(px(38.))
+            .px(px(12.))
+            .rounded(px(12.))
+            .text_size(px(14.))
+            .font_weight(if open { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+            .text_color(rgb(if on { ui::ACCENT } else { ui::TEXT }))
+            .when(target.is_some(), |d| d.cursor(gpui::CursorStyle::PointingHand))
+            .when(on, |d| d.bg(rgb(ui::PAPER)).border_1().border_color(alpha(ui::ACCENT, 0.14)).shadow(ui::soft_shadow()))
+            .when(!on, |d| d.bg(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.75), t)).border_1().border_color(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::INK, 0.04), t)))
+            .child(ui::icon(module_icon(&module.id), 18., if on || open { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
+            .child(div().flex_1().min_w(px(0.)).truncate().child(module.name.clone()))
+            .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(dot)))
+            .when_some(target, |d, page| d.on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx))));
+        ui::hoverable(el, key)
+    }
+
+    /// Page d'un appareil ouvert, en retrait sous son nom.
+    fn sub_nav(&self, page: Page, glyph: Icon, label: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
+        let on = self.page == page;
+        let key = format!("subnav-{label}");
+        let t = if on { 0. } else { ui::hover_t(&key) };
+        let el = div()
+            .id(ElementId::Name(key.clone().into()))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .h(px(32.))
+            .ml(px(18.))
+            .pl(px(12.))
+            .pr(px(10.))
+            .rounded(px(10.))
+            .text_size(px(13.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(if on { ui::ACCENT } else { ui::TEXT2 }))
+            .cursor(gpui::CursorStyle::PointingHand)
+            .border_l_2()
+            .border_color(if on { rgb(ui::ACCENT) } else { alpha(ui::INK, 0.08) })
+            .bg(if on { alpha(ui::ACCENT, 0.08) } else { ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.7), t) })
+            .child(ui::icon(glyph, 16., if on { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT3), rgb(ui::TEXT), t) }))
+            .child(label)
+            .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)));
+        ui::hoverable(el, key)
+    }
+
     fn sidebar(&self, cx: &mut Context<Self>) -> Div {
         let mut side = div()
             .flex()
@@ -308,24 +376,34 @@ impl Mixer {
                     .child(self.nav(Page::Profiles, Icon::Bookmark, "Profils", cx))
                     .child(self.nav(Page::Catalogue, Icon::Grid, "Modules", cx)),
             );
-        if let Some(space) = self.current_space() {
-            let name = match space {
-                Space::GoXlr => "GoXLR Mini",
-                Space::Mouse => "R5 Ultra",
-                Space::Keyboard => "MK770",
-            };
-            let mut list = div().flex().flex_col().gap(px(3.)).mt(px(8.));
-            for (page, glyph, label) in space_pages(space) {
-                list = list.child(self.nav(*page, *glyph, label, cx));
+        // tous les appareils, toujours : on passe de l'un à l'autre sans revenir à l'accueil
+        if let Some(inventory) = self.inventory.as_ref().filter(|i| !i.installed.is_empty()) {
+            let current = self.current_space();
+            let mut list = div().flex().flex_col().gap(px(2.)).mt(px(6.));
+            for module in &inventory.installed {
+                let space = module_space(&module.id);
+                let open = space.is_some() && space == current;
+                list = list.child(self.device_nav(module, open, cx));
+                if let Some(space) = space.filter(|_| open) {
+                    let pages = space_pages(space);
+                    if pages.len() > 1 {
+                        for (page, glyph, label) in pages {
+                            list = list.child(self.sub_nav(*page, *glyph, label, cx));
+                        }
+                    }
+                }
             }
             side = side.child(
                 div()
-                    .mt(px(16.))
-                    .pt(px(14.))
+                    .id("side-devices")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .mt(px(14.))
+                    .pt(px(12.))
                     .border_t_1()
                     .border_color(alpha(ui::INK, 0.07))
-                    .child(div().px(px(12.)).child(ui::caption("ESPACE APPAREIL")))
-                    .child(div().px(px(12.)).pt(px(2.)).text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(name))
+                    .child(div().px(px(12.)).child(ui::caption("MES APPAREILS")))
                     .child(list),
             );
         }
@@ -968,27 +1046,34 @@ impl Mixer {
         let status = if device.is_some_and(|d| d.simulated) { format!("{status} · Appareil simulé") } else { status.to_owned() };
         let target = module_page(&module.id);
         let detail = device.and_then(|d| d.firmware.clone()).map(|fw| format!("Firmware {fw}"));
-        let mut tags = div().flex().flex_wrap().gap(px(8.));
-        for c in &module.capabilities {
+        // même structure et même hauteur pour toutes les cartes : 4 capacités au plus, le reste en « +N »
+        let mut tags = div().flex().gap(px(6.)).h(px(26.)).overflow_hidden();
+        for c in module.capabilities.iter().take(3) {
             tags = tags.child(ui::tag(capability(c).to_owned()));
         }
+        if module.capabilities.len() > 3 {
+            tags = tags.child(ui::tag(format!("+{}", module.capabilities.len() - 3)));
+        }
+        let glance = self.inventory.as_ref().and_then(|i| glance_row(&module.id, &i.glance));
         let card = ui::card()
             .flex_1()
             .min_w(px(0.))
-            .p(px(24.))
-            .gap(px(13.))
+            .h(px(316.))
+            .p(px(22.))
+            .gap(px(12.))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(14.))
-                    .child(ui::chip(module_icon(&module.id), ui::ACCENT, 38.))
-                    .child(div().flex().flex_col().child(ui::title(module.name.clone(), 17.)).child(hint(module.vendor.clone()))),
+                    .child(ui::chip(module_icon(&module.id), ui::ACCENT, 40.))
+                    .child(div().flex().flex_col().min_w(px(0.)).child(ui::title(module.name.clone(), 17.)).child(hint(module.vendor.clone()))),
             )
             .child(credit(module))
             .child(ui::status(status, state))
-            .children(self.inventory.as_ref().and_then(|i| glance_row(&module.id, &i.glance)))
-            .child(hint(module.summary.clone()))
+            // la ligne « en direct » garde sa place même vide : les cartes restent alignées
+            .child(div().h(px(32.)).flex().items_center().children(glance))
+            .child(div().h(px(38.)).overflow_hidden().child(hint(module.summary.clone()).text_size(px(12.5)).line_height(px(19.))))
             .child(tags)
             .child(div().flex_1())
             .child(
@@ -1022,12 +1107,13 @@ impl Mixer {
         let mut page = div().flex().flex_col().gap(px(18.));
         match &self.inventory {
             Some(inventory) if !inventory.installed.is_empty() => {
-                for pair in inventory.installed.chunks(2) {
+                // grille régulière de trois colonnes : cartes de même largeur et de même hauteur
+                for chunk in inventory.installed.chunks(3) {
                     let mut row = div().flex().gap(px(18.));
-                    for module in pair {
-                        row = row.child(self.device_card(module, cx));
+                    for module in chunk {
+                        row = row.child(div().flex().flex_1().min_w(px(0.)).child(self.device_card(module, cx)));
                     }
-                    if pair.len() == 1 {
+                    for _ in chunk.len()..3 {
                         row = row.child(div().flex_1());
                     }
                     page = page.child(row);

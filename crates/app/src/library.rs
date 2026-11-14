@@ -2,7 +2,8 @@ use crate::{
     desktop::{Page, hint},
     mixer::Mixer,
 };
-use gpui::{ClipboardItem, Context, Div, div, prelude::*};
+use crate::ui::{self, Icon, Tone, rgb};
+use gpui::{ClipboardItem, Context, Div, SharedString, div, prelude::*, px};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -13,6 +14,8 @@ pub struct Library {
     pub(crate) expanded: Option<String>,
     pub(crate) busy: bool,
     pub(crate) notice: Option<(bool, String)>,
+    /// filtre du catalogue : 0 tous, 1 livrés, 2 à contribuer
+    pub(crate) filter: u8,
     pub(crate) confirm: Option<(String, &'static str, &'static str, Value, &'static str)>,
 }
 
@@ -62,46 +65,10 @@ impl Mixer {
             return root;
         };
         match page {
-            Page::Catalogue => {
-                let mut cards: Vec<gpui::AnyElement> = vec![];
-                for module in data["modules"].as_array().into_iter().flatten() {
-                    let (status, state) = match module["status"].as_str() {
-                        Some("official") => ("Officiel Rustudio", crate::ui::State::Info),
-                        Some("community") => ("Module communautaire", crate::ui::State::Ok),
-                        _ => ("À contribuer", crate::ui::State::Idle),
-                    };
-                    let id = module["id"].as_str().unwrap_or("");
-                    let dest = match id {
-                        "goxlr-mini" => Some(Page::Mixer),
-                        "attack-shark-r5-ultra" => Some(Page::Mouse),
-                        "cooler-master-mk770" => Some(Page::Keyboard),
-                        _ => None,
-                    };
-                    let glyph = if id.contains("shark") { crate::ui::Icon::Mouse } else { crate::ui::Icon::Sliders };
-                    let card = crate::ui::card()
-                        .size_full()
-                        .child(div().flex().items_center().gap(gpui::px(12.))
-                            .child(crate::ui::chip(glyph, if dest.is_some() { crate::ui::ACCENT } else { crate::ui::TEXT3 }, 36.))
-                            .child(div().flex().flex_col().child(crate::ui::title(module["name"].as_str().unwrap_or("Module").to_owned(), 16.)).child(hint(module["vendor"].as_str().unwrap_or("").to_owned()))))
-                        .child(crate::ui::status(status, state))
-                        .child(hint(module["summary"].as_str().or(module["description"].as_str()).unwrap_or("").to_owned()))
-                        .when_some(module["author"].as_str(), |c, a| c.child(crate::ui::caption(format!("Créé par {a}"))))
-                        .when_some(dest, |c, dest| c.child(crate::ui::pill(gpui::ElementId::Name(format!("module-{id}").into()), None, "Ouvrir", crate::ui::Tone::Primary)
-                            .on_click(cx.listener(move |this, _, _, cx| this.go_to(dest, cx)))))
-                        .when(dest.is_none(), |c| c.child(crate::ui::caption("Pas encore pris en charge : la communauté peut l’ajouter.")));
-                    cards.push(match dest {
-                        Some(dest) => crate::ui::lift(card, gpui::ElementId::Name(format!("card-module-{id}").into()))
-                            .on_click(cx.listener(move |this, _, _, cx| this.go_to(dest, cx)))
-                            .into_any_element(),
-                        None => card.into_any_element(),
-                    });
-                }
-                root.child(crate::ui::columns(cards))
-            }
+            Page::Catalogue => root.child(self.catalogue_view(data, cx)),
             Page::Versions => root.child(self.versions_view(data, cx)),
             Page::Settings => root.child(self.settings_view(data, cx)),
             _ => {
-                use crate::ui::{self, Icon};
                 let report = serde_json::to_string_pretty(&data["report"]).unwrap_or_default();
                 let mut tiles: Vec<gpui::AnyElement> = vec![];
                 for (key, label, desc, glyph, colour) in [
@@ -126,6 +93,170 @@ impl Mixer {
                     })));
                 root.child(ui::grid(tiles, 2)).child(diag)
             }
+        }
+    }
+}
+
+/// Catégories du catalogue, dans l'ordre d'affichage : (kind, titre, icône).
+const KINDS: [(&str, &str, Icon); 6] = [
+    ("audio-interface", "Interfaces audio", Icon::Sliders),
+    ("keyboard", "Claviers", Icon::Keyboard),
+    ("mouse", "Souris", Icon::Mouse),
+    ("headset", "Casques", Icon::Headphones),
+    ("monitor", "Écrans", Icon::Monitor),
+    ("other", "Autres appareils", Icon::Grid),
+];
+
+/// Texte coupé à la fin d'un mot, avec des points de suspension : tient en trois lignes sur une carte.
+fn short(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(max).collect();
+    let end = cut.rfind(' ').unwrap_or(cut.len());
+    format!("{}…", cut[..end].trim_end_matches([',', ';', ':', '.', ' ']))
+}
+
+/// Module livré avec Rustudio (officiel ou communautaire validé).
+fn shipped(m: &Value) -> bool {
+    matches!(m["status"].as_str(), Some("official" | "community"))
+}
+
+fn module_page(id: &str) -> Option<Page> {
+    match id {
+        "goxlr-mini" => Some(Page::Mixer),
+        "attack-shark-r5-ultra" => Some(Page::Mouse),
+        "cooler-master-mk770" => Some(Page::Keyboard),
+        _ => None,
+    }
+}
+
+impl Mixer {
+    /// Catalogue : filtre, puis une section par catégorie, des cartes de même taille.
+    fn catalogue_view(&self, data: &Value, cx: &mut Context<Self>) -> Div {
+        let modules: Vec<&Value> = data["modules"].as_array().into_iter().flatten().collect();
+        let (total_shipped, total_wanted) = (modules.iter().filter(|m| shipped(m)).count(), modules.iter().filter(|m| !shipped(m)).count());
+        let filter = self.library.filter;
+        let mut seg = ui::segmented();
+        for (i, label) in [format!("Tous · {}", modules.len()), format!("Livrés · {total_shipped}"), format!("À contribuer · {total_wanted}")].into_iter().enumerate() {
+            let i = i as u8;
+            seg = seg.child(ui::seg(SharedString::from(format!("catalogue-filter-{i}")), label, filter == i).on_click(cx.listener(move |this, _, _, cx| {
+                this.library.filter = i;
+                cx.notify();
+            })));
+        }
+        let mut root = div()
+            .flex()
+            .flex_col()
+            .gap(px(22.))
+            .child(div().flex().items_center().gap(px(16.)).child(div().w(px(420.)).child(seg)).child(div().flex_1()).child(
+                ui::pill("catalogue-ask", Some(Icon::Plus), "Demander un appareil", Tone::Plain)
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url("https://github.com/samirmedani/rustudio/issues/new?template=appareil.yml"))),
+            ));
+        let known: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
+        for (kind, title, glyph) in KINDS {
+            let mut group: Vec<&Value> = modules
+                .iter()
+                .copied()
+                .filter(|m| {
+                    let k = m["kind"].as_str().unwrap_or("other");
+                    k == kind || (kind == "other" && !known.contains(&k))
+                })
+                .filter(|m| match filter {
+                    1 => shipped(m),
+                    2 => !shipped(m),
+                    _ => true,
+                })
+                .collect();
+            if group.is_empty() {
+                continue;
+            }
+            // livrés d'abord, puis par nom
+            group.sort_by_key(|m| (!shipped(m), m["name"].as_str().unwrap_or("").to_lowercase()));
+            let mut section = div().flex().flex_col().gap(px(12.)).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(ui::chip(glyph, ui::ACCENT, 30.))
+                    .child(ui::title(title, 17.))
+                    .child(ui::badge(group.len().to_string(), 0x8e8e93)),
+            );
+            for chunk in group.chunks(3) {
+                let mut row = div().flex().gap(px(16.));
+                for m in chunk {
+                    row = row.child(div().flex().flex_1().min_w(px(0.)).child(self.module_card(m, glyph, cx)));
+                }
+                for _ in chunk.len()..3 {
+                    row = row.child(div().flex_1());
+                }
+                section = section.child(row);
+            }
+            root = root.child(section);
+        }
+        root
+    }
+
+    fn module_card(&self, m: &Value, glyph: Icon, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let id = m["id"].as_str().unwrap_or("").to_owned();
+        let dest = module_page(&id);
+        let (status, colour) = match m["status"].as_str() {
+            Some("official") => ("Officiel", ui::ACCENT),
+            Some("community") => ("Communautaire", ui::GREEN),
+            _ => ("À contribuer", 0x8e8e93),
+        };
+        let mut tags = div().flex().gap(px(6.)).h(px(26.)).overflow_hidden();
+        for f in m["features"].as_array().into_iter().flatten().filter_map(Value::as_str).take(3) {
+            tags = tags.child(ui::tag(f.to_owned()));
+        }
+        let footer = match dest {
+            Some(page) => ui::pill(gpui::ElementId::Name(format!("module-{id}").into()), None, "Ouvrir", Tone::Primary)
+                .h(px(34.))
+                .child(ui::icon(Icon::ChevronRight, 14., rgb(ui::WHITE)))
+                .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
+                .into_any_element(),
+            None => ui::caption("La communauté peut l’ajouter").into_any_element(),
+        };
+        let card = ui::card()
+            .flex_1()
+            .min_w(px(0.))
+            .h(px(236.))
+            .p(px(20.))
+            .gap(px(11.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(ui::chip(glyph, if dest.is_some() { ui::ACCENT } else { 0x8e8e93 }, 38.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(ui::title(m["name"].as_str().unwrap_or("Module").to_owned(), 16.).truncate())
+                            .child(hint(m["vendor"].as_str().unwrap_or("").to_owned())),
+                    )
+                    .child(ui::badge(status, colour)),
+            )
+            .child(div().h(px(57.)).overflow_hidden().child(hint(short(m["summary"].as_str().or(m["description"].as_str()).unwrap_or(""), 85)).text_size(px(12.5)).line_height(px(19.))))
+            .child(tags)
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(ui::caption(m["author"].as_str().map(|a| format!("Créé par {a}")).unwrap_or_default()))
+                    .child(footer),
+            );
+        match dest {
+            Some(page) => ui::lift(card, gpui::ElementId::Name(format!("card-module-{id}").into()))
+                .flex_1()
+                .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
+                .into_any_element(),
+            None => card.into_any_element(),
         }
     }
 }

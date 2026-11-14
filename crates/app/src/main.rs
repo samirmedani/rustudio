@@ -176,10 +176,15 @@ fn run() -> Result<(), String> {
         session::wait_exit(pid, Duration::from_secs(20));
     }
     // Appli installée : une seule instance par session ; la seconde ouverture montre la fenêtre existante.
+    // Après une mise à jour, l'ancienne instance peut mettre quelques secondes à se fermer : la nouvelle l'attend.
     let instance = if live && duration.is_none() {
-        match session::Instance::acquire("Rustudio") {
-            Some(instance) => Some(instance),
-            None => return Ok(()),
+        let deadline = Instant::now() + Duration::from_secs(if relaunch.is_some() { 30 } else { 0 });
+        loop {
+            match session::Instance::acquire("Rustudio") {
+                Some(instance) => break Some(instance),
+                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(500)),
+                None => return Ok(()),
+            }
         }
     } else {
         None

@@ -1,5 +1,18 @@
 # Nouveautés
 
+## 6.3.1 — 14 novembre 2026
+
+Rustudio 6.3.1 se rouvre tout seul après une mise à jour et rend la navigation entre tes appareils plus simple.
+
+**Corrigé**
+- **Réouverture après une mise à jour** : si Rustudio ne se relance pas de lui-même, l’installation le rouvre dans ta session.
+
+**Amélioré**
+- **Tous tes appareils dans la barre latérale** : GoXLR Mini, souris et clavier sont toujours listés, avec leur état ; les pages de l’appareil ouvert s’affichent dessous.
+- **Mes appareils** : des cartes de même taille, alignées sur une grille.
+- **Modules** : rangés par catégorie (interfaces audio, claviers, souris…), avec un filtre « Livrés » ou « À contribuer ».
+- **Mon clavier** : chaque effet montre un aperçu animé dans ses couleurs, la fiche technique et les raccourcis Fn du MK770 sont à droite.
+
 ## 6.3.0 — 14 novembre 2026
 
 Rustudio 6.3.0 pilote le clavier Cooler Master MK770 branché en USB.
