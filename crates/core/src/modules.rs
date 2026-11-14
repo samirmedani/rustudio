@@ -98,7 +98,16 @@ pub const R5_ULTRA: ModuleDescriptor = ModuleDescriptor {
     actions: &["setting", "settings", "refresh"],
 };
 
-const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA];
+pub const MK770: ModuleDescriptor = ModuleDescriptor {
+    id: "cooler-master-mk770", name: "MK770", vendor: "Cooler Master", kind: "keyboard",
+    origin: ModuleOrigin::Official, author: "samirmedani", source: "crates/cooler-master", review_pr: None,
+    summary: "Effets lumineux, luminosité, vitesse, couleur et couleur par touche, en USB.",
+    capabilities: &["lighting-effects", "per-key"],
+    pages: &[ModulePage { id: "keyboard", label: "Mon clavier", icon: "keyboard" }],
+    actions: &["settings", "refresh"],
+};
+
+const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA, MK770];
 
 pub fn installed() -> &'static [ModuleDescriptor] {
     INSTALLED

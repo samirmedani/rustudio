@@ -74,6 +74,7 @@ impl Mixer {
                     let dest = match id {
                         "goxlr-mini" => Some(Page::Mixer),
                         "attack-shark-r5-ultra" => Some(Page::Mouse),
+                        "cooler-master-mk770" => Some(Page::Keyboard),
                         _ => None,
                     };
                     let glyph = if id.contains("shark") { crate::ui::Icon::Mouse } else { crate::ui::Icon::Sliders };

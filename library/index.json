@@ -78,6 +78,30 @@
       "review_pr": null
     },
     {
+      "id": "cooler-master-mk770",
+      "name": "MK770",
+      "vendor": "Cooler Master",
+      "kind": "keyboard",
+      "status": "official",
+      "usb": [
+        {
+          "vid": "2516",
+          "pid": "01D5"
+        }
+      ],
+      "source": "crates/cooler-master",
+      "summary": "Effets lumineux, luminosité, vitesse, couleur et couleur par touche. Vérifié sur MK770 en USB. Sans récepteur 2,4 GHz ni Bluetooth pour l’instant.",
+      "features": [
+        "Effets lumineux",
+        "Luminosité",
+        "Vitesse",
+        "Couleur par touche"
+      ],
+      "builtin": true,
+      "author": "samirmedani",
+      "review_pr": null
+    },
+    {
       "id": "ddc-monitor",
       "name": "Écrans (DDC/CI)",
       "vendor": "Générique",

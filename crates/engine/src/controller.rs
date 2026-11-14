@@ -347,6 +347,7 @@ pub struct Ctl {
     heartbeat_ms: AtomicU64,
     pub updater: crate::updater::Updater,
     pub mouse: crate::mouse::MouseHub,
+    pub keyboard: crate::keyboard::KeyboardHub,
     pub eqapo: crate::eqapo::EqApo,
     pub sim: Option<Sim>,
     pub boot_id: String,
@@ -416,6 +417,7 @@ impl Ctl {
         let ctl = Arc::new(Ctl {
             updater: crate::updater::Updater::new(&cfg),
             mouse: crate::mouse::MouseHub::new(simulated),
+            keyboard: crate::keyboard::KeyboardHub::new(simulated),
             eqapo: crate::eqapo::EqApo::new(&cfg, simulated),
             cfg,
             inner: Mutex::new(inner),
@@ -464,7 +466,7 @@ impl Ctl {
         self.dev.lock().unwrap_or_else(|e| e.into_inner()).as_mut().map(f)
     }
     pub fn version(&self) -> u64 {
-        self.lock().version + self.updater.changes() + self.eqapo.changes() + self.mouse.changes()
+        self.lock().version + self.updater.changes() + self.eqapo.changes() + self.mouse.changes() + self.keyboard.changes()
     }
 
     fn usb_scan(&self) -> Option<String> {

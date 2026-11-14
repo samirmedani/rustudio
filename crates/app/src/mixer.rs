@@ -34,6 +34,7 @@ pub struct Mixer {
     pub(crate) inventory: Option<backend::Inventory>,
     pub(crate) page: Page,
     pub(crate) mouse: crate::mouse::MousePage,
+    pub(crate) keyboard: crate::keyboard::KeyboardPage,
     pub(crate) mouse_focus: Vec<FocusHandle>,
     pub(crate) go: crate::goxlr::GoPage,
     pub(crate) go_focus: Vec<FocusHandle>,
@@ -116,6 +117,7 @@ impl Mixer {
             client,
             inventory: None,
             mouse: crate::mouse::MousePage::default(),
+            keyboard: crate::keyboard::KeyboardPage::default(),
             mouse_focus: (0..12).map(|_| cx.focus_handle()).collect(),
             go: crate::goxlr::GoPage::default(),
             win: crate::win_session::WinPage::default(),
@@ -192,6 +194,7 @@ impl Mixer {
         self.page = page;
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page == Page::Mouse);
+        self.client.set_keyboard_visible(page == Page::Keyboard);
         self.client.set_go_visible(matches!(page, Page::Go(_)));
         self.client.set_level_visible(page == Page::Go(crate::goxlr::Section::Microphone));
         self.client.set_latency_visible(page == Page::Go(crate::goxlr::Section::Diagnostic));
@@ -279,6 +282,10 @@ impl Mixer {
             Event::Mouse(view) => {
                 self.mouse.receive(view);
                 force_render = self.page == Page::Mouse;
+            }
+            Event::Keyboard(view) => {
+                self.keyboard.receive(view);
+                force_render = self.page == Page::Keyboard;
             }
             Event::Done(seq, result) => {
                 if self.profile_request == Some(seq) {

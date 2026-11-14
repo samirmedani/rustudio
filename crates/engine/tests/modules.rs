@@ -39,7 +39,7 @@ fn request(ctl: &Arc<Ctl>, path: &str, body: Option<Value>, authorized: bool, ho
 fn adaptateur_suit_connexion_erreur_et_simulation() {
     let ctl = controller(true);
     let installed = ctl.modules_snapshot()["installed"].clone();
-    assert_eq!(installed.as_array().unwrap().len(), 2);
+    assert_eq!(installed.as_array().unwrap().len(), 3);
     assert_eq!(installed[0]["id"], "goxlr-mini");
     let devices = || ctl.modules_snapshot()["devices"].clone();
     assert_eq!(devices()[0]["status"], "starting");
@@ -208,5 +208,37 @@ fn souris_independante_du_moteur_audio_et_commandes_confirmees() {
     assert_eq!(ctl.modules_snapshot()["devices"][1]["connected"], true);
     assert_eq!(ctl.module_state_snapshot("attack-shark-r5-ultra").unwrap()["state"]["debounce_ms"], 7);
     let (code, _) = request(&ctl, "/api/modules/attack-shark-r5-ultra/setting", Some(json!({"name":"debounce_ms","value":4})), false, None);
+    assert_eq!(code, 403);
+}
+
+#[test]
+fn clavier_mk770_independant_et_commandes_relues() {
+    let ctl = controller(true);
+    ctl.keyboard.start();
+    let original_audio = ctl.snapshot()["state"].clone();
+    let (code, initial) = request(&ctl, "/api/modules/cooler-master-mk770/state", None, false, None);
+    assert_eq!(code, 200);
+    assert_eq!(initial["device"]["connected"], true);
+    assert_eq!(initial["state"]["active_effect"], 0);
+    assert_eq!(initial["state"]["keys"].as_array().unwrap().len(), 102);
+    let (code, changed) = request(&ctl, "/api/modules/cooler-master-mk770/settings", Some(json!({"active_effect":1,"speed":4,"reverse":true})), true, None);
+    assert_eq!(code, 200, "{changed}");
+    assert_eq!(changed["state"]["active_effect"], 1);
+    assert_eq!(changed["state"]["effects"][1]["speed"], 4);
+    assert_eq!(changed["state"]["effects"][1]["reverse"], true);
+    let keys: Vec<String> = (0..104).map(|i| if i < 17 { "#FF0000".into() } else { "#000000".into() }).collect();
+    let (code, painted) = request(&ctl, "/api/modules/cooler-master-mk770/settings", Some(json!({"keys": keys})), true, None);
+    assert_eq!(code, 200, "{painted}");
+    assert_eq!(painted["state"]["active_effect"], 4);
+    assert_eq!(painted["state"]["keys"][16], "#FF0000");
+    let (code, refused) = request(&ctl, "/api/modules/cooler-master-mk770/settings", Some(json!({"speed": 9})), true, None);
+    assert_eq!(code, 400);
+    assert!(refused["error"].as_str().unwrap().contains("Vitesse"));
+    let (code, _) = request(&ctl, "/api/modules/cooler-master-mk770/volume", Some(json!({"channel":"Music","value":10})), true, None);
+    assert_eq!(code, 404);
+    assert_eq!(ctl.modules_snapshot()["devices"][2]["connected"], true);
+    assert_eq!(ctl.module_state_snapshot("cooler-master-mk770").unwrap()["state"]["effects"][1]["speed"], 4);
+    assert_eq!(ctl.snapshot()["state"], original_audio);
+    let (code, _) = request(&ctl, "/api/modules/cooler-master-mk770/settings", Some(json!({"active_effect":0})), false, None);
     assert_eq!(code, 403);
 }

@@ -14,6 +14,7 @@ pub mod library;
 pub mod log;
 pub mod modules;
 pub mod mouse;
+pub mod keyboard;
 mod mixer;
 pub mod net;
 #[cfg(windows)]
@@ -74,6 +75,7 @@ pub fn run_engine(cfg: config::Config) -> i32 {
         std::thread::Builder::new().name(name.into()).spawn(f).expect("fil");
     };
     ctl.mouse.start();
+    ctl.keyboard.start();
     let c = ctl.clone();
     spawn("usb", Box::new(move || c.device_loop(None)));
     let c = ctl.clone();

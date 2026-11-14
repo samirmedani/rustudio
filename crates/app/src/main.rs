@@ -7,6 +7,8 @@ mod desktop;
 #[cfg(any(windows, unix))]
 mod goxlr;
 #[cfg(any(windows, unix))]
+mod keyboard;
+#[cfg(any(windows, unix))]
 mod library;
 #[cfg(any(windows, unix))]
 mod mixer;
@@ -167,6 +169,7 @@ fn run() -> Result<(), String> {
         backend::verify(&client, &state)?;
         desktop::verify_profiles(&client)?;
         mouse::verify(&client)?;
+        keyboard::verify(&client)?;
         return goxlr::verify(&client);
     }
     if let Some(pid) = relaunch {

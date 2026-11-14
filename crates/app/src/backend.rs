@@ -34,6 +34,8 @@ pub struct Device {
     pub status: String,
     pub simulated: bool,
     pub firmware: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Debug)]
@@ -52,6 +54,8 @@ pub struct Glance {
     pub scene: Option<String>,
     /// Niveau de batterie de la souris (0 à 100) et charge en cours.
     pub battery: Option<(u8, bool)>,
+    /// Effet affiché par le clavier MK770.
+    pub keyboard_effect: Option<String>,
 }
 
 impl Snapshot {
@@ -125,6 +129,7 @@ pub struct Client {
     legacy: Arc<AtomicBool>,
     mixer_visible: Arc<AtomicBool>,
     mouse_visible: Arc<AtomicBool>,
+    keyboard_visible: Arc<AtomicBool>,
     go_visible: Arc<AtomicBool>,
     audio_visible: Arc<AtomicBool>,
     level_visible: Arc<AtomicBool>,
@@ -144,6 +149,7 @@ impl Client {
             legacy: Arc::new(AtomicBool::new(false)),
             mixer_visible: Arc::new(AtomicBool::new(false)),
             mouse_visible: Arc::new(AtomicBool::new(false)),
+            keyboard_visible: Arc::new(AtomicBool::new(false)),
             go_visible: Arc::new(AtomicBool::new(false)),
             audio_visible: Arc::new(AtomicBool::new(false)),
             level_visible: Arc::new(AtomicBool::new(false)),
@@ -231,6 +237,43 @@ impl Client {
 
     pub fn set_mouse_visible(&self, visible: bool) {
         self.mouse_visible.store(visible, Ordering::Relaxed);
+    }
+    pub fn set_keyboard_visible(&self, visible: bool) {
+        self.keyboard_visible.store(visible, Ordering::Relaxed);
+    }
+
+    pub fn keyboard_view(&self) -> Result<crate::keyboard::KeyboardView, String> {
+        let view: crate::keyboard::KeyboardView = serde_json::from_value(self.get(&format!("{}/state", crate::keyboard::MODULE))?)
+            .map_err(|_| "Réponse MK770 illisible")?;
+        if view.device.simulated == self.live {
+            return Err("Mode clavier incompatible.".into());
+        }
+        Ok(view)
+    }
+
+    pub fn keyboard_command(&self, action: &str, params: &Value) -> Result<crate::keyboard::Settings, String> {
+        if !matches!(action, "settings" | "refresh") {
+            return Err("Commande clavier inconnue.".into());
+        }
+        self.live_state()?;
+        let result = self
+            .agent
+            .post(&format!("{}{}/{}", self.base, crate::keyboard::MODULE, action))
+            .timeout(Duration::from_secs(18))
+            .set("X-Rustudio", "1")
+            .send_json(params.clone());
+        let response = match result {
+            Ok(response) => response,
+            Err(ureq::Error::Status(_, response)) => {
+                return Err(response.into_json::<Value>().ok().and_then(|v| v["error"].as_str().map(str::to_owned)).unwrap_or_else(|| "Commande refusée.".into()));
+            }
+            Err(e) => return Err(format!("Commande clavier non confirmée : {e}")),
+        };
+        let body: Value = response.into_json().map_err(|_| "Réponse clavier illisible")?;
+        if body["ok"] != true {
+            return Err("Commande clavier non confirmée.".into());
+        }
+        serde_json::from_value(body["state"].clone()).map_err(|_| "Réglages du clavier relus illisibles.".into())
     }
 
     pub fn mouse_view(&self) -> Result<crate::mouse::MouseView, String> {
@@ -320,6 +363,12 @@ impl Client {
             && let Some(level) = mouse["state"]["battery"].as_u64()
         {
             glance.battery = Some((level.min(100) as u8, mouse["state"]["charging"] == true));
+        }
+        if ready("cooler-master-mk770")
+            && let Ok(keyboard) = self.get(&format!("{}/state", crate::keyboard::MODULE))
+            && let Some(effect) = keyboard["state"]["active_effect"].as_u64()
+        {
+            glance.keyboard_effect = Some(rustudio_core::mk770::effect_name(effect as u8).to_owned());
         }
         result.glance = glance;
         Ok(result)
@@ -534,6 +583,7 @@ pub enum Event {
     Done(u64, Result<(), String>),
     Inventory(Option<Inventory>),
     Mouse(Option<crate::mouse::MouseView>),
+    Keyboard(Option<crate::keyboard::KeyboardView>),
     Go(Option<crate::goxlr::GoView>),
     Audio(Value),
     MicOsd(String),
@@ -559,7 +609,17 @@ pub fn start(
     std::thread::spawn(move || {
         let mut last = None;
         let mut last_go = None;
+        let mut last_keyboard = None;
         while !mouse_tx.is_closed() {
+            if mouse_client.keyboard_visible.load(Ordering::Relaxed) {
+                let current = mouse_client.keyboard_view().ok();
+                if current != last_keyboard {
+                    last_keyboard = current.clone();
+                    if mouse_tx.send_blocking(Event::Keyboard(current)).is_err() {
+                        break;
+                    }
+                }
+            }
             if mouse_client.mouse_visible.load(Ordering::Relaxed) {
                 let current = mouse_client.mouse_view().ok();
                 if current != last {

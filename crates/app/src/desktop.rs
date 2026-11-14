@@ -19,6 +19,7 @@ pub(crate) use crate::ui::{hint, panel};
 pub enum Page {
     Devices,
     Mouse,
+    Keyboard,
     WindowsAudio,
     Catalogue,
     Versions,
@@ -40,6 +41,7 @@ pub enum Confirm {
 pub(crate) enum Space {
     GoXlr,
     Mouse,
+    Keyboard,
 }
 
 impl Page {
@@ -55,6 +57,7 @@ impl Page {
             "audio" => Page::WindowsAudio,
             "mixer" => Page::Mixer,
             "mouse" => Page::Mouse,
+            "keyboard" => Page::Keyboard,
             "mic" => Page::Go(Section::Microphone),
             "headphones" => Page::Go(Section::Headphones),
             "routing" => Page::Go(Section::Routing),
@@ -68,6 +71,7 @@ impl Page {
         match self {
             Page::Mixer | Page::Go(_) => Some(Space::GoXlr),
             Page::Mouse => Some(Space::Mouse),
+            Page::Keyboard => Some(Space::Keyboard),
             _ => None,
         }
     }
@@ -82,6 +86,7 @@ impl Page {
             Page::WindowsAudio => "Son Windows",
             Page::Mixer => "Mixeur",
             Page::Mouse => "Ma souris",
+            Page::Keyboard => "Mon clavier",
             Page::Go(s) => s.label(),
         }
     }
@@ -96,6 +101,7 @@ impl Page {
             Page::WindowsAudio => "Entrées et sorties actives, et ce que Windows utilise par défaut.",
             Page::Mixer => "Tes quatre faders et toutes les voies, en direct.",
             Page::Mouse => "Sensibilité, fréquence, batterie et capteur.",
+            Page::Keyboard => "Effets lumineux, luminosité et couleur de chaque touche.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",
@@ -118,6 +124,7 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
             (Page::Go(Section::Diagnostic), Icon::Gauge, "Diagnostic"),
         ],
         Space::Mouse => &[(Page::Mouse, Icon::Mouse, "Ma souris")],
+        Space::Keyboard => &[(Page::Keyboard, Icon::Keyboard, "Mon clavier")],
     }
 }
 
@@ -125,6 +132,7 @@ fn module_icon(id: &str) -> Icon {
     match id {
         "goxlr-mini" => Icon::Sliders,
         "attack-shark-r5-ultra" => Icon::Mouse,
+        "cooler-master-mk770" => Icon::Keyboard,
         _ => Icon::Grid,
     }
 }
@@ -132,6 +140,7 @@ fn module_page(id: &str) -> Option<Page> {
     match id {
         "goxlr-mini" => Some(Page::Mixer),
         "attack-shark-r5-ultra" => Some(Page::Mouse),
+        "cooler-master-mk770" => Some(Page::Keyboard),
         _ => None,
     }
 }
@@ -147,6 +156,8 @@ fn capability(id: &str) -> &str {
         "polling" => "Fréquence",
         "battery" => "Batterie",
         "sensor" => "Capteur",
+        "lighting-effects" => "Effets lumineux",
+        "per-key" => "Couleur par touche",
         other => other,
     }
 }
@@ -189,6 +200,9 @@ fn glance_row(module: &str, glance: &crate::backend::Glance) -> Option<Div> {
             let (level, charging) = glance.battery?;
             let colour = if level <= 20 && !charging { ui::RED_TEXT } else { ui::GREEN_TEXT };
             row = row.child(item(Icon::Battery, colour, if charging { format!("{level} % · en charge") } else { format!("{level} %") }));
+        }
+        "cooler-master-mk770" => {
+            row = row.child(item(Icon::Sparkles, ui::ACCENT, glance.keyboard_effect.clone()?));
         }
         _ => return None,
     }
@@ -298,6 +312,7 @@ impl Mixer {
             let name = match space {
                 Space::GoXlr => "GoXLR Mini",
                 Space::Mouse => "R5 Ultra",
+                Space::Keyboard => "MK770",
             };
             let mut list = div().flex().flex_col().gap(px(3.)).mt(px(8.));
             for (page, glyph, label) in space_pages(space) {
@@ -461,6 +476,7 @@ impl Mixer {
             None if self.page == Page::Profiles && self.last_space == Some(Space::GoXlr) => "GOXLR MINI · PROFILS DU MIXEUR".into(),
             Some(Space::GoXlr) => format!("GOXLR MINI · {}", suffix("goxlr-mini").to_uppercase()),
             Some(Space::Mouse) => format!("R5 ULTRA · {}", suffix("attack-shark-r5-ultra").to_uppercase()),
+            Some(Space::Keyboard) => format!("MK770 · {}", suffix("cooler-master-mk770").to_uppercase()),
             None if matches!(self.page, Page::Devices | Page::Profiles) => "TON ESPACE PERSONNEL".into(),
             None if self.page == Page::WindowsAudio => "CE PC".into(),
             None => "RUSTUDIO".into(),
@@ -483,6 +499,7 @@ impl Mixer {
                 acts = acts.child(ui::pill("open-profiles", Some(Icon::Bookmark), "Profils", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Profiles, cx))));
             }
             Page::Mouse => acts = acts.child(self.mouse_actions(cx)),
+            Page::Keyboard => acts = acts.child(self.keyboard_actions(cx)),
             _ => {}
         }
         if self.page.space() == Some(Space::GoXlr)
@@ -536,6 +553,7 @@ impl Mixer {
         let module = match self.page.space() {
             Some(Space::GoXlr) => self.module("goxlr-mini"),
             Some(Space::Mouse) => self.module("attack-shark-r5-ultra"),
+            Some(Space::Keyboard) => self.module("cooler-master-mk770"),
             None => None,
         };
         let back = self.history.last().copied().map(|previous| {
@@ -625,6 +643,7 @@ impl Mixer {
             Page::Profiles => self.profiles_view(window, cx).into_any_element(),
             Page::Mixer => self.mixer_view(cx).into_any_element(),
             Page::Mouse => self.mouse_view(window, cx).into_any_element(),
+            Page::Keyboard => self.keyboard_view(cx).into_any_element(),
             Page::WindowsAudio => self.win_audio(cx).into_any_element(),
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, cx).into_any_element(),
             Page::Go(section) => self.go_controls(section, cx).into_any_element(),

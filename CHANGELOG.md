@@ -1,5 +1,17 @@
 # Nouveautés
 
+## 6.3.0 — 14 novembre 2026
+
+Rustudio 6.3.0 pilote le clavier Cooler Master MK770 branché en USB.
+
+**Nouveau**
+- **Mon clavier** : une page pour le MK770, avec son état de connexion et l’effet affiché en direct.
+- **17 effets lumineux** : couleur fixe, vague arc-en-ciel, respiration, ondulation, boule de feu… d’un clic, chacun avec son nom.
+- **Réglages de l’effet** : luminosité, vitesse, sens de la vague et couleur, comme avec les touches Fn du clavier.
+- **Couleur par touche** : le clavier est dessiné à l’écran ; tu peins les touches, puis « Appliquer au clavier ».
+
+Le récepteur 2,4 GHz et le Bluetooth du MK770 ne sont pas encore pris en charge.
+
 ## 6.2.2 — 13 novembre 2026
 
 Rustudio 6.2.2 te montre toute la mise à jour, des nouveautés jusqu’au redémarrage.

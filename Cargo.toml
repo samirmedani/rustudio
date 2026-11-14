@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/engine", "crates/app", "crates/setup", "crates/windows-desktop"]
-default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/engine", "crates/windows-desktop"]
+members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/engine", "crates/app", "crates/setup", "crates/windows-desktop"]
+default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/engine", "crates/windows-desktop"]
 
 [workspace.package]
-version = "6.2.2"
+version = "6.3.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/samirmedani/rustudio"
@@ -17,6 +17,7 @@ indexmap = { version = "2", features = ["serde"] }
 rustudio-core = { path = "crates/core" }
 rustudio-goxlr = { path = "crates/goxlr" }
 rustudio-attack-shark = { path = "crates/attack-shark" }
+rustudio-cooler-master = { path = "crates/cooler-master" }
 
 [profile.release]
 opt-level = 3

@@ -38,6 +38,9 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     let mouse = modules::find("attack-shark-r5-ultra").unwrap();
     assert_eq!(mouse.kind, "mouse");
     assert_eq!(mouse.actions, ["setting", "settings", "refresh"]);
+    let keyboard = modules::find("cooler-master-mk770").unwrap();
+    assert_eq!(keyboard.kind, "keyboard");
+    assert_eq!(keyboard.actions, ["settings", "refresh"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");
     }
