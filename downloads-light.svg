@@ -10,7 +10,7 @@
 <text x="474.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">8</text>
 <rect x="618" y="36" width="150" height="70" rx="12" fill="#f6f8fa" stroke="#d1d9e0"/>
 <text x="634.0" y="62.0" font-size="12" font-weight="500" fill="#59636e" text-anchor="start">7 derniers jours</text>
-<text x="634.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">+118</text>
+<text x="634.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">+117</text>
 <rect x="778" y="36" width="150" height="70" rx="12" fill="#f6f8fa" stroke="#d1d9e0"/>
 <text x="794.0" y="62.0" font-size="12" font-weight="500" fill="#59636e" text-anchor="start">Étoiles GitHub</text>
 <text x="794.0" y="91.0" font-size="23" font-weight="700" fill="#1f2328" text-anchor="start">★ 2</text>
@@ -25,15 +25,15 @@
 <text x="60.0" y="259.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">300</text>
 <line x1="72" y1="216.0" x2="928" y2="216.0" stroke="#d1d9e0" stroke-dasharray="3 5"/>
 <text x="60.0" y="220.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">400</text>
-<path d="M72.0,295.2 L83.3,288.1 L101.1,285.0 L176.2,285.0 L242.5,285.0 L318.6,285.0 L388.2,285.0 L456.6,285.0 L523.2,284.6 L572.1,275.7 L582.5,265.5 L592.2,260.9 L658.4,256.2 L699.8,255.8 L766.1,255.8 L835.2,251.9 L855.1,249.2 L875.8,248.0 L890.7,247.6 L928.0,239.0 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
-<path d="M72.0,295.2 L83.3,288.1 L101.1,285.0 L176.2,285.0 L242.5,285.0 L318.6,285.0 L388.2,285.0 L456.6,285.0 L523.2,284.6 L572.1,275.7 L582.5,265.5 L592.2,260.9 L658.4,256.2 L699.8,255.8 L766.1,255.8 L835.2,251.9 L855.1,249.2 L875.8,248.0 L890.7,247.6 L928.0,239.0" fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M72.0,295.2 L82.5,288.1 L98.9,285.0 L168.3,285.0 L229.5,285.0 L299.9,285.0 L364.3,285.0 L427.5,285.0 L488.9,284.6 L534.2,275.7 L543.8,265.5 L552.7,260.9 L613.9,256.2 L652.1,255.8 L713.4,255.8 L777.3,251.9 L795.6,249.2 L814.9,248.0 L828.6,247.6 L863.1,239.0 L928.0,239.0 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
+<path d="M72.0,295.2 L82.5,288.1 L98.9,285.0 L168.3,285.0 L229.5,285.0 L299.9,285.0 L364.3,285.0 L427.5,285.0 L488.9,284.6 L534.2,275.7 L543.8,265.5 L552.7,260.9 L613.9,256.2 L652.1,255.8 L713.4,255.8 L777.3,251.9 L795.6,249.2 L814.9,248.0 L828.6,247.6 L863.1,239.0 L928.0,239.0" fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="928.0" cy="239.0" r="5" fill="#0a84ff" stroke="#ffffff" stroke-width="2.5"/>
 <text x="918.0" y="227.0" font-size="13" font-weight="700" fill="#1f2328" text-anchor="end" stroke="#ffffff" stroke-width="8" stroke-linejoin="round" paint-order="stroke">341</text>
 <text x="72.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">31 oct.</text>
 <text x="286.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">4 nov.</text>
-<text x="500.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">7 nov.</text>
-<text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">11 nov.</text>
-<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">14 nov.</text>
+<text x="500.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">8 nov.</text>
+<text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">12 nov.</text>
+<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">15 nov.</text>
 <text x="32.0" y="432.0" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">Par version</text>
 <text x="928.0" y="432.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="end">20 dernières versions sur 37</text>
 <line x1="72" y1="572" x2="928" y2="572" stroke="#d1d9e0"/>
@@ -97,5 +97,5 @@
 <rect x="893.8" y="504.0" width="25.7" height="68.0" rx="4.0" fill="#0a84ff" fill-opacity="1"/>
 <text x="906.6" y="497.0" font-size="12" font-weight="600" fill="#1f2328" text-anchor="middle">8</text>
 <text x="906.6" y="592.0" font-size="11.5" font-weight="600" fill="#1f2328" text-anchor="middle">6.3.1</text>
-<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 14 nov. 2026 à 15 h 19 (heure de Paris)</text>
+<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#59636e" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 15 nov. 2026 à 18 h 51 (heure de Paris)</text>
 </svg>
