@@ -25,15 +25,15 @@
 <text x="60.0" y="259.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">300</text>
 <line x1="72" y1="216.0" x2="928" y2="216.0" stroke="#3d444d" stroke-dasharray="3 5"/>
 <text x="60.0" y="220.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">400</text>
-<path d="M72.0,295.2 L81.1,288.1 L95.5,285.0 L156.0,285.0 L209.4,285.0 L270.8,285.0 L326.9,285.0 L382.1,285.0 L435.7,284.6 L475.2,275.7 L483.5,265.5 L491.3,260.9 L544.7,256.2 L578.1,255.8 L631.5,255.8 L687.2,251.9 L703.2,249.2 L720.0,248.0 L732.0,247.6 L762.0,239.0 L818.7,239.0 L877.3,238.6 L928.0,238.6 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
-<path d="M72.0,295.2 L81.1,288.1 L95.5,285.0 L156.0,285.0 L209.4,285.0 L270.8,285.0 L326.9,285.0 L382.1,285.0 L435.7,284.6 L475.2,275.7 L483.5,265.5 L491.3,260.9 L544.7,256.2 L578.1,255.8 L631.5,255.8 L687.2,251.9 L703.2,249.2 L720.0,248.0 L732.0,247.6 L762.0,239.0 L818.7,239.0 L877.3,238.6 L928.0,238.6" fill="none" stroke="#409cff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M72.0,295.2 L80.6,288.1 L94.0,285.0 L150.6,285.0 L200.5,285.0 L258.0,285.0 L310.5,285.0 L362.1,285.0 L412.2,284.6 L449.1,275.7 L457.0,265.5 L464.3,260.9 L514.2,256.2 L545.4,255.8 L595.4,255.8 L647.5,251.9 L662.5,249.2 L678.2,248.0 L689.4,247.6 L717.5,239.0 L770.5,239.0 L825.4,238.6 L872.8,238.6 L928.0,238.6 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
+<path d="M72.0,295.2 L80.6,288.1 L94.0,285.0 L150.6,285.0 L200.5,285.0 L258.0,285.0 L310.5,285.0 L362.1,285.0 L412.2,284.6 L449.1,275.7 L457.0,265.5 L464.3,260.9 L514.2,256.2 L545.4,255.8 L595.4,255.8 L647.5,251.9 L662.5,249.2 L678.2,248.0 L689.4,247.6 L717.5,239.0 L770.5,239.0 L825.4,238.6 L872.8,238.6 L928.0,238.6" fill="none" stroke="#409cff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="928.0" cy="238.6" r="5" fill="#409cff" stroke="#0d1117" stroke-width="2.5"/>
 <text x="918.0" y="226.6" font-size="13" font-weight="700" fill="#f0f6fc" text-anchor="end" stroke="#0d1117" stroke-width="8" stroke-linejoin="round" paint-order="stroke">342</text>
 <text x="72.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">31 oct.</text>
-<text x="286.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">4 nov.</text>
+<text x="286.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">5 nov.</text>
 <text x="500.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">9 nov.</text>
-<text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">13 nov.</text>
-<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">17 nov.</text>
+<text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">14 nov.</text>
+<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">19 nov.</text>
 <text x="32.0" y="432.0" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="start">Par version</text>
 <text x="928.0" y="432.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">20 dernières versions sur 37</text>
 <line x1="72" y1="572" x2="928" y2="572" stroke="#3d444d"/>
@@ -97,5 +97,5 @@
 <rect x="893.8" y="495.5" width="25.7" height="76.5" rx="4.0" fill="#409cff" fill-opacity="1"/>
 <text x="906.6" y="488.5" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">9</text>
 <text x="906.6" y="592.0" font-size="11.5" font-weight="600" fill="#f0f6fc" text-anchor="middle">6.3.1</text>
-<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 17 nov. 2026 à 23 h 59 (heure de Paris)</text>
+<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 19 nov. 2026 à 4 h 40 (heure de Paris)</text>
 </svg>
