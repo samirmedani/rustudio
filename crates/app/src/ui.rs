@@ -235,7 +235,7 @@ assets!(
     Check => "check", Plus => "plus", Power => "power", Close => "x", Leaf => "leaf", Sparkles => "sparkles",
     Tower => "radioTower", Keyboard => "keyboard", Podcast => "pod", Gauge => "gauge", Help => "help",
     History => "history", Trash => "trash", Alert => "alert", Play => "play", Stop => "stop", Palette => "palette",
-    External => "link", Minus => "minus", Square => "square",
+    External => "link", Minus => "minus", Square => "square", Bolt => "bolt",
 );
 
 pub struct Assets;

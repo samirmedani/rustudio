@@ -131,13 +131,11 @@ fn installed_exe(engine: &str) -> Option<std::path::PathBuf> {
     })
 }
 
+/// Après une mise à jour, la nouvelle version rouvre sa fenêtre, même si elle avait été fermée pendant l'installation.
 fn relaunch(engine: &str, cx: &mut App) -> bool {
     let Some(exe) = installed_exe(engine) else { return false };
     let mut c = std::process::Command::new(exe);
     c.args(["--relaunch", &std::process::id().to_string()]);
-    if cx.windows().is_empty() {
-        c.arg("--tray");
-    }
     if c.spawn().is_ok() {
         cx.quit();
         return true;

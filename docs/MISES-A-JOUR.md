@@ -35,11 +35,19 @@ vert, celle en cours est en bleu. Chaque étape reste affichée 0,6 s au moins, 
 passeraient avant la fermeture. « Annuler » reste possible tant que rien n'est remplacé ; « Masquer » ferme la
 fenêtre sans arrêter l'installation, que la barre latérale résume (un clic la rouvre).
 
+Le téléchargement s'affiche dès le clic sur « Mettre à jour », sans attendre la réponse du moteur ; si le moteur
+refuse, la fenêtre revient à son état précédent avec la raison. Pendant l'installation, l'appli lit l'avancement
+toutes les 0,2 s.
+
 En cas d'échec : la raison, « Rien n'a été remplacé. », « Ouvrir la page de la release » et « Réessayer ». Les
 contrôles eux-mêmes (source GitHub, redirections, taille, SHA-256, archive, retour arrière si la nouvelle version ne
 répond pas) sont ceux du moteur, décrits dans [AGENTS.md](../AGENTS.md).
 
 ## Après le redémarrage
+
+L'appli en place lance la nouvelle version dès que le moteur l'annonce, puis se ferme. La nouvelle version attend
+sa fermeture et ouvre sa fenêtre, même si elle avait été fermée pendant l'installation. Si aucune appli ne réapparaît
+pour le compte qui l'avait ouverte, l'installation la rouvre dans sa session.
 
 L'installation écrit son résultat ; la nouvelle version le lit et rouvre la fenêtre une fois : « Redémarrage » se
 coche, puis « Rustudio X.Y.Z est installé. », « Mise à jour depuis la A.B.C » et les nouveautés de la version,

@@ -313,6 +313,12 @@ impl Inner {
                     upd.insert("style".into(), Value::Null); // bande touchee a la main : reglage perso
                 }
                 self.state.hp_eq = hpeq::normalize_hp_eq(&Value::Object(upd), Some(&eq));
+                // repère pour comparer un bruit entendu avec le style choisi à ce moment-là
+                if self.state.hp_eq.style != eq.style {
+                    if let Some(chosen) = self.state.hp_eq.style.as_deref().and_then(hpeq::style) {
+                        crate::logf!("Égaliseur du casque : style {}", chosen.label);
+                    }
+                }
             }
             "hp-eq-save" => {
                 let name: String = p.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().chars().take(40).collect();

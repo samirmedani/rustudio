@@ -776,12 +776,13 @@ pub fn start(
     std::thread::spawn(move || {
         let mut last = None;
         let mut last_update: Option<Value> = None;
-        let mut tick = 0u64;
         while !inventory_tx.is_closed() {
-            if inventory_client.is_live() && tick.is_multiple_of(3)
+            let mut installing = false;
+            if inventory_client.is_live()
                 && let Ok(mut update) = inventory_client.get("/api/update") {
                     // compte à rebours de la recherche manuelle : inutile ici, et il changerait à chaque lecture
                     update.as_object_mut().map(|o| o.remove("check_wait"));
+                    installing = matches!(update["phase"].as_str(), Some("downloading" | "verifying" | "extracting" | "applying"));
                     if last_update.as_ref() != Some(&update) {
                         last_update = Some(update.clone());
                         if inventory_tx.send_blocking(Event::Update(update)).is_err() {
@@ -789,18 +790,20 @@ pub fn start(
                         }
                     }
                 }
-            tick += 1;
-            let current = inventory_client.inventory().ok();
-            if current != last {
-                last = current.clone();
-                if inventory_tx
-                    .send_blocking(Event::Inventory(current))
-                    .is_err()
-                {
-                    break;
+            // Une installation ne dure que quelques secondes : chaque étape est suivie de près.
+            if !installing {
+                let current = inventory_client.inventory().ok();
+                if current != last {
+                    last = current.clone();
+                    if inventory_tx
+                        .send_blocking(Event::Inventory(current))
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             }
-            std::thread::sleep(Duration::from_millis(650));
+            std::thread::sleep(Duration::from_millis(if installing { 200 } else { 650 }));
         }
     });
     std::thread::spawn(move || {

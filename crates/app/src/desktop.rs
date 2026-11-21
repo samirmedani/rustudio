@@ -219,14 +219,35 @@ pub(crate) fn device_state(device: Option<&Device>) -> (&'static str, State) {
 
 /// Batterie compacte pour la barre latérale, remplie selon le niveau réel.
 fn nav_battery(level: u8, charging: bool) -> Div {
-    let colour = if level <= 20 && !charging { ui::RED_TEXT } else { ui::GREEN_TEXT };
-    let gauge = div().relative().flex_none().w(px(22.)).h(px(12.))
-        .child(div().absolute().left_0().top_0().w(px(19.)).h(px(12.)).rounded(px(3.)).border_1().border_color(rgb(colour))
-            .child(div().absolute().left(px(2.)).top(px(2.)).w(px(15. * f32::from(level.min(100)) / 100.)).h(px(8.)).rounded(px(1.)).bg(rgb(colour))))
-        .child(div().absolute().right_0().top(px(4.)).w(px(2.)).h(px(4.)).rounded(px(1.)).bg(rgb(colour)));
-    div().flex().flex_none().items_center().gap(px(4.)).whitespace_nowrap()
-        .child(gauge)
-        .child(div().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format!("{level} %")))
+    let level = level.min(100);
+    // contour neutre, remplissage coloré selon la charge : vert, orange sous 40 %, rouge sous 15 % (vert en charge)
+    let colour = match level {
+        _ if charging => ui::GREEN,
+        0..=15 => ui::RED,
+        16..=40 => ui::ORANGE,
+        _ => ui::GREEN,
+    };
+    let frame = alpha(ui::INK, 0.32);
+    let body = div()
+        .flex()
+        .flex_none()
+        .w(px(23.))
+        .h(px(12.))
+        .p(px(2.))
+        .rounded(px(3.5))
+        .border_1()
+        .border_color(frame)
+        .child(div().h_full().w(gpui::relative(f32::from(level.max(8)) / 100.)).rounded(px(1.5)).bg(rgb(colour)));
+    let nub = div().flex_none().w(px(2.)).h(px(5.)).rounded_r(px(1.)).bg(frame);
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(5.))
+        .whitespace_nowrap()
+        .child(div().flex().items_center().child(body).child(nub))
+        .when(charging, |d| d.child(ui::icon(Icon::Bolt, 11., rgb(ui::GREEN_TEXT))))
+        .child(div().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::TEXT2)).child(format!("{level} %")))
 }
 
 /// État en direct d'un appareil sur sa carte : micro et scène de la GoXLR, batterie de la souris.
@@ -326,11 +347,12 @@ impl Mixer {
         ui::hoverable(el, key)
     }
 
-    /// Un appareil dans la barre latérale : icône, nom et pastille d'état ; un clic ouvre sa page principale.
-    fn device_nav(&self, module: &Descriptor, open: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// Un appareil dans la barre latérale : icône, nom, pastille d'état et flèche qui replie ses pages.
+    /// Un clic sur le nom ouvre l'appareil ; sur l'appareil déjà ouvert, il replie ou déplie ses pages.
+    fn device_nav(&self, module: &Descriptor, open: bool, collapsed: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let target = module_page(&module.id);
-        let single = module_space(&module.id).is_some_and(|s| space_pages(s).len() == 1);
-        let on = open && single;
+        let foldable = module_space(&module.id).is_some_and(|s| space_pages(s).len() > 1);
+        let on = open && !foldable;
         let key = format!("devnav-{}", module.id);
         let t = if on { 0. } else { ui::hover_t(&key) };
         let (_, state) = device_state(self.device(&module.id));
@@ -342,25 +364,67 @@ impl Mixer {
             State::Error => ui::RED,
             State::Idle => 0xb0b0b6,
         };
+        let id = module.id.clone();
+        let title = div()
+            .id(ElementId::Name(format!("devnav-open-{}", module.id).into()))
+            .flex()
+            .flex_1()
+            .min_w(px(0.))
+            .h_full()
+            .items_center()
+            .gap(px(11.))
+            .when(target.is_some() || foldable, |d| d.cursor(gpui::CursorStyle::PointingHand))
+            .child(ui::icon(module_icon(&module.id), 18., if on || open { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
+            .child(div().flex_1().min_w(px(0.)).truncate().child(module.name.clone()))
+            // la batterie prend la place de la pastille : sa couleur dit déjà que la souris répond
+            .map(|d| match battery {
+                Some((level, charging)) => d.child(nav_battery(level, charging)),
+                None => d.child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(dot))),
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if open && foldable {
+                    this.toggle_device(&id, cx);
+                } else if let Some(page) = target {
+                    this.collapsed.remove(&id);
+                    this.go_to(page, cx);
+                }
+            }));
+        let fold_key = format!("devfold-{}", module.id);
+        let fold_t = ui::hover_t(&fold_key);
+        let fold_id = module.id.clone();
+        let chevron = foldable.then(|| {
+            ui::hoverable(
+                div()
+                    .id(ElementId::Name(fold_key.clone().into()))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.))
+                    .rounded(px(8.))
+                    .cursor(gpui::CursorStyle::PointingHand)
+                    .bg(ui::lerp(alpha(ui::INK, 0.), alpha(ui::INK, 0.06), fold_t))
+                    .child(ui::icon(if collapsed { Icon::ChevronRight } else { Icon::ChevronDown }, 14., ui::lerp(rgb(ui::TEXT3), rgb(ui::TEXT), fold_t)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_device(&fold_id, cx))),
+                fold_key,
+            )
+        });
         let el = div()
             .id(ElementId::Name(key.clone().into()))
             .flex()
             .items_center()
-            .gap(px(11.))
+            .gap(px(6.))
             .h(px(38.))
-            .px(px(12.))
+            .pl(px(12.))
+            .pr(px(if foldable { 7. } else { 12. }))
             .rounded(px(12.))
             .text_size(px(14.))
             .font_weight(if open { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
             .text_color(rgb(if on { ui::ACCENT } else { ui::TEXT }))
-            .when(target.is_some(), |d| d.cursor(gpui::CursorStyle::PointingHand))
             .when(on, |d| d.bg(rgb(ui::PAPER)).border_1().border_color(alpha(ui::ACCENT, 0.14)).shadow(ui::soft_shadow()))
             .when(!on, |d| d.bg(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.75), t)).border_1().border_color(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::INK, 0.04), t)))
-            .child(ui::icon(module_icon(&module.id), 18., if on || open { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
-            .child(div().flex_1().min_w(px(0.)).truncate().child(module.name.clone()))
-            .when_some(battery, |d, (level, charging)| d.child(nav_battery(level, charging)))
-            .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(dot)))
-            .when_some(target, |d, page| d.on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx))));
+            .child(title)
+            .children(chevron);
         ui::hoverable(el, key)
     }
 
@@ -438,9 +502,10 @@ impl Mixer {
             for module in &inventory.installed {
                 let space = module_space(&module.id);
                 let open = space.is_some() && space == current;
-                list = list.child(self.device_nav(module, open, cx));
-                // Les pages restent accessibles quand on règle un autre appareil.
-                if let Some(space) = space {
+                let collapsed = self.collapsed.contains(&module.id);
+                list = list.child(self.device_nav(module, open, collapsed, cx));
+                // Les pages restent accessibles quand on règle un autre appareil, tant qu'on ne les replie pas.
+                if let Some(space) = space.filter(|_| !collapsed) {
                     let pages = space_pages(space);
                     if pages.len() > 1 {
                         let mut subpages = div().flex().flex_col().gap(px(2.)).ml(px(28.));
@@ -465,6 +530,11 @@ impl Mixer {
                     .child(list),
             );
         }
+        side
+    }
+
+    /// Barre d'état en bas de la fenêtre : moteur, mesures de l'appli et version.
+    fn status_bar(&self, cx: &mut Context<Self>) -> Div {
         let engine = self.inventory.is_some();
         let detected = self
             .inventory
@@ -478,50 +548,158 @@ impl Mixer {
         } else {
             format!("{detected} appareil{s} détecté{s}", s = if detected > 1 { "s" } else { "" })
         };
-        side.child(
-            div()
-                .mt_auto()
-                .pt(px(12.))
-                .px(px(6.))
-                .border_t_1()
-                .border_color(alpha(ui::INK, 0.07))
-                .child(ui::status(if engine { "Moteur connecté" } else { "Moteur indisponible" }, if engine { State::Ok } else { State::Error }).text_color(rgb(ui::TEXT)))
-                .child(div().pl(px(15.)).child(ui::caption(sub)))
-                .child(self.usage_widget())
-                .child(self.update_widget(cx)),
-        )
+        let divider = || div().flex_none().w(px(1.)).h(px(16.)).bg(alpha(ui::INK, 0.08));
+        div()
+            .flex_none()
+            .h(px(42.))
+            .px(px(22.))
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .border_t_1()
+            .border_color(alpha(ui::INK, 0.06))
+            .bg(alpha(ui::PAPER, 0.55))
+            .text_size(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(7.))
+                    .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(if engine { ui::GREEN } else { ui::RED })))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::TEXT)).child(if engine { "Moteur connecté" } else { "Moteur indisponible" }))
+                    .child(ui::caption(sub)),
+            )
+            .child(divider())
+            .child(self.performance())
+            .child(div().flex_1())
+            .child(self.update_widget(cx))
     }
 
-    fn usage_widget(&self) -> Div {
-        let cpu = self.usage.cpu_percent
-            .map(|value| format!("{value:.1} %").replace('.', ","))
-            .unwrap_or_else(|| "—".into());
-        let ram = self.usage.resident_bytes
-            .map(|bytes| format!("{:.0} Mo", bytes as f64 / 1_000_000.0))
-            .unwrap_or_else(|| "—".into());
-        let response = self.client.engine_response_time().map_or_else(
-            || "—".into(),
-            |time| {
-                if time.as_micros() < 100 {
-                    "< 0,1 ms".into()
-                } else {
-                    format!("{:.1} ms", time.as_secs_f64() * 1000.).replace('.', ",")
-                }
+    /// Mesures de l'appli, chacune avec sa note en couleur ; au survol, ce qu'elles veulent dire.
+    fn performance(&self) -> Stateful<Div> {
+        let ms = self.client.engine_response_time().map(|time| time.as_secs_f64() * 1000.);
+        let measures = [
+            Measure {
+                name: "Processeur",
+                short: "CPU",
+                value: self.usage.cpu_percent.map(|value| format!("{value:.1} %").replace('.', ",")),
+                grade: self.usage.cpu_percent.map(|value| Grade::of(value, [1., 5., 15.])),
+                meaning: [
+                    "Moins de 1 % de ton processeur : ton PC ne le sent pas, même en jeu.",
+                    "Quelques pour cent de ton processeur : ça reste léger.",
+                    "Ton PC le sent un peu, surtout pendant les animations.",
+                    "Inhabituel pour Rustudio : redémarre l’appli si ça dure.",
+                ],
             },
-        );
-        div().mt(px(10.)).flex().flex_col().gap(px(3.))
-            .child(ui::caption("Consommation de l’appli"))
-            .child(div().flex().items_center().justify_between().gap(px(8.))
-                .text_size(px(12.)).text_color(rgb(ui::TEXT2))
-                .child(format!("CPU {cpu}"))
-                .child(format!("RAM {ram}")))
-            .child(div().flex().items_center().justify_between().gap(px(8.))
-                .text_size(px(12.)).text_color(rgb(ui::TEXT2))
-                .child("Réponse du moteur")
-                .child(response))
+            Measure {
+                name: "Mémoire",
+                short: "RAM",
+                value: self.usage.resident_bytes.map(|bytes| format!("{:.0} Mo", bytes as f64 / 1_000_000.)),
+                grade: self.usage.resident_bytes.map(|bytes| Grade::of(bytes as f64 / 1_000_000., [150., 300., 600.])),
+                meaning: [
+                    "Moins de 150 Mo : plus léger que la plupart des applis de bureau.",
+                    "Une consommation normale pour une appli de bureau.",
+                    "Un peu lourd : redémarre l’appli si ça continue de monter.",
+                    "Inhabituel pour Rustudio : redémarre l’appli si ça dure.",
+                ],
+            },
+            Measure {
+                name: "Réponse du moteur",
+                short: "Réponse",
+                value: ms.map(|ms| if ms < 0.1 { "< 0,1 ms".into() } else { format!("{ms:.1} ms").replace('.', ",") }),
+                grade: ms.map(|ms| Grade::of(ms, [2., 10., 50.])),
+                meaning: [
+                    "Tes réglages arrivent au moteur en moins de 2 ms, bien trop vite pour que tu le perçoives.",
+                    "Moins de 10 ms : faders et boutons réagissent sans délai perceptible.",
+                    "Un léger retard peut se sentir quand tu bouges un fader.",
+                    "Le moteur répond lentement : redémarre Rustudio si ça dure.",
+                ],
+            },
+        ];
+        let overall = measures.iter().filter_map(|m| m.grade).max();
+        let (summary, colour) = match overall {
+            None => ("Mesure en cours", ui::TEXT3),
+            Some(Grade::Excellent) => ("Performances excellentes", ui::GREEN),
+            Some(Grade::Good) => ("Bonnes performances", ui::ACCENT),
+            Some(Grade::Fair) => ("Performances moyennes", ui::ORANGE),
+            Some(Grade::High) => ("Consommation élevée", ui::RED),
+        };
+        let key = "perf-summary";
+        let t = ui::hover_t(key);
+        let mut strip = div()
+            .flex()
+            .items_center()
+            .gap(px(14.))
+            .h(px(28.))
+            .pl(px(10.))
+            .pr(px(12.))
+            .rounded_full()
+            .bg(ui::lerp(alpha(ui::INK, 0.), alpha(ui::INK, 0.05), t))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(colour)))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_color(rgb(grade_text(overall))).child(summary)),
+            );
+        for m in &measures {
+            strip = strip.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .child(ui::caption(m.short))
+                    .child(div().font_weight(FontWeight::MEDIUM).text_color(rgb(grade_text(m.grade))).child(m.value.clone().unwrap_or_else(|| "—".into()))),
+            );
+        }
+        let panel = (t > 0.01).then(|| {
+            let mut list = div().flex().flex_col().gap(px(12.));
+            for m in &measures {
+                let meaning = m.grade.map(|g| m.meaning[g as usize]).unwrap_or("Mesure en cours…");
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(div().flex_1().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(m.name))
+                                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(m.value.clone().unwrap_or_else(|| "—".into())))
+                                .children(m.grade.map(|g| ui::badge(g.label(), g.colour()))),
+                        )
+                        .child(ui::caption(meaning).line_height(px(17.))),
+                );
+            }
+            deferred(
+                div()
+                    .absolute()
+                    .bottom(px(38.))
+                    .left_0()
+                    .w(px(400.))
+                    .p(px(16.))
+                    .rounded(px(16.))
+                    .bg(rgb(ui::PAPER))
+                    .border_1()
+                    .border_color(alpha(ui::INK, 0.08))
+                    .shadow(ui::soft_shadow())
+                    .opacity(t)
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.))
+                    .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD).child("Ce que Rustudio consomme"))
+                    .child(list)
+                    .child(ui::caption("Mesuré chaque seconde sur ton PC.")),
+            )
+        });
+        ui::hoverable(div().id(key).relative().flex_none().child(strip).children(panel), key.to_owned())
     }
 
-    /// Bas de la barre latérale : version, état et bouton de mise à jour (cherche, puis installe d'un clic).
+    /// Droite de la barre d'état : version, état et bouton de mise à jour (cherche, puis installe d'un clic).
     fn update_widget(&self, cx: &mut Context<Self>) -> Div {
         // RUSTUDIO_PREVIEW_UPDATE (développement) : force un état pour vérifier le bloc à l'écran
         let preview = std::env::var("RUSTUDIO_PREVIEW_UPDATE").ok();
@@ -547,11 +725,10 @@ impl Mixer {
             .child(format!("v{}", crate::VERSION))
             .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)));
         let version = ui::hoverable(version, "version-label".to_owned());
-        let mut root = div().mt(px(12.)).pt(px(10.)).border_t_1().border_color(alpha(ui::INK, 0.07)).flex().flex_col().gap(px(8.));
+        let root = div().flex().flex_none().items_center().gap(px(8.));
         if preview.is_none() && (!self.client.is_live() || u["release_build"] == false) {
-            return root.child(div().flex().items_center().gap(px(8.)).child(version).child(ui::caption("Version de développement")));
+            return root.child(version).child(ui::caption("Version de développement"));
         }
-        // Hauteur fixe dans tous les états : rien ne bouge au-dessus quand une mise à jour arrive ou s'installe.
         let fraction = if phase == "downloading" { u["progress"].as_f64().unwrap_or(0.) as f32 } else { 1. };
         let (state, colour): (String, u32) = if working {
             match phase {
@@ -584,47 +761,25 @@ impl Mixer {
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .size(px(30.))
+                .size(px(26.))
                 .rounded_full()
                 .bg(bg)
                 .when(!checking, |d| d.cursor(gpui::CursorStyle::PointingHand))
-                .child(ui::icon(if checking || working { Icon::Refresh } else { Icon::Download }, 16., fg))
+                .child(ui::icon(if checking || working { Icon::Refresh } else { Icon::Download }, 14., fg))
                 .when(!checking, |d| d.on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))),
             "update-check".to_owned(),
         );
-        let below: AnyElement = if working {
-            ui::progress(fraction, ui::ACCENT).into_any_element()
-        } else if ready {
-            div()
-                .id("update-notes")
-                .text_size(px(12.))
-                .text_color(ui::lerp(rgb(ui::TEXT3), rgb(ui::ACCENT), ui::hover_t("update-notes")))
-                .cursor(gpui::CursorStyle::PointingHand)
-                .child("Voir les nouveautés")
-                .on_click(cx.listener(|this, _, _, cx| this.update_click(cx)))
-                .into_any_element()
-        } else {
-            div().into_any_element()
-        };
-        root = root.child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(version)
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .items_center()
-                        .gap(px(5.))
-                        .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(colour)))
-                        .child(ui::caption(state).truncate().text_color(rgb(if colour == ui::GREEN { ui::GREEN_TEXT } else if colour == ui::ORANGE { ui::ORANGE_TEXT } else if colour == ui::ACCENT { ui::ACCENT } else { ui::TEXT3 }))),
-                )
-                .child(button),
-        );
-        root.child(div().h(px(14.)).flex().items_center().child(below))
+        root.child(version)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(colour)))
+                    .child(ui::caption(state).whitespace_nowrap().text_color(rgb(if colour == ui::GREEN { ui::GREEN_TEXT } else if colour == ui::ORANGE { ui::ORANGE_TEXT } else if colour == ui::ACCENT { ui::ACCENT } else { ui::TEXT3 }))),
+            )
+            .when(working, |d| d.child(div().w(px(72.)).child(ui::progress(fraction, ui::ACCENT))))
+            .child(button)
     }
 
     fn eyebrow(&self) -> String {
@@ -838,29 +993,43 @@ impl Mixer {
                     .left_0()
                     .size_full()
                     .flex()
-                    .child(self.sidebar(cx))
+                    .flex_col()
                     .child(
                         div()
-                            .relative()
-                            .flex_1()
-                            .min_w(px(0.))
                             .flex()
-                            .flex_col()
-                            // zone de déplacement : elle s'arrête avant les trois boutons, sinon Windows y voit la barre de titre
-                            .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(40.)).window_control_area(WindowControlArea::Drag))
+                            .flex_1()
+                            .min_h(px(0.))
+                            .child(self.sidebar(cx))
                             .child(
                                 div()
-                                    .id(ElementId::NamedInteger("page".into(), self.nav_count))
+                                    .relative()
                                     .flex_1()
-                                    .min_h(px(0.))
-                                    .overflow_y_scroll()
-                                    .pt(px(38.))
-                                    .pb(px(28.))
-                                    .pl(px(28.))
-                                    .pr(px(36.))
-                                    .child(div().mt(px(-preview_scroll())).child(content)),
+                                    .min_w(px(0.))
+                                    .flex()
+                                    .flex_col()
+                                    // zone de déplacement : elle s'arrête avant les trois boutons, sinon Windows y voit la barre de titre
+                                    .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(40.)).window_control_area(WindowControlArea::Drag))
+                                    .child(
+                                        div()
+                                            .id(ElementId::NamedInteger("page".into(), self.nav_count))
+                                            .flex_1()
+                                            .min_h(px(0.))
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.page_scroll)
+                                            .child(
+                                                // la molette passe ici avant le défilement de la page : elle glisse au lieu de sauter
+                                                div()
+                                                    .pt(px(38.))
+                                                    .pb(px(28.))
+                                                    .pl(px(28.))
+                                                    .pr(px(36.))
+                                                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| this.wheel(event, cx)))
+                                                    .child(div().mt(px(-preview_scroll())).child(content)),
+                                            ),
+                                    ),
                             ),
-                    ),
+                    )
+                    .child(self.status_bar(cx)),
             )
             .child(Self::caption_buttons())
     }
@@ -1276,4 +1445,67 @@ fn preview_scroll() -> f32 {
     }
     static OFFSET: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *OFFSET.get_or_init(|| std::env::var("RUSTUDIO_PREVIEW_SCROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.))
+}
+
+/// Une mesure de la barre d'état, avec sa note et une phrase par note.
+struct Measure {
+    name: &'static str,
+    short: &'static str,
+    value: Option<String>,
+    grade: Option<Grade>,
+    /// Une phrase par note, dans l'ordre de `Grade`.
+    meaning: [&'static str; 4],
+}
+
+/// Note d'une mesure, de la meilleure à la moins bonne : l'ordre sert d'indice dans `Measure::meaning`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Grade {
+    Excellent,
+    Good,
+    Fair,
+    High,
+}
+
+impl Grade {
+    /// Note d'une valeur d'après trois seuils croissants.
+    fn of(value: f64, [excellent, good, fair]: [f64; 3]) -> Self {
+        if value < excellent {
+            Grade::Excellent
+        } else if value < good {
+            Grade::Good
+        } else if value < fair {
+            Grade::Fair
+        } else {
+            Grade::High
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Grade::Excellent => "Excellent",
+            Grade::Good => "Bon",
+            Grade::Fair => "Moyen",
+            Grade::High => "Élevé",
+        }
+    }
+
+    fn colour(self) -> u32 {
+        match self {
+            Grade::Excellent => ui::GREEN,
+            Grade::Good => ui::ACCENT,
+            Grade::Fair => ui::ORANGE,
+            Grade::High => ui::RED,
+        }
+    }
+}
+
+/// Couleur de texte lisible pour une note (gris tant que la mesure manque).
+fn grade_text(grade: Option<Grade>) -> u32 {
+    match grade {
+        None => ui::TEXT2,
+        Some(Grade::Excellent) => ui::GREEN_TEXT,
+        Some(Grade::Good) => ui::ACCENT,
+        Some(Grade::Fair) => ui::ORANGE_TEXT,
+        Some(Grade::High) => ui::RED_TEXT,
+    }
 }

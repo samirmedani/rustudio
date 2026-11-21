@@ -88,15 +88,21 @@ impl Instance {
     /// `None` : une autre instance tourne déjà ; elle a été prévenue.
     pub fn acquire(name: &str) -> Option<Self> {
         use windows::core::PCWSTR;
-        use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+        use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
         use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent};
         let w = |s: String| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
         let (m, e) = (w(format!("Local\\{name}.Instance")), w(format!("Local\\{name}.Show")));
         unsafe {
             let event = CreateEventW(None, false, false, PCWSTR(e.as_ptr())).ok()?;
-            let mutex = CreateMutexW(None, true, PCWSTR(m.as_ptr())).ok()?;
+            let Ok(mutex) = CreateMutexW(None, true, PCWSTR(m.as_ptr())) else {
+                let _ = CloseHandle(event);
+                return None;
+            };
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 let _ = SetEvent(event);
+                // Sans cette fermeture, la place resterait prise après le départ de l'autre instance.
+                let _ = CloseHandle(mutex);
+                let _ = CloseHandle(event);
                 return None;
             }
             Some(Self { _mutex: mutex, event })
@@ -108,6 +114,17 @@ impl Instance {
         use windows::Win32::Foundation::WAIT_OBJECT_0;
         use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
         unsafe { WaitForSingleObject(self.event, INFINITE) == WAIT_OBJECT_0 }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Instance {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::CloseHandle;
+        unsafe {
+            let _ = CloseHandle(self._mutex);
+            let _ = CloseHandle(self.event);
+        }
     }
 }
 
@@ -143,3 +160,23 @@ impl Instance {
 
 #[cfg(not(windows))]
 pub fn round_corners(_hwnd: isize) {}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::Instance;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    /// Après une mise à jour, la nouvelle appli peut demander sa place pendant que l'ancienne se ferme encore :
+    /// une fois l'ancienne partie, l'essai suivant doit réussir.
+    #[test]
+    fn place_liberee_apres_un_essai_trop_tot() {
+        let name = format!("RustudioTest{}", std::process::id());
+        let mutex: Vec<u16> = format!("Local\\{name}.Instance").encode_utf16().chain(std::iter::once(0)).collect();
+        let previous = unsafe { CreateMutexW(None, true, PCWSTR(mutex.as_ptr())) }.unwrap();
+        assert!(Instance::acquire(&name).is_none(), "l'ancienne appli tient encore la place");
+        unsafe { CloseHandle(previous) }.unwrap();
+        assert!(Instance::acquire(&name).is_some(), "la place doit revenir à la nouvelle appli");
+    }
+}

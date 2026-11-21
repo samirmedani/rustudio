@@ -135,7 +135,26 @@ impl Mixer {
             sheet.shown = 0;
             sheet.shown_at = Instant::now();
         }
-        self.update_post("update-install", cx);
+        // Le téléchargement s'affiche dès le clic ; la réponse du moteur prend ensuite le relais.
+        let before = self.update.clone();
+        if let Some(update) = self.update.as_mut().and_then(Value::as_object_mut) {
+            update.insert("phase".into(), json!("downloading"));
+            update.insert("progress".into(), json!(0.0));
+        }
+        let client = self.client.clone();
+        let job = cx.background_executor().spawn(async move { client.post_module("/api", "update-install", json!({})) });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    this.update = before;
+                    this.notice = Some(error);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// Fait avancer l'étape affichée d'une seule étape à la fois, chacune visible STEP_MIN au moins.

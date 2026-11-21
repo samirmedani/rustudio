@@ -9,11 +9,16 @@ use gpui::{
 use serde_json::{Value, json};
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::mpsc,
     time::{Duration, Instant},
 };
+
+/// Molette de souris : distance parcourue par ligne annoncée par Windows (3 lignes par cran, environ 100 px).
+const WHEEL_LINE: f32 = 34.;
+/// Défilement doux : temps d'approche de la position visée (en secondes), comme un navigateur.
+const SCROLL_EASE: f32 = 0.07;
 
 const TRAVEL: f32 = 214.;
 const FADER_W: f32 = 68.;
@@ -61,6 +66,12 @@ pub struct Mixer {
     pub(crate) param_held: HashMap<String, (f64, Instant)>,
     pub(crate) history: Vec<Page>,
     pub(crate) nav_count: u64,
+    /// Défilement de la page : la molette vise une position, chaque image s'en rapproche.
+    pub(crate) page_scroll: gpui::ScrollHandle,
+    scroll_goal: Option<f32>,
+    scroll_tick: Instant,
+    /// Appareils dont les pages sont repliées dans la barre latérale.
+    pub(crate) collapsed: HashSet<String>,
     pub(crate) last_space: Option<crate::desktop::Space>,
     pub(crate) update: Option<Value>,
     /// recherche demandée à la main : roue dans la barre latérale jusqu'à la réponse
@@ -168,6 +179,10 @@ impl Mixer {
             param_held: HashMap::new(),
             history: vec![],
             nav_count: 0,
+            page_scroll: gpui::ScrollHandle::new(),
+            scroll_goal: None,
+            scroll_tick: started,
+            collapsed: HashSet::new(),
             last_space: None,
             update: None,
             update_then_open: false,
@@ -201,9 +216,53 @@ impl Mixer {
         }
     }
 
+    /// Molette : la page glisse jusqu'à sa nouvelle position au lieu d'y sauter. Le pavé tactile suit déjà le doigt.
+    pub(crate) fn wheel(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut Context<Self>) {
+        let gpui::ScrollDelta::Lines(lines) = event.delta else {
+            self.scroll_goal = None;
+            return;
+        };
+        if lines.y == 0. {
+            return;
+        }
+        let max = f32::from(self.page_scroll.max_offset().height);
+        let from = self.scroll_goal.unwrap_or_else(|| f32::from(self.page_scroll.offset().y));
+        self.scroll_goal = Some((from + lines.y * WHEEL_LINE).clamp(-max, 0.));
+        self.scroll_tick = Instant::now();
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Une image du défilement doux : la page parcourt une part de la distance restante.
+    fn step_scroll(&mut self, window: &mut Window) {
+        let Some(goal) = self.scroll_goal else { return };
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.scroll_tick).as_secs_f32().min(0.05);
+        self.scroll_tick = now;
+        let current = f32::from(self.page_scroll.offset().y);
+        let next = current + (goal - current) * (1. - (-elapsed / SCROLL_EASE).exp());
+        let arrived = (goal - next).abs() < 0.5;
+        self.page_scroll.set_offset(gpui::point(px(0.), px(if arrived { goal } else { next })));
+        if arrived {
+            self.scroll_goal = None;
+        } else {
+            window.request_animation_frame();
+        }
+    }
+
+    /// Replie ou déplie les pages d'un appareil dans la barre latérale.
+    pub(crate) fn toggle_device(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(id) {
+            self.collapsed.insert(id.to_owned());
+        }
+        cx.notify();
+    }
+
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         if page != self.page {
             self.nav_count += 1;
+            self.page_scroll.set_offset(gpui::point(px(0.), px(0.)));
+            self.scroll_goal = None;
         }
         match page.space() {
             Some(space) => self.last_space = Some(space),
@@ -845,6 +904,7 @@ impl Render for Mixer {
         }
         let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
         self.sheet_tick(cx);
+        self.step_scroll(window);
         let sheet = self.update_sheet_view(cx);
         let shell = self
             .shell(window, cx)

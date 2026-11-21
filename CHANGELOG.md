@@ -1,5 +1,22 @@
 # Nouveautés
 
+## 6.3.3 — 21 novembre 2026
+
+Rustudio 6.3.3 libère la barre latérale avec une barre d’état qui note tes mesures, rend le défilement plus doux et rouvre l’appli après chaque mise à jour.
+
+**Nouveau**
+- **Barre d’état** : l’état du moteur, les mesures de l’appli et la version s’affichent dans une barre en bas de la fenêtre. La barre latérale garde toute sa hauteur pour tes appareils.
+- **Mesures notées** : le CPU, la mémoire et la réponse du moteur reçoivent une note en couleur (Excellent, Bon, Moyen, Élevé). Passe la souris dessus pour savoir ce que chaque valeur veut dire pour ton PC.
+
+**Amélioré**
+- **Défilement doux** : à la molette, la page glisse jusqu’à sa nouvelle position au lieu de sauter.
+- **Menus des appareils repliables** : la flèche à côté du nom, ou un nouveau clic sur le nom, replie ou déplie les pages d’un appareil.
+- **Batterie de la souris** : un nouveau dessin plus lisible dans la barre latérale, qui passe à l’orange puis au rouge quand la charge baisse et affiche un éclair pendant la recharge.
+
+**Corrigé**
+- **Réouverture après une mise à jour** : Rustudio rouvre bien sa fenêtre une fois la nouvelle version installée, même si tu l’avais fermée pendant l’installation.
+- **Mise à jour plus réactive** : le téléchargement s’affiche dès le clic sur « Mettre à jour », puis chaque étape suit l’installation en direct.
+
 ## 6.3.2 — 21 novembre 2026
 
 Rustudio 6.3.2 rend les cartes et les menus plus lisibles et affiche les mesures de l’appli en direct.
