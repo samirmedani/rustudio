@@ -3,7 +3,7 @@ use crate::{
     mixer::Mixer,
 };
 use crate::ui::{self, Icon, Tone, rgb};
-use gpui::{ClipboardItem, Context, Div, SharedString, div, prelude::*, px};
+use gpui::{ClipboardItem, Context, Div, SharedString, Window, div, prelude::*, px};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -53,7 +53,7 @@ impl Mixer {
         .detach();
     }
 
-    pub fn library_view(&self, page: Page, cx: &mut Context<Self>) -> Div {
+    pub fn library_view(&self, page: Page, window: &Window, cx: &mut Context<Self>) -> Div {
         let mut root = div().flex().flex_col().gap_3();
         if self.library.loading {
             root = root.child(hint("Lecture…"));
@@ -65,7 +65,7 @@ impl Mixer {
             return root;
         };
         match page {
-            Page::Catalogue => root.child(self.catalogue_view(data, cx)),
+            Page::Catalogue => root.child(self.catalogue_view(data, window, cx)),
             Page::Versions => root.child(self.versions_view(data, cx)),
             Page::Settings => root.child(self.settings_view(data, cx)),
             _ => {
@@ -107,16 +107,6 @@ const KINDS: [(&str, &str, Icon); 6] = [
     ("other", "Autres appareils", Icon::Grid),
 ];
 
-/// Texte coupé à la fin d'un mot, avec des points de suspension : tient en trois lignes sur une carte.
-fn short(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
-    }
-    let cut: String = text.chars().take(max).collect();
-    let end = cut.rfind(' ').unwrap_or(cut.len());
-    format!("{}…", cut[..end].trim_end_matches([',', ';', ':', '.', ' ']))
-}
-
 /// Module livré avec Rustudio (officiel ou communautaire validé).
 fn shipped(m: &Value) -> bool {
     matches!(m["status"].as_str(), Some("official" | "community"))
@@ -132,8 +122,8 @@ fn module_page(id: &str) -> Option<Page> {
 }
 
 impl Mixer {
-    /// Catalogue : filtre, puis une section par catégorie, des cartes de même taille.
-    fn catalogue_view(&self, data: &Value, cx: &mut Context<Self>) -> Div {
+    /// Catalogue : une grille commune, avec la catégorie indiquée sur chaque carte.
+    fn catalogue_view(&self, data: &Value, window: &Window, cx: &mut Context<Self>) -> Div {
         let modules: Vec<&Value> = data["modules"].as_array().into_iter().flatten().collect();
         let (total_shipped, total_wanted) = (modules.iter().filter(|m| shipped(m)).count(), modules.iter().filter(|m| !shipped(m)).count());
         let filter = self.library.filter;
@@ -145,15 +135,16 @@ impl Mixer {
                 cx.notify();
             })));
         }
-        let mut root = div()
+        let root = div()
             .flex()
             .flex_col()
             .gap(px(22.))
-            .child(div().flex().items_center().gap(px(16.)).child(div().w(px(420.)).child(seg)).child(div().flex_1()).child(
+            .child(div().flex().flex_wrap().items_center().justify_between().gap(px(16.)).child(div().flex_1().min_w(px(340.)).max_w(px(420.)).child(seg)).child(
                 ui::pill("catalogue-ask", Some(Icon::Plus), "Demander un appareil", Tone::Plain)
                     .on_click(cx.listener(|_, _, _, cx| cx.open_url("https://github.com/samirmedani/rustudio/issues/new?template=appareil.yml"))),
             ));
         let known: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
+        let mut cards = Vec::new();
         for (kind, title, glyph) in KINDS {
             let mut group: Vec<&Value> = modules
                 .iter()
@@ -173,31 +164,14 @@ impl Mixer {
             }
             // livrés d'abord, puis par nom
             group.sort_by_key(|m| (!shipped(m), m["name"].as_str().unwrap_or("").to_lowercase()));
-            let mut section = div().flex().flex_col().gap(px(12.)).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(ui::chip(glyph, ui::ACCENT, 30.))
-                    .child(ui::title(title, 17.))
-                    .child(ui::badge(group.len().to_string(), 0x8e8e93)),
-            );
-            for chunk in group.chunks(3) {
-                let mut row = div().flex().gap(px(16.));
-                for m in chunk {
-                    row = row.child(div().flex().flex_1().min_w(px(0.)).child(self.module_card(m, glyph, cx)));
-                }
-                for _ in chunk.len()..3 {
-                    row = row.child(div().flex_1());
-                }
-                section = section.child(row);
+            for m in group {
+                cards.push(self.module_card(m, title, glyph, cx));
             }
-            root = root.child(section);
         }
-        root
+        root.child(ui::device_grid(cards, window))
     }
 
-    fn module_card(&self, m: &Value, glyph: Icon, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn module_card(&self, m: &Value, category: &'static str, glyph: Icon, cx: &mut Context<Self>) -> gpui::AnyElement {
         let id = m["id"].as_str().unwrap_or("").to_owned();
         let dest = module_page(&id);
         let (status, colour) = match m["status"].as_str() {
@@ -205,7 +179,7 @@ impl Mixer {
             Some("community") => ("Communautaire", ui::GREEN),
             _ => ("À contribuer", 0x8e8e93),
         };
-        let mut tags = div().flex().gap(px(6.)).h(px(26.)).overflow_hidden();
+        let mut tags = div().flex().flex_none().flex_wrap().items_start().gap(px(6.)).min_h(px(24.));
         for f in m["features"].as_array().into_iter().flatten().filter_map(Value::as_str).take(3) {
             tags = tags.child(ui::tag(f.to_owned()));
         }
@@ -218,11 +192,12 @@ impl Mixer {
             None => ui::caption("La communauté peut l’ajouter").into_any_element(),
         };
         let card = ui::card()
-            .flex_1()
+            .relative()
             .min_w(px(0.))
-            .h(px(236.))
             .p(px(20.))
+            .pb(px(76.))
             .gap(px(11.))
+            .child(div().flex().flex_wrap().items_center().justify_between().gap(px(8.)).child(ui::caption(category)).child(ui::badge(status, colour)))
             .child(
                 div()
                     .flex()
@@ -235,17 +210,21 @@ impl Mixer {
                             .flex_col()
                             .flex_1()
                             .min_w(px(0.))
-                            .child(ui::title(m["name"].as_str().unwrap_or("Module").to_owned(), 16.).truncate())
+                            .child(ui::title(m["name"].as_str().unwrap_or("Module").to_owned(), 16.))
                             .child(hint(m["vendor"].as_str().unwrap_or("").to_owned())),
-                    )
-                    .child(ui::badge(status, colour)),
+                    ),
             )
-            .child(div().h(px(57.)).overflow_hidden().child(hint(short(m["summary"].as_str().or(m["description"].as_str()).unwrap_or(""), 85)).text_size(px(12.5)).line_height(px(19.))))
+            .child(hint(m["summary"].as_str().or(m["description"].as_str()).unwrap_or("").to_owned()).text_size(px(12.5)).line_height(px(19.)))
             .child(tags)
-            .child(div().flex_1())
             .child(
                 div()
+                    .absolute()
+                    .bottom(px(20.))
+                    .left(px(20.))
+                    .right(px(20.))
                     .flex()
+                    .flex_wrap()
+                    .gap(px(10.))
                     .items_center()
                     .justify_between()
                     .child(ui::caption(m["author"].as_str().map(|a| format!("Créé par {a}")).unwrap_or_default()))
@@ -253,7 +232,6 @@ impl Mixer {
             );
         match dest {
             Some(page) => ui::lift(card, gpui::ElementId::Name(format!("card-module-{id}").into()))
-                .flex_1()
                 .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
                 .into_any_element(),
             None => card.into_any_element(),

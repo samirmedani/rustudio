@@ -6,10 +6,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MODULE: &str = "/api/modules/goxlr-mini";
 const PATH: &str = "/api/modules/goxlr-mini/mixer";
@@ -134,6 +134,8 @@ pub struct Client {
     audio_visible: Arc<AtomicBool>,
     level_visible: Arc<AtomicBool>,
     latency_visible: Arc<AtomicBool>,
+    /// Temps aller-retour de la dernière lecture réussie de /api/live, en µs. 0 indique une mesure indisponible.
+    engine_response_us: Arc<AtomicU64>,
     cached: Arc<Mutex<Option<(u64, Snapshot)>>>,
 }
 
@@ -154,6 +156,7 @@ impl Client {
             audio_visible: Arc::new(AtomicBool::new(false)),
             level_visible: Arc::new(AtomicBool::new(false)),
             latency_visible: Arc::new(AtomicBool::new(false)),
+            engine_response_us: Arc::new(AtomicU64::new(0)),
             cached: Arc::new(Mutex::new(None)),
         }
     }
@@ -326,6 +329,11 @@ impl Client {
         self.live
     }
 
+    pub(crate) fn engine_response_time(&self) -> Option<Duration> {
+        let micros = self.engine_response_us.load(Ordering::Relaxed);
+        (micros != 0).then_some(Duration::from_micros(micros))
+    }
+
     pub(crate) fn get(&self, path: &str) -> Result<Value, String> {
         self.agent
             .get(&format!("{}{path}", self.base))
@@ -345,7 +353,11 @@ impl Client {
     }
 
     pub fn inventory(&self) -> Result<Inventory, String> {
-        let live = self.live_state()?;
+        let started = Instant::now();
+        let live = self.live_state();
+        let micros = if live.is_ok() { (started.elapsed().as_micros() as u64).max(1) } else { 0 };
+        self.engine_response_us.store(micros, Ordering::Relaxed);
+        let live = live?;
         let mut result: Inventory = serde_json::from_value(self.get("/api/modules")?)
             .map_err(|_| "Inventaire des appareils illisible")?;
         if result.devices.iter().any(|d| d.simulated == self.live) {

@@ -19,7 +19,14 @@ pub(crate) use crate::ui::{hint, panel};
 pub enum Page {
     Devices,
     Mouse,
+    MouseSensitivity,
+    MouseSensor,
+    MousePower,
     Keyboard,
+    KeyboardSettings,
+    KeyboardPaint,
+    KeyboardShortcuts,
+    KeyboardInfo,
     WindowsAudio,
     Catalogue,
     Versions,
@@ -57,7 +64,14 @@ impl Page {
             "audio" => Page::WindowsAudio,
             "mixer" => Page::Mixer,
             "mouse" => Page::Mouse,
+            "mouse-sensitivity" => Page::MouseSensitivity,
+            "mouse-sensor" => Page::MouseSensor,
+            "mouse-power" => Page::MousePower,
             "keyboard" => Page::Keyboard,
+            "keyboard-settings" => Page::KeyboardSettings,
+            "keyboard-paint" => Page::KeyboardPaint,
+            "keyboard-shortcuts" => Page::KeyboardShortcuts,
+            "keyboard-info" => Page::KeyboardInfo,
             "mic" => Page::Go(Section::Microphone),
             "headphones" => Page::Go(Section::Headphones),
             "routing" => Page::Go(Section::Routing),
@@ -70,11 +84,13 @@ impl Page {
     pub(crate) fn space(self) -> Option<Space> {
         match self {
             Page::Mixer | Page::Go(_) => Some(Space::GoXlr),
-            Page::Mouse => Some(Space::Mouse),
-            Page::Keyboard => Some(Space::Keyboard),
+            Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => Some(Space::Mouse),
+            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => Some(Space::Keyboard),
             _ => None,
         }
     }
+    pub(crate) fn is_mouse(self) -> bool { self.space() == Some(Space::Mouse) }
+    pub(crate) fn is_keyboard(self) -> bool { self.space() == Some(Space::Keyboard) }
     fn title(self) -> &'static str {
         match self {
             Page::Devices => "Mes appareils",
@@ -86,7 +102,14 @@ impl Page {
             Page::WindowsAudio => "Son Windows",
             Page::Mixer => "Mixeur",
             Page::Mouse => "Ma souris",
+            Page::MouseSensitivity => "Sensibilité",
+            Page::MouseSensor => "Capteur",
+            Page::MousePower => "Batterie et veille",
             Page::Keyboard => "Mon clavier",
+            Page::KeyboardSettings => "Réglages de l’effet",
+            Page::KeyboardPaint => "Couleur par touche",
+            Page::KeyboardShortcuts => "Raccourcis et mode",
+            Page::KeyboardInfo => "Ton MK770",
             Page::Go(s) => s.label(),
         }
     }
@@ -101,7 +124,14 @@ impl Page {
             Page::WindowsAudio => "Entrées et sorties actives, et ce que Windows utilise par défaut.",
             Page::Mixer => "Tes quatre faders et toutes les voies, en direct.",
             Page::Mouse => "Sensibilité, fréquence, batterie et capteur.",
+            Page::MouseSensitivity => "Paliers DPI, axes X et Y et sensibilité active.",
+            Page::MouseSensor => "Fréquence, hauteur de décrochage et suivi des mouvements.",
+            Page::MousePower => "Niveau de batterie, charge et délai de mise en veille.",
             Page::Keyboard => "Effets lumineux, luminosité et couleur de chaque touche.",
+            Page::KeyboardSettings => "Luminosité, vitesse, sens et couleur de l’effet affiché.",
+            Page::KeyboardPaint => "Choisis ton pinceau et les couleurs de chaque touche.",
+            Page::KeyboardShortcuts => "Raccourcis Fn et aide pour le mode Windows ou macOS.",
+            Page::KeyboardInfo => "Connexion, firmware et caractéristiques du clavier.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",
@@ -123,8 +153,19 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
             (Page::Go(Section::Scenes), Icon::Layers, "Scènes"),
             (Page::Go(Section::Diagnostic), Icon::Gauge, "Diagnostic"),
         ],
-        Space::Mouse => &[(Page::Mouse, Icon::Mouse, "Ma souris")],
-        Space::Keyboard => &[(Page::Keyboard, Icon::Keyboard, "Mon clavier")],
+        Space::Mouse => &[
+            (Page::Mouse, Icon::Grid, "Vue d’ensemble"),
+            (Page::MouseSensitivity, Icon::Mouse, "Sensibilité"),
+            (Page::MouseSensor, Icon::Gauge, "Capteur"),
+            (Page::MousePower, Icon::Battery, "Batterie et veille"),
+        ],
+        Space::Keyboard => &[
+            (Page::Keyboard, Icon::Sparkles, "Effets lumineux"),
+            (Page::KeyboardSettings, Icon::Sliders, "Réglages de l’effet"),
+            (Page::KeyboardPaint, Icon::Palette, "Couleur par touche"),
+            (Page::KeyboardShortcuts, Icon::Help, "Raccourcis et mode"),
+            (Page::KeyboardInfo, Icon::Keyboard, "Informations"),
+        ],
     }
 }
 
@@ -176,6 +217,18 @@ pub(crate) fn device_state(device: Option<&Device>) -> (&'static str, State) {
     }
 }
 
+/// Batterie compacte pour la barre latérale, remplie selon le niveau réel.
+fn nav_battery(level: u8, charging: bool) -> Div {
+    let colour = if level <= 20 && !charging { ui::RED_TEXT } else { ui::GREEN_TEXT };
+    let gauge = div().relative().flex_none().w(px(22.)).h(px(12.))
+        .child(div().absolute().left_0().top_0().w(px(19.)).h(px(12.)).rounded(px(3.)).border_1().border_color(rgb(colour))
+            .child(div().absolute().left(px(2.)).top(px(2.)).w(px(15. * f32::from(level.min(100)) / 100.)).h(px(8.)).rounded(px(1.)).bg(rgb(colour))))
+        .child(div().absolute().right_0().top(px(4.)).w(px(2.)).h(px(4.)).rounded(px(1.)).bg(rgb(colour)));
+    div().flex().flex_none().items_center().gap(px(4.)).whitespace_nowrap()
+        .child(gauge)
+        .child(div().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format!("{level} %")))
+}
+
 /// État en direct d'un appareil sur sa carte : micro et scène de la GoXLR, batterie de la souris.
 fn glance_row(module: &str, glance: &crate::backend::Glance) -> Option<Div> {
     let item = |glyph: Icon, colour: u32, text: String| {
@@ -218,6 +271,7 @@ pub(crate) fn credit(module: &Descriptor) -> Div {
     let official = module.origin != "community";
     div()
         .flex()
+        .flex_wrap()
         .items_center()
         .gap(px(10.))
         .text_size(px(11.5))
@@ -276,10 +330,11 @@ impl Mixer {
     fn device_nav(&self, module: &Descriptor, open: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let target = module_page(&module.id);
         let single = module_space(&module.id).is_some_and(|s| space_pages(s).len() == 1);
-        let on = open && (single || Some(self.page) == target);
+        let on = open && single;
         let key = format!("devnav-{}", module.id);
         let t = if on { 0. } else { ui::hover_t(&key) };
         let (_, state) = device_state(self.device(&module.id));
+        let battery = self.inventory.as_ref().filter(|_| module.id == "attack-shark-r5-ultra").and_then(|i| i.glance.battery);
         let dot = match state {
             State::Ok => ui::GREEN,
             State::Info => ui::ACCENT,
@@ -303,6 +358,7 @@ impl Mixer {
             .when(!on, |d| d.bg(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.75), t)).border_1().border_color(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::INK, 0.04), t)))
             .child(ui::icon(module_icon(&module.id), 18., if on || open { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
             .child(div().flex_1().min_w(px(0.)).truncate().child(module.name.clone()))
+            .when_some(battery, |d, (level, charging)| d.child(nav_battery(level, charging)))
             .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(dot)))
             .when_some(target, |d, page| d.on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx))));
         ui::hoverable(el, key)
@@ -318,20 +374,19 @@ impl Mixer {
             .flex()
             .items_center()
             .gap(px(10.))
+            .flex_none()
             .h(px(32.))
-            .ml(px(18.))
             .pl(px(12.))
             .pr(px(10.))
             .rounded(px(10.))
             .text_size(px(13.5))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(rgb(if on { ui::ACCENT } else { ui::TEXT2 }))
+            .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+            .text_color(rgb(if on { ui::TEXT } else { ui::TEXT2 }))
             .cursor(gpui::CursorStyle::PointingHand)
-            .border_l_2()
-            .border_color(if on { rgb(ui::ACCENT) } else { alpha(ui::INK, 0.08) })
-            .bg(if on { alpha(ui::ACCENT, 0.08) } else { ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.7), t) })
+            .bg(if on { alpha(ui::ACCENT, 0.16) } else { ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.7), t) })
             .child(ui::icon(glyph, 16., if on { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT3), rgb(ui::TEXT), t) }))
-            .child(label)
+            .child(div().flex_1().min_w(px(0.)).truncate().child(label))
+            .when(on, |d| d.child(ui::icon(Icon::Check, 14., rgb(ui::ACCENT))))
             .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)));
         ui::hoverable(el, key)
     }
@@ -378,18 +433,21 @@ impl Mixer {
             );
         // tous les appareils, toujours : on passe de l'un à l'autre sans revenir à l'accueil
         if let Some(inventory) = self.inventory.as_ref().filter(|i| !i.installed.is_empty()) {
-            let current = self.current_space();
+            let current = self.page.space();
             let mut list = div().flex().flex_col().gap(px(2.)).mt(px(6.));
             for module in &inventory.installed {
                 let space = module_space(&module.id);
                 let open = space.is_some() && space == current;
                 list = list.child(self.device_nav(module, open, cx));
-                if let Some(space) = space.filter(|_| open) {
+                // Les pages restent accessibles quand on règle un autre appareil.
+                if let Some(space) = space {
                     let pages = space_pages(space);
                     if pages.len() > 1 {
+                        let mut subpages = div().flex().flex_col().gap(px(2.)).ml(px(28.));
                         for (page, glyph, label) in pages {
-                            list = list.child(self.sub_nav(*page, *glyph, label, cx));
+                            subpages = subpages.child(self.sub_nav(*page, *glyph, label, cx));
                         }
+                        list = list.child(subpages);
                     }
                 }
             }
@@ -429,8 +487,38 @@ impl Mixer {
                 .border_color(alpha(ui::INK, 0.07))
                 .child(ui::status(if engine { "Moteur connecté" } else { "Moteur indisponible" }, if engine { State::Ok } else { State::Error }).text_color(rgb(ui::TEXT)))
                 .child(div().pl(px(15.)).child(ui::caption(sub)))
+                .child(self.usage_widget())
                 .child(self.update_widget(cx)),
         )
+    }
+
+    fn usage_widget(&self) -> Div {
+        let cpu = self.usage.cpu_percent
+            .map(|value| format!("{value:.1} %").replace('.', ","))
+            .unwrap_or_else(|| "—".into());
+        let ram = self.usage.resident_bytes
+            .map(|bytes| format!("{:.0} Mo", bytes as f64 / 1_000_000.0))
+            .unwrap_or_else(|| "—".into());
+        let response = self.client.engine_response_time().map_or_else(
+            || "—".into(),
+            |time| {
+                if time.as_micros() < 100 {
+                    "< 0,1 ms".into()
+                } else {
+                    format!("{:.1} ms", time.as_secs_f64() * 1000.).replace('.', ",")
+                }
+            },
+        );
+        div().mt(px(10.)).flex().flex_col().gap(px(3.))
+            .child(ui::caption("Consommation de l’appli"))
+            .child(div().flex().items_center().justify_between().gap(px(8.))
+                .text_size(px(12.)).text_color(rgb(ui::TEXT2))
+                .child(format!("CPU {cpu}"))
+                .child(format!("RAM {ram}")))
+            .child(div().flex().items_center().justify_between().gap(px(8.))
+                .text_size(px(12.)).text_color(rgb(ui::TEXT2))
+                .child("Réponse du moteur")
+                .child(response))
     }
 
     /// Bas de la barre latérale : version, état et bouton de mise à jour (cherche, puis installe d'un clic).
@@ -539,11 +627,6 @@ impl Mixer {
         root.child(div().h(px(14.)).flex().items_center().child(below))
     }
 
-    /// Espace d'appareil affiché : celui de la page, ou le dernier ouvert tant qu'on ne revient pas à l'accueil.
-    fn current_space(&self) -> Option<Space> {
-        self.page.space().or(if self.page == Page::Devices { None } else { self.last_space })
-    }
-
     fn eyebrow(&self) -> String {
         let suffix = |id: &str| {
             let (text, _) = device_state(self.device(id));
@@ -576,8 +659,8 @@ impl Mixer {
             Page::Mixer => {
                 acts = acts.child(ui::pill("open-profiles", Some(Icon::Bookmark), "Profils", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Profiles, cx))));
             }
-            Page::Mouse => acts = acts.child(self.mouse_actions(cx)),
-            Page::Keyboard => acts = acts.child(self.keyboard_actions(cx)),
+            Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => acts = acts.child(self.mouse_actions(cx)),
+            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => acts = acts.child(self.keyboard_actions(cx)),
             _ => {}
         }
         if self.page.space() == Some(Space::GoXlr)
@@ -678,13 +761,14 @@ impl Mixer {
                 div()
                     .flex()
                     .flex_col()
+                    .flex_1()
                     .min_w(px(0.))
                     .child(ui::eyebrow(self.eyebrow()))
                     .child(div().mt(px(4.)).text_size(px(40.)).line_height(px(44.)).font_weight(FontWeight::BOLD).child(self.page.title()))
                     .child(div().mt(px(6.)).text_size(px(15.)).text_color(rgb(ui::TEXT2)).child(self.page.subtitle()))
                     .when_some(module, |d, m| d.child(credit(m).mt(px(8.)))),
             )
-            .child(self.header_actions(cx).pb(px(4.)))
+            .child(self.header_actions(cx).flex_none().pb(px(4.)))
     }
 
     fn caption_buttons() -> Div {
@@ -717,13 +801,13 @@ impl Mixer {
     /// Fenêtre complète : fond, barre latérale, en-tête et page.
     pub fn shell(&self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let page: AnyElement = match self.page {
-            Page::Devices => self.devices_view(cx).into_any_element(),
+            Page::Devices => self.devices_view(window, cx).into_any_element(),
             Page::Profiles => self.profiles_view(window, cx).into_any_element(),
             Page::Mixer => self.mixer_view(cx).into_any_element(),
-            Page::Mouse => self.mouse_view(window, cx).into_any_element(),
-            Page::Keyboard => self.keyboard_view(cx).into_any_element(),
+            Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => self.mouse_view(window, cx).into_any_element(),
+            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(cx).into_any_element(),
             Page::WindowsAudio => self.win_audio(cx).into_any_element(),
-            Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, cx).into_any_element(),
+            Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, window, cx).into_any_element(),
             Page::Go(section) => self.go_controls(section, cx).into_any_element(),
         };
         let mut body = div().flex().flex_col().gap(px(16.));
@@ -768,6 +852,7 @@ impl Mixer {
                                 div()
                                     .id(ElementId::NamedInteger("page".into(), self.nav_count))
                                     .flex_1()
+                                    .min_h(px(0.))
                                     .overflow_y_scroll()
                                     .pt(px(38.))
                                     .pb(px(28.))
@@ -1047,7 +1132,7 @@ impl Mixer {
         let target = module_page(&module.id);
         let detail = device.and_then(|d| d.firmware.clone()).map(|fw| format!("Firmware {fw}"));
         // même structure et même hauteur pour toutes les cartes : 4 capacités au plus, le reste en « +N »
-        let mut tags = div().flex().gap(px(6.)).h(px(26.)).overflow_hidden();
+        let mut tags = div().flex().flex_none().flex_wrap().items_start().gap(px(6.)).min_h(px(24.));
         for c in module.capabilities.iter().take(3) {
             tags = tags.child(ui::tag(capability(c).to_owned()));
         }
@@ -1056,11 +1141,11 @@ impl Mixer {
         }
         let glance = self.inventory.as_ref().and_then(|i| glance_row(&module.id, &i.glance));
         let card = ui::card()
-            .flex_1()
+            .relative()
             .min_w(px(0.))
-            .h(px(316.))
-            .p(px(22.))
-            .gap(px(12.))
+            .p(px(20.))
+            .pb(px(78.))
+            .gap(px(10.))
             .child(
                 div()
                     .flex()
@@ -1072,14 +1157,18 @@ impl Mixer {
             .child(credit(module))
             .child(ui::status(status, state))
             // la ligne « en direct » garde sa place même vide : les cartes restent alignées
-            .child(div().h(px(32.)).flex().items_center().children(glance))
-            .child(div().h(px(38.)).overflow_hidden().child(hint(module.summary.clone()).text_size(px(12.5)).line_height(px(19.))))
+            .child(div().min_h(px(32.)).flex().items_center().children(glance))
+            .child(hint(module.summary.clone()).text_size(px(12.5)).line_height(px(19.)))
             .child(tags)
-            .child(div().flex_1())
             .child(
                 div()
-                    .pt(px(6.))
+                    .absolute()
+                    .bottom(px(20.))
+                    .left(px(20.))
+                    .right(px(20.))
                     .flex()
+                    .flex_wrap()
+                    .gap(px(10.))
                     .items_center()
                     .justify_between()
                     .child(ui::caption(detail.unwrap_or_default()))
@@ -1096,28 +1185,18 @@ impl Mixer {
             );
         match target {
             Some(page) => ui::lift(card, ElementId::Name(format!("card-{}", module.id).into()))
-                .flex_1()
                 .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
                 .into_any_element(),
             None => card.into_any_element(),
         }
     }
 
-    fn devices_view(&self, cx: &mut Context<Self>) -> Div {
+    fn devices_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let mut page = div().flex().flex_col().gap(px(18.));
         match &self.inventory {
             Some(inventory) if !inventory.installed.is_empty() => {
-                // grille régulière de trois colonnes : cartes de même largeur et de même hauteur
-                for chunk in inventory.installed.chunks(3) {
-                    let mut row = div().flex().gap(px(18.));
-                    for module in chunk {
-                        row = row.child(div().flex().flex_1().min_w(px(0.)).child(self.device_card(module, cx)));
-                    }
-                    for _ in chunk.len()..3 {
-                        row = row.child(div().flex_1());
-                    }
-                    page = page.child(row);
-                }
+                let cards = inventory.installed.iter().map(|module| self.device_card(module, cx)).collect();
+                page = page.child(ui::device_grid(cards, window));
             }
             Some(_) => page = page.child(ui::card().child(hint("Aucun module disponible."))),
             None => {

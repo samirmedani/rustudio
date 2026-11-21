@@ -2,6 +2,7 @@
 //! par le moteur ; la couleur par touche se dessine d'abord sur la page, puis s'applique d'un clic.
 use crate::{
     backend::Client,
+    desktop::Page,
     mixer::Mixer,
     ui::{self, Icon, Tone, alpha, rgb},
 };
@@ -41,10 +42,12 @@ pub struct KeyboardView {
 #[derive(Default)]
 pub struct KeyboardPage {
     pub status: Option<KeyboardView>,
-    busy: bool,
+    pub(crate) busy: bool,
     notice: Option<(bool, String)>,
     /// couleur du pinceau
-    brush: Option<String>,
+    pub(crate) brush: Option<String>,
+    pub(crate) picker: Option<crate::colour::Picker>,
+    os_mode_help: bool,
     /// couleurs des 104 LED en cours de dessin ; None : rien à appliquer
     paint: Option<Vec<String>>,
 }
@@ -82,7 +85,7 @@ fn brightness_step(b: u8) -> usize {
 }
 
 impl Mixer {
-    fn keyboard_send(&mut self, body: Value, done: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn keyboard_send(&mut self, body: Value, done: &'static str, cx: &mut Context<Self>) {
         if self.keyboard.busy {
             return;
         }
@@ -152,6 +155,13 @@ impl Mixer {
         let active = s.active_effect;
         let enabled = !self.keyboard.busy;
         let current = s.effects.get(active as usize).cloned();
+        match self.page {
+            Page::KeyboardSettings => return root.max_w(px(620.)).child(self.keyboard_tune(&s, current, cx)),
+            Page::KeyboardPaint => return root.child(self.keyboard_painter(cx)),
+            Page::KeyboardShortcuts => return root.max_w(px(480.)).child(shortcuts(self.keyboard.os_mode_help, cx)),
+            Page::KeyboardInfo => return root.max_w(px(480.)).child(specs(&s)),
+            _ => {}
+        }
 
         // en tête : effet, luminosité, couleur, connexion
         let light = current.as_ref().map(|e| format!("{} %", brightness_step(e.brightness) * 25)).unwrap_or_else(|| "—".into());
@@ -176,8 +186,8 @@ impl Mixer {
 
         // à gauche on choisit l'effet, à droite on le règle ; la fiche du clavier suit
         let left = div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)).child(effects);
-        let right = div().flex().flex_col().flex_none().w(px(330.)).gap(px(16.)).child(self.keyboard_tune(&s, current, cx)).child(specs(&s)).child(shortcuts());
-        root.child(metrics).child(div().flex().items_start().gap(px(16.)).child(left).child(right)).child(self.keyboard_painter(cx))
+        let right = div().flex().flex_col().flex_none().w(px(330.)).gap(px(16.)).child(self.keyboard_tune(&s, current, cx));
+        root.child(metrics).child(div().flex().items_start().gap(px(16.)).child(left).child(right))
     }
 
     /// Carte d'un effet : aperçu animé, nom centré, type d'effet.
@@ -260,7 +270,8 @@ impl Mixer {
             }
             tune = tune
                 .child(div().flex().items_center().justify_between().child(ui::label("Couleur")).child(div().flex().items_center().gap(px(6.)).child(div().size(px(12.)).rounded_full().bg(ui::raw(hex(&e.colour)))).child(ui::caption(e.colour.clone()))))
-                .child(palette);
+                .child(palette)
+                .child(self.colour_picker(crate::colour::Target::Effect(active), &e.colour, cx));
         }
         if active == data::CUSTOM {
             tune = tune.child(ui::hint("Les couleurs viennent de « Couleur par touche », plus bas."));
@@ -360,6 +371,7 @@ impl Mixer {
         ui::section(Icon::Keyboard, 0x34c759, "Couleur par touche", None)
             .child(ui::hint("Choisis une couleur, puis clique sur les touches à peindre. « Appliquer au clavier » passe le clavier sur l’effet Personnalisé.").text_size(px(12.5)))
             .child(palette)
+            .child(self.colour_picker(crate::colour::Target::Brush, &brush, cx))
             .child(div().flex().justify_center().child(board))
             .child(actions)
     }
@@ -459,7 +471,7 @@ fn specs(s: &Settings) -> Div {
 }
 
 /// Raccourcis Fn du clavier : ce qu'on peut aussi faire sans Rustudio.
-fn shortcuts() -> Div {
+fn shortcuts(show_mode_help: bool, cx: &mut Context<Mixer>) -> Div {
     let row = |keys: &'static str, what: &'static str| {
         div()
             .flex()
@@ -467,7 +479,7 @@ fn shortcuts() -> Div {
             .gap(px(10.))
             .py(px(5.))
             .child(div().flex_none().px(px(8.)).h(px(24.)).flex().items_center().rounded(px(7.)).bg(alpha(ui::INK, 0.07)).text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child(keys))
-            .child(div().text_size(px(12.5)).text_color(rgb(ui::TEXT2)).child(what))
+            .child(div().flex_1().min_w(px(0.)).text_size(px(12.5)).text_color(rgb(ui::TEXT2)).child(what))
     };
     ui::section(Icon::Sparkles, ui::ORANGE, "Raccourcis du clavier", None)
         .gap(px(2.))
@@ -476,6 +488,25 @@ fn shortcuts() -> Div {
         .child(row("Fn + F12", "Sens de l’effet"))
         .child(row("Fn + F5 à F7", "Changer d’effet"))
         .child(row("Fn + 1, 2, 3", "Profils du clavier"))
+        .child(row("Fn + Maj droite", "Windows ↔ macOS"))
+        .child(div().mt(px(10.)).child(ui::hint("Mode actuel : à vérifier sur le clavier.").text_size(px(12.))))
+        .child(ui::pill("mk770-os-mode-help", Some(Icon::Help), if show_mode_help { "Masquer les instructions" } else { "Vérifier / changer le mode" }, Tone::Plain)
+            .mt(px(8.))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.keyboard.os_mode_help = !this.keyboard.os_mode_help;
+                cx.notify();
+            })))
+        .when(show_mode_help, |d| {
+            let indicator = |colour, label: &'static str| div().flex().items_center().gap(px(8.))
+                .child(div().flex_none().size(px(12.)).rounded_full().bg(ui::raw(colour)).border_1().border_color(alpha(ui::INK, 0.2)))
+                .child(ui::hint(label).text_size(px(12.5)));
+            d.child(div().flex().flex_col().gap(px(8.)).mt(px(10.)).p(px(12.)).rounded(px(12.)).bg(alpha(ui::INK, 0.04))
+                .child(ui::hint("1. Maintiens Fn et regarde la touche Maj de droite.").text_size(px(12.5)))
+                .child(indicator(0x0071e3, "Bleue : mode Windows"))
+                .child(indicator(0xffffff, "Blanche : mode macOS"))
+                .child(ui::hint("2. Pour changer de mode, appuie sur Fn + Maj droite, puis vérifie à nouveau la couleur.").text_size(px(12.5)))
+                .child(ui::caption("Le changement se fait sur le clavier. Rustudio ne détecte pas encore ce mode automatiquement.")))
+        })
 }
 
 const PREVIEW_COLS: usize = 12;

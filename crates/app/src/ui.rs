@@ -929,6 +929,20 @@ pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: im
     hoverable(el, key)
 }
 
+/// Répartit les cartes sur le moins de rangées possible, puis équilibre leur taille.
+fn device_columns(viewport_width: f32, card_count: usize) -> u16 {
+    // Barre latérale et marges : 320 px ; au moins 280 px par carte.
+    let width = viewport_width - 320.;
+    let available_columns = ((width + 18.) / 298.).floor().clamp(1., 4.) as usize;
+    let rows = card_count.div_ceil(available_columns).max(1);
+    card_count.div_ceil(rows).max(1) as u16
+}
+
+pub fn device_grid(items: Vec<AnyElement>, window: &gpui::Window) -> Div {
+    let columns = device_columns(window.viewport_size().width.into(), items.len());
+    div().grid().grid_cols(columns).gap(px(16.)).children(items)
+}
+
 /// Grille régulière : les éléments sont rangés par lignes de 'cols', toutes de même largeur.
 pub fn grid(items: Vec<AnyElement>, cols: usize) -> Div {
     let mut root = div().flex().flex_col().gap(px(10.));
@@ -1077,6 +1091,15 @@ pub fn columns(items: Vec<AnyElement>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grilles_equilibrees_selon_la_largeur_et_le_nombre_de_cartes() {
+        assert_eq!(device_columns(1600., 5), 3);
+        assert_eq!(device_columns(1050., 5), 2);
+        assert_eq!(device_columns(1600., 3), 3);
+        assert_eq!(device_columns(1600., 2), 2);
+        assert_eq!(device_columns(1600., 0), 1);
+    }
 
     fn luminance(c: u32) -> f32 {
         let ch = |s: u32| ((c >> s) & 255) as f32 / 255.;

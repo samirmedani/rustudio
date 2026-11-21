@@ -3,6 +3,8 @@
 #[cfg(any(windows, unix))]
 mod backend;
 #[cfg(any(windows, unix))]
+mod colour;
+#[cfg(any(windows, unix))]
 mod desktop;
 #[cfg(any(windows, unix))]
 mod goxlr;
@@ -215,10 +217,11 @@ fn run() -> Result<(), String> {
             }
             let client = window_client.clone();
             let dir = dir.clone();
-            // RUSTUDIO_WINDOW_HEIGHT (développement) : fenêtre plus haute pour voir une page entière
+            // Dimensions imposées pour les aperçus et les vérifications de mise en page.
+            let width = std::env::var("RUSTUDIO_WINDOW_WIDTH").ok().and_then(|w| w.parse().ok()).unwrap_or(1240.);
             let height = std::env::var("RUSTUDIO_WINDOW_HEIGHT").ok().and_then(|h| h.parse().ok()).unwrap_or(800.);
             #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-            let mut bounds = Bounds::centered(None, size(px(1240.), px(height)), cx);
+            let mut bounds = Bounds::centered(None, size(px(width), px(height)), cx);
             // Aperçu sur Mac (développement, RUSTUDIO_PREVIEW) : fenêtre presque hors de l'écran, voir preview_float.
             #[cfg(target_os = "macos")]
             if std::env::var_os("RUSTUDIO_PREVIEW").is_some()

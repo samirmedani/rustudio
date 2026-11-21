@@ -4,6 +4,7 @@ pub mod badge;
 pub mod hotkey;
 pub mod session;
 pub mod soundcheck;
+pub mod usage;
 
 #[cfg(windows)]
 pub mod osd;

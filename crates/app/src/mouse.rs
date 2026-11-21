@@ -1,5 +1,6 @@
 use crate::{
     backend::Client,
+    desktop::Page,
     mixer::Mixer,
     ui::{self, Icon, Tone, alpha, rgb},
 };
@@ -507,7 +508,7 @@ impl Mixer {
         let mut sensor = ui::card()
             .flex_1()
             .min_w(px(0.))
-            .child(ui::card_title(Some((Icon::Settings, ui::ACCENT)), "Capteur et autonomie", None))
+            .child(ui::card_title(Some((Icon::Settings, ui::ACCENT)), "Capteur", None))
             .child(
                 div()
                     .flex()
@@ -521,22 +522,7 @@ impl Mixer {
                         cx,
                     ))),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(12.))
-                    .child(div().flex_1().min_w(px(0.)).child(self.mouse_select("Anti-double clic", "debounce_ms", (0..=30).map(|i| (json!(i), format!("{i} ms"))).collect(), s, cx)))
-                    .child(div().flex_1().min_w(px(0.)).child(self.mouse_select(
-                        "Mise en veille",
-                        "sleep_seconds",
-                        [(30, "30 secondes"), (60, "1 minute"), (120, "2 minutes"), (300, "5 minutes"), (600, "10 minutes"), (65535, "Jamais")]
-                            .into_iter()
-                            .map(|(n, l)| (json!(n), l.into()))
-                            .collect(),
-                        s,
-                        cx,
-                    ))),
-            );
+            .child(self.mouse_select("Anti-double clic", "debounce_ms", (0..=30).map(|i| (json!(i), format!("{i} ms"))).collect(), s, cx));
         let mut toggles = div().flex().flex_col().mt(px(4.));
         for (key, label, glyph) in [("angle_snap", "Correction des lignes", Icon::Route), ("motion_sync", "Synchronisation du capteur", Icon::Refresh), ("ripple_control", "Lissage des mouvements", Icon::Activity)] {
             let on = m.value(s, key) == true;
@@ -550,8 +536,22 @@ impl Mixer {
             }))));
         }
         sensor = sensor.child(toggles);
+        let power = ui::section(Icon::Battery, ui::GREEN, "Batterie et veille", None)
+            .child(ui::hint(sub(battery.into())))
+            .child(self.mouse_select(
+                "Mise en veille", "sleep_seconds",
+                [(30, "30 secondes"), (60, "1 minute"), (120, "2 minutes"), (300, "5 minutes"), (600, "10 minutes"), (65535, "Jamais")]
+                    .into_iter().map(|(n, label)| (json!(n), label.into())).collect(), s, cx,
+            ));
+        let settings = match self.page {
+            Page::MouseSensitivity => div().max_w(px(640.)).child(dpi.flex_none()),
+            Page::MouseSensor => div().max_w(px(640.)).child(sensor.flex_none()),
+            Page::MousePower => div().max_w(px(640.)).child(power),
+            _ => div().flex().items_start().gap(px(16.)).child(dpi)
+                .child(div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)).child(sensor.flex_none()).child(power)),
+        };
         content
-            .child(div().flex().items_start().gap(px(16.)).child(dpi).child(sensor))
+            .child(settings)
             .child(ui::caption("USB jusqu’à 1 000 Hz · récepteur 2,4 GHz jusqu’à 8 000 Hz. Bluetooth, macros, remappage et firmware ne sont pas pris en charge."))
     }
 }

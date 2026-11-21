@@ -32,6 +32,7 @@ pub struct Mixer {
     pub(crate) snapshot: Option<Snapshot>,
     pub(crate) client: Client,
     pub(crate) inventory: Option<backend::Inventory>,
+    pub(crate) usage: rustudio_windows_desktop::usage::Usage,
     pub(crate) page: Page,
     pub(crate) mouse: crate::mouse::MousePage,
     pub(crate) keyboard: crate::keyboard::KeyboardPage,
@@ -101,6 +102,23 @@ impl Mixer {
             }
         })
         .detach();
+        cx.spawn(async move |this, cx| {
+            let mut sampler = rustudio_windows_desktop::usage::Sampler::default();
+            loop {
+                let (next, sample) = cx.background_executor().spawn(async move {
+                    let sample = sampler.sample();
+                    (sampler, sample)
+                }).await;
+                sampler = next;
+                if this.update(cx, |mixer, cx| {
+                    mixer.usage = sample;
+                    cx.notify();
+                }).is_err() {
+                    break;
+                }
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+            }
+        }).detach();
         if let Some(duration) = duration {
             let exec = cx.background_executor().clone();
             cx.spawn(async move |this, cx| {
@@ -116,6 +134,7 @@ impl Mixer {
             snapshot: None,
             client,
             inventory: None,
+            usage: Default::default(),
             mouse: crate::mouse::MousePage::default(),
             keyboard: crate::keyboard::KeyboardPage::default(),
             mouse_focus: (0..12).map(|_| cx.focus_handle()).collect(),
@@ -193,8 +212,8 @@ impl Mixer {
         }
         self.page = page;
         self.client.set_mixer_visible(page == Page::Mixer);
-        self.client.set_mouse_visible(page == Page::Mouse);
-        self.client.set_keyboard_visible(page == Page::Keyboard);
+        self.client.set_mouse_visible(page.is_mouse());
+        self.client.set_keyboard_visible(page.is_keyboard());
         self.client.set_go_visible(matches!(page, Page::Go(_)));
         self.client.set_level_visible(page == Page::Go(crate::goxlr::Section::Microphone));
         self.client.set_latency_visible(page == Page::Go(crate::goxlr::Section::Diagnostic));
@@ -281,11 +300,11 @@ impl Mixer {
             }
             Event::Mouse(view) => {
                 self.mouse.receive(view);
-                force_render = self.page == Page::Mouse;
+                force_render = self.page.is_mouse();
             }
             Event::Keyboard(view) => {
                 self.keyboard.receive(view);
-                force_render = self.page == Page::Keyboard;
+                force_render = self.page.is_keyboard();
             }
             Event::Done(seq, result) => {
                 if self.profile_request == Some(seq) {
@@ -538,6 +557,7 @@ impl Mixer {
         let mut track = self
             .rail(channel, true, index, cx)
             .mt(px(14.))
+            .flex_none()
             .w(px(FADER_W))
             .h(px(TRAVEL))
             .rounded(px(FADER_R))
@@ -558,7 +578,9 @@ impl Mixer {
                     .when(fill > 30., |d| d.child(div().absolute().top(px(10.)).left(px(FADER_W / 2. - 11. + 3. * hover)).w(px(22. - 6. * hover)).h(px(4.)).rounded_full().bg(alpha(ui::WHITE, 0.9)))),
             );
         if let Some(p) = physical {
-            track = track.child(div().absolute().left(px(6.)).right(px(6.)).top(px(TRAVEL * (1. - f32::from(p) / 255.))).h(px(2.)).rounded_full().bg(alpha(ui::TEXT, 0.4)));
+            // Le repère physique reste à l'intérieur des extrémités arrondies du rail.
+            let y = (TRAVEL * (1. - f32::from(p) / 255.)).clamp(12., TRAVEL - 14.);
+            track = track.child(div().absolute().left(px(22.)).right(px(22.)).top(px(y)).h(px(2.)).rounded_full().bg(alpha(ui::TEXT, 0.4)));
         }
         let (mute_bg, mute_fg, glyph) = if partial {
             (rgb(ui::ORANGE), rgb(ui::WHITE), Icon::VolumeOff)
@@ -832,6 +854,9 @@ impl Render for Mixer {
         ui::keep_animating(window);
         shell
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
+                if this.move_colour_picker(ev.position, ev.pressed_button, cx) {
+                    return;
+                }
                 if let Some(d) = this.param_drag.as_mut() {
                     if ev.pressed_button == Some(MouseButton::Left) {
                         let next = d.at(ev.position);
@@ -851,10 +876,12 @@ impl Render for Mixer {
                 }
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                this.finish_colour_picker();
                 this.finish_param(cx);
                 this.commit_drag(ev.position, cx)
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                this.finish_colour_picker();
                 this.finish_param(cx);
                 this.commit_drag(ev.position, cx)
             }))

@@ -1,5 +1,25 @@
 # Nouveautés
 
+## 6.3.2 — 21 novembre 2026
+
+Rustudio 6.3.2 rend les cartes et les menus plus lisibles et affiche les mesures de l’appli en direct.
+
+**Nouveau**
+- **Mesures en direct** : retrouve le CPU et la mémoire utilisés par l’application ainsi que le temps de réponse du moteur, en bas de la barre latérale.
+
+**Amélioré**
+- **Sous-menus des appareils** : le MK770 et la R5 Ultra ont leurs propres rubriques dans la barre latérale, comme la GoXLR Mini. Tu accèdes directement à chaque groupe de réglages sans faire défiler une longue page.
+- **Sélection dans les sous-menus** : la page ouverte se repère à son fond teinté et à sa coche.
+- **Mode Windows ou macOS du clavier** : le raccourci et un bouton d’aide expliquent comment vérifier le mode du MK770 et revenir à Windows.
+- **Couleurs personnalisées du clavier** : choisis une nuance dans le sélecteur, ajuste le rouge, le vert et le bleu ou saisis un code hexadécimal, pour l’effet et le pinceau par touche.
+- **Batterie de la souris** : son niveau et son pourcentage sont visibles directement dans la barre latérale.
+
+**Corrigé**
+- **Cartes lisibles** : les descriptions et les étiquettes restent entièrement visibles ; le nombre de colonnes s’adapte à la largeur de la fenêtre et au nombre d’appareils.
+- **Modules** : les cartes se répartissent sur des rangées équilibrées selon la largeur de la fenêtre, avec la catégorie sur chaque carte et des filtres toujours accessibles.
+- **Navigation et mixeur** : une seule page est surlignée dans la barre latérale et le repère de position reste dans le fader.
+- **Menu GoXLR toujours accessible** : ses pages restent visibles quand tu passes à la souris, au clavier ou à une autre rubrique.
+
 ## 6.3.1 — 14 novembre 2026
 
 Rustudio 6.3.1 se rouvre tout seul après une mise à jour et rend la navigation entre tes appareils plus simple.
