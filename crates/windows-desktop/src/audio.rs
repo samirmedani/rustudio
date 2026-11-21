@@ -148,13 +148,14 @@ mod win {
                 .filter(|name| !name.is_empty());
             rows.push((
                 name,
+                id.clone(),
                 multimedia.as_ref().is_some_and(|default| default.eq_ignore_ascii_case(&id)),
                 communications.as_ref().is_some_and(|default| default.eq_ignore_ascii_case(&id)),
             ));
         }
-        rows.sort_by_cached_key(|(name, multimedia, calls)| (!*multimedia, !*calls, name.as_deref().unwrap_or("").to_lowercase()));
-        Ok(rows.into_iter().map(|(name, multimedia, calls)| {
-            json!({"name": name, "default": multimedia, "communications": calls})
+        rows.sort_by_cached_key(|(name, _, multimedia, calls)| (!*multimedia, !*calls, name.as_deref().unwrap_or("").to_lowercase()));
+        Ok(rows.into_iter().map(|(name, id, multimedia, calls)| {
+            json!({"id":id,"name": name, "default": multimedia, "communications": calls})
         }).collect())
     }
 

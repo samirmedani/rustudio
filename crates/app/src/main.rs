@@ -11,6 +11,8 @@ mod goxlr;
 #[cfg(any(windows, unix))]
 mod keyboard;
 #[cfg(any(windows, unix))]
+mod macros;
+#[cfg(any(windows, unix))]
 mod library;
 #[cfg(any(windows, unix))]
 mod mixer;
@@ -34,6 +36,8 @@ mod update_sheet;
 mod voice;
 #[cfg(any(windows, unix))]
 mod win_session;
+#[cfg(any(windows, unix))]
+mod audio_view;
 
 #[cfg(not(any(windows, unix)))]
 fn main() {
@@ -172,6 +176,7 @@ fn run() -> Result<(), String> {
         desktop::verify_profiles(&client)?;
         mouse::verify(&client)?;
         keyboard::verify(&client)?;
+        macros::verify(&client)?;
         return goxlr::verify(&client);
     }
     if let Some(pid) = relaunch {

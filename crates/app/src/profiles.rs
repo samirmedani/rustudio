@@ -95,8 +95,7 @@ impl Store {
     pub fn new(dir: PathBuf) -> Self {
         Self { dir }
     }
-    #[cfg(test)]
-    pub fn dir(&self) -> &Path {
+    pub(crate) fn dir(&self) -> &Path {
         &self.dir
     }
 

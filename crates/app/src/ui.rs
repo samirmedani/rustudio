@@ -235,7 +235,7 @@ assets!(
     Check => "check", Plus => "plus", Power => "power", Close => "x", Leaf => "leaf", Sparkles => "sparkles",
     Tower => "radioTower", Keyboard => "keyboard", Podcast => "pod", Gauge => "gauge", Help => "help",
     History => "history", Trash => "trash", Alert => "alert", Play => "play", Stop => "stop", Palette => "palette",
-    External => "link", Minus => "minus", Square => "square", Bolt => "bolt",
+    External => "link", Minus => "minus", Square => "square", Star => "star", Bolt => "bolt",
 );
 
 pub struct Assets;
@@ -300,7 +300,59 @@ pub fn hoverable(el: Stateful<Div>, key: String) -> Stateful<Div> {
 /// À appeler à la fin du rendu d'une fenêtre : demande l'image suivante si une transition n'est pas finie.
 pub fn keep_animating(window: &gpui::Window) {
     if MOVING.replace(false) {
-        window.request_animation_frame();
+        animation_frame(window);
+    }
+}
+
+/// Écart minimal entre deux images d'animation : jusqu'à 165 images/s, 120 sur les écrans plus rapides.
+/// Sans ce plafond, un écran 360 Hz redessine toute la page 360 fois par seconde pendant un défilement.
+pub const ANIMATION_FRAME: std::time::Duration = std::time::Duration::from_micros(5_800);
+
+/// Rythme d'animation d'une vue : dernière image, attente en cours et écart demandé pour la prochaine.
+#[derive(Default)]
+struct Pacing {
+    last: Option<Instant>,
+    waiting: bool,
+    gap: std::time::Duration,
+}
+
+thread_local! {
+    static ANIMATION: RefCell<HashMap<gpui::EntityId, Pacing>> = RefCell::new(HashMap::new());
+}
+
+/// Comme `request_animation_frame`, mais au rythme plafonné : on attend les rafraîchissements de l'écran
+/// (sans redessiner) jusqu'à ce que l'écart minimal soit atteint.
+pub fn animation_frame(window: &gpui::Window) {
+    animation_frame_every(window, ANIMATION_FRAME);
+}
+
+/// Image d'animation au plus tôt `gap` après la précédente (la demande la plus pressée l'emporte).
+pub fn animation_frame_every(window: &gpui::Window, gap: std::time::Duration) {
+    let view = window.current_view();
+    let waiting = ANIMATION.with_borrow_mut(|map| {
+        let pacing = map.entry(view).or_default();
+        pacing.gap = if pacing.waiting { pacing.gap.min(gap) } else { gap };
+        std::mem::replace(&mut pacing.waiting, true)
+    });
+    if !waiting {
+        window.on_next_frame(move |window, cx| wait_animation_frame(window, cx, view));
+    }
+}
+
+fn wait_animation_frame(window: &mut gpui::Window, cx: &mut App, view: gpui::EntityId) {
+    let due = ANIMATION.with_borrow_mut(|map| {
+        let pacing = map.entry(view).or_default();
+        let due = pacing.last.is_none_or(|at| at.elapsed() >= pacing.gap);
+        if due {
+            pacing.last = Some(Instant::now());
+            pacing.waiting = false;
+        }
+        due
+    });
+    if due {
+        cx.notify(view);
+    } else {
+        window.on_next_frame(move |window, cx| wait_animation_frame(window, cx, view));
     }
 }
 
@@ -373,6 +425,29 @@ pub fn ambient() -> impl IntoElement {
 }
 pub fn logo(size: f32) -> impl IntoElement {
     img(LOGO.clone()).flex_none().size(px(size))
+}
+
+/// Survol du logo latéral : le cadre reste fixe pendant que l'image se soulève.
+pub fn sidebar_logo(size: f32) -> impl IntoElement {
+    let key = "sidebar-brand-logo";
+    let t = hover_t(key);
+    hoverable(
+        div().id(key).flex_none().size(px(size)).child(
+            div()
+                .relative()
+                .size_full()
+                .top(px(-2. * t))
+                .rounded(px(size * 0.25))
+                .shadow(vec![BoxShadow {
+                    color: alpha(0x7960ff, 0.22 * t),
+                    offset: point(px(0.), px(4. * t)),
+                    blur_radius: px(14. * t),
+                    spread_radius: px(0.),
+                }])
+                .child(logo(size)),
+        ),
+        key.into(),
+    )
 }
 
 /// Carte en verre : fond blanc translucide, filet, ombre douce.
@@ -813,6 +888,8 @@ pub fn menu_item(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<
     let el = div()
         .id(id)
         .flex()
+        // hauteur tenue : une liste trop longue défile au lieu d'écraser ses lignes
+        .flex_none()
         .items_center()
         .gap(px(10.))
         .h(px(34.))
@@ -898,13 +975,11 @@ pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: im
     let id: ElementId = id.into();
     let key = key_of(&id);
     let t = hover_t(&key);
+    // bloc simple (marges au lieu d'une colonne flexbox) : la grille de tuiles se met en page en une seule passe
     let el = div()
         .id(id)
         .relative()
         .top(px(-2. * t))
-        .flex()
-        .flex_col()
-        .gap(px(6.))
         .flex_1()
         .min_w(px(0.))
         .p(px(14.))
@@ -924,8 +999,8 @@ pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: im
                 .when_some(badge_text, |d, (b, c)| d.child(badge(b, c)))
                 .when(selected, |d| d.child(div().flex().items_center().justify_center().size(px(20.)).rounded_full().bg(rgb(ACCENT)).child(icon(Icon::Check, 12., rgb(WHITE))))),
         )
-        .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
-        .when_some(desc, |d, s| d.child(div().text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s)));
+        .child(div().mt(px(6.)).text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
+        .when_some(desc, |d, s| d.child(div().mt(px(6.)).text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s)));
     hoverable(el, key)
 }
 
@@ -944,22 +1019,10 @@ pub fn device_grid(items: Vec<AnyElement>, window: &gpui::Window) -> Div {
 }
 
 /// Grille régulière : les éléments sont rangés par lignes de 'cols', toutes de même largeur.
+/// Grille CSS (colonnes de largeur fixe) : chaque case connaît sa largeur d'emblée, la mise en page ne mesure
+/// son texte qu'une fois au lieu de plusieurs passes de flexbox imbriquées.
 pub fn grid(items: Vec<AnyElement>, cols: usize) -> Div {
-    let mut root = div().flex().flex_col().gap(px(10.));
-    let mut items = items.into_iter().peekable();
-    while items.peek().is_some() {
-        let mut row = div().flex().gap(px(10.));
-        let mut n = 0;
-        for item in items.by_ref().take(cols) {
-            row = row.child(div().flex().flex_1().min_w(px(0.)).child(item));
-            n += 1;
-        }
-        for _ in n..cols {
-            row = row.child(div().flex_1());
-        }
-        root = root.child(row);
-    }
-    root
+    div().grid().grid_cols(cols as u16).gap(px(10.)).children(items)
 }
 
 /// Étiquette d'état colorée (Installée, Nouvelle, Conseillé…).

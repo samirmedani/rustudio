@@ -24,6 +24,9 @@ Si tu utilisais GoXLR Mini 4.x, [l’installateur Rustudio](https://github.com/s
 
 ## Voix, chat et OBS
 
+La page [Son Windows](SON-WINDOWS.md) explique chaque entrée et sortie, propose les choix courants
+pour Windows, Discord et OBS, et affiche les niveaux et le spectre de la source choisie en direct.
+
 Dans **Micro → Créer mon empreinte**, suis les étapes de mesure pour caler ton gain et calculer des préréglages. Tu peux ensuite comparer la voix brute et traitée. [Détails du réglage de la voix](VOIX.md).
 
 Dans Discord, choisis **Chat Mic** comme entrée et **Chat** comme sortie. **Anti-écho** aide à contrôler le routage et à mesurer un éventuel retour. Pour OBS, utilise le **Stream Mix** (appelé « Broadcast Stream Mix » sur les anciens pilotes) et choisis ce qui part en direct dans **Routage**. La source navigateur `http://127.0.0.1:14565/overlay` affiche l’état du micro.

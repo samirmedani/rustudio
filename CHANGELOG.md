@@ -1,5 +1,25 @@
 # Nouveautés
 
+## 6.4.0 — 21 novembre 2026
+
+Rustudio 6.4.0 affiche le son de Windows en direct avec son spectre, ajoute un éditeur de macros pour le MK770, encore expérimental, et rend l’appli plus légère.
+
+**Nouveau**
+- **Son Windows en direct** : vois le niveau de chaque entrée et sortie, puis sélectionne une source pour afficher son spectre audio. Des explications et un guide Windows, Discord et OBS t’aident à choisir les bonnes voies.
+- **Macros du MK770 (expérimental)** : crée et modifie tes séquences de touches, règle leurs délais et leur répétition, conserve-les sur ton PC ou partage-les en JSON. L’envoi dans les 12 emplacements du clavier et sa relecture passent par le câble USB. Cette fonction n’a pas encore été validée sur un vrai clavier : garde une copie de tes macros avant de les envoyer.
+
+**Amélioré**
+- **Logo animé au survol** : l’icône se soulève légèrement avec un halo discret, puis revient doucement à sa place.
+- **Aide et GitHub accessibles** : retrouve l’aide en bas de la barre latérale et ouvre le projet GitHub pour lui ajouter une étoile.
+- **Rustudio plus léger** : faire défiler une page demande jusqu’à trois fois moins de processeur, en particulier la page Micro, et l’appli ne se redessine plus au rythme maximal des écrans 144 Hz ou 360 Hz.
+- **Vumètre du micro fluide** : le niveau d’entrée monte et redescend en douceur au lieu d’avancer par à-coups.
+- **Aperçus des effets du clavier plus sobres** : les petites animations des effets lumineux consomment bien moins.
+
+**Corrigé**
+- **Listes déroulantes toujours visibles** : en bas d’une page ou dans une petite fenêtre, la liste s’ouvre vers le haut quand la place manque en bas, et la molette la fait défiler sans bouger la page.
+- **Longues listes lisibles** : la liste des micros défile au lieu d’écraser ses lignes.
+- **Conseils du micro dans leur carte** : sous le niveau d’entrée, les conseils reviennent à la ligne au lieu de déborder sur la carte voisine.
+
 ## 6.3.3 — 21 novembre 2026
 
 Rustudio 6.3.3 libère la barre latérale avec une barre d’état qui note tes mesures, rend le défilement plus doux et rouvre l’appli après chaque mise à jour.

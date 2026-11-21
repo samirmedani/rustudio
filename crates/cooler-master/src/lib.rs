@@ -1,10 +1,11 @@
 //! Cooler Master MK770, en USB : canal de commande vendor (interface 3, usage page FF00), rapports de 64 octets.
 //! Protocole : docs/MK770.md. Faits repris de CoolerHacker-MK770 (Defacedz, MIT, voir LICENSE-CoolerHacker-MK770),
 //! complétés par des mesures sur un MK770 réel : vitesse et sens d'un effet, tampon par touche en trame continue.
-//! Aucun firmware n'est écrit ; seules la configuration des effets et la couleur des touches sont modifiées.
+//! Aucun firmware n'est écrit ; les commandes règlent les effets, la couleur des touches et les macros natives.
 use rustudio_core::mk770::{self as data, format_colour, parse_colour};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub mod macros;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub const VID: u16 = 0x2516;

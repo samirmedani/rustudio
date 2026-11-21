@@ -8,12 +8,23 @@ use crate::{
 };
 use gpui::{
     AnimationExt, AnyElement, Context, Div, ElementId, FontWeight, KeyDownEvent, PathPromptOptions, Stateful,
-    Window, WindowControlArea, deferred, div, prelude::*, px,
+    Window, WindowControlArea, canvas, deferred, div, prelude::*, px,
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
 pub(crate) use crate::ui::{hint, panel};
+
+/// Hauteur de la barre d'état en bas de la fenêtre.
+const STATUS_BAR_H: f32 = 42.;
+/// Barre latérale : largeur et écart avec les bords de la fenêtre.
+const SIDEBAR_W: f32 = 240.;
+const SIDEBAR_MARGIN: f32 = 16.;
+/// Listes déroulantes : hauteur bornée, écart avec le bouton et marge gardée avec les bords de la page.
+const MENU_MAX_H: f32 = 260.;
+const MENU_MIN_H: f32 = 110.;
+const BUTTON_GAP: f32 = 4.;
+const MENU_MARGIN: f32 = 8.;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -27,6 +38,7 @@ pub enum Page {
     KeyboardPaint,
     KeyboardShortcuts,
     KeyboardInfo,
+    KeyboardMacros,
     WindowsAudio,
     Catalogue,
     Versions,
@@ -72,6 +84,7 @@ impl Page {
             "keyboard-paint" => Page::KeyboardPaint,
             "keyboard-shortcuts" => Page::KeyboardShortcuts,
             "keyboard-info" => Page::KeyboardInfo,
+            "keyboard-macros" => Page::KeyboardMacros,
             "mic" => Page::Go(Section::Microphone),
             "headphones" => Page::Go(Section::Headphones),
             "routing" => Page::Go(Section::Routing),
@@ -85,7 +98,7 @@ impl Page {
         match self {
             Page::Mixer | Page::Go(_) => Some(Space::GoXlr),
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => Some(Space::Mouse),
-            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => Some(Space::Keyboard),
+            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo | Page::KeyboardMacros => Some(Space::Keyboard),
             _ => None,
         }
     }
@@ -110,6 +123,7 @@ impl Page {
             Page::KeyboardPaint => "Couleur par touche",
             Page::KeyboardShortcuts => "Raccourcis et mode",
             Page::KeyboardInfo => "Ton MK770",
+            Page::KeyboardMacros => "Macros",
             Page::Go(s) => s.label(),
         }
     }
@@ -121,7 +135,7 @@ impl Page {
             Page::Versions => "Mises à jour vérifiées depuis GitHub, notes et retour à une version précédente.",
             Page::Help => "Signaler un problème, poser une question ou contribuer.",
             Page::Settings => "Le comportement de Rustudio sur ce PC.",
-            Page::WindowsAudio => "Entrées et sorties actives, et ce que Windows utilise par défaut.",
+            Page::WindowsAudio => "Tes sources audio en direct, expliquées simplement.",
             Page::Mixer => "Tes quatre faders et toutes les voies, en direct.",
             Page::Mouse => "Sensibilité, fréquence, batterie et capteur.",
             Page::MouseSensitivity => "Paliers DPI, axes X et Y et sensibilité active.",
@@ -132,6 +146,7 @@ impl Page {
             Page::KeyboardPaint => "Choisis ton pinceau et les couleurs de chaque touche.",
             Page::KeyboardShortcuts => "Raccourcis Fn et aide pour le mode Windows ou macOS.",
             Page::KeyboardInfo => "Connexion, firmware et caractéristiques du clavier.",
+            Page::KeyboardMacros => "Expérimental · Crée tes séquences de touches et enregistre-les dans ton clavier.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",
@@ -163,6 +178,7 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
             (Page::Keyboard, Icon::Sparkles, "Effets lumineux"),
             (Page::KeyboardSettings, Icon::Sliders, "Réglages de l’effet"),
             (Page::KeyboardPaint, Icon::Palette, "Couleur par touche"),
+            (Page::KeyboardMacros, Icon::Keyboard, "Macros"),
             (Page::KeyboardShortcuts, Icon::Help, "Raccourcis et mode"),
             (Page::KeyboardInfo, Icon::Keyboard, "Informations"),
         ],
@@ -459,10 +475,12 @@ impl Mixer {
         let mut side = div()
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(240.))
-            .m(px(16.))
-            .mr(px(0.))
+            // position absolue, comme la page : la fenêtre se met en page sans mesurer le contenu de la barre latérale
+            .absolute()
+            .top(px(SIDEBAR_MARGIN))
+            .left(px(SIDEBAR_MARGIN))
+            .bottom(px(SIDEBAR_MARGIN))
+            .w(px(SIDEBAR_W))
             .p(px(12.))
             .pt(px(18.))
             .rounded(px(24.))
@@ -476,7 +494,7 @@ impl Mixer {
                     .items_center()
                     .gap(px(11.))
                     .px(px(8.))
-                    .child(ui::logo(38.))
+                    .child(ui::sidebar_logo(38.))
                     .child(
                         div()
                             .flex()
@@ -530,7 +548,24 @@ impl Mixer {
                     .child(list),
             );
         }
-        side
+        side.child(
+            div()
+                .flex_none()
+                .mt_auto()
+                .pt(px(12.))
+                .px(px(6.))
+                .border_t_1()
+                .border_color(alpha(ui::INK, 0.07))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(ui::menu_item("sidebar-help", Some(Icon::Help), "Aide et retours", self.page == Page::Help)
+                    .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Help, cx))))
+                .child(ui::menu_item("sidebar-github-star", Some(Icon::Star), "Étoile sur GitHub", false)
+                    .child(div().flex_1())
+                    .child(ui::icon(Icon::External, 13., rgb(ui::TEXT3)))
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url("https://github.com/samirmedani/rustudio")))),
+        )
     }
 
     /// Barre d'état en bas de la fenêtre : moteur, mesures de l'appli et version.
@@ -551,7 +586,7 @@ impl Mixer {
         let divider = || div().flex_none().w(px(1.)).h(px(16.)).bg(alpha(ui::INK, 0.08));
         div()
             .flex_none()
-            .h(px(42.))
+            .h(px(STATUS_BAR_H))
             .px(px(22.))
             .flex()
             .items_center()
@@ -961,17 +996,16 @@ impl Mixer {
             Page::Mixer => self.mixer_view(cx).into_any_element(),
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => self.mouse_view(window, cx).into_any_element(),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(cx).into_any_element(),
-            Page::WindowsAudio => self.win_audio(cx).into_any_element(),
+            Page::KeyboardMacros => self.macros_view(window, cx).into_any_element(),
+            Page::WindowsAudio => self.win_audio(window,cx).into_any_element(),
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, window, cx).into_any_element(),
             Page::Go(section) => self.go_controls(section, cx).into_any_element(),
         };
-        let mut body = div().flex().flex_col().gap(px(16.));
-        body = body.child(page);
         // Changement de page : le contenu glisse et apparaît en douceur.
         let content = div()
             .relative()
             .child(self.header(cx))
-            .child(body)
+            .child(page)
             .with_animation(
                 ElementId::NamedInteger("page-in".into(), self.nav_count),
                 gpui::Animation::new(std::time::Duration::from_millis(260)).with_easing(gpui::ease_out_quint()),
@@ -991,50 +1025,50 @@ impl Mixer {
                     .absolute()
                     .top_0()
                     .left_0()
-                    .size_full()
-                    .flex()
-                    .flex_col()
+                    .right_0()
+                    .bottom(px(STATUS_BAR_H))
+                    .child(self.sidebar(cx))
                     .child(
                         div()
-                            .flex()
-                            .flex_1()
-                            .min_h(px(0.))
-                            .child(self.sidebar(cx))
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(px(SIDEBAR_MARGIN + SIDEBAR_W))
+                            .right_0()
+                            // zone de déplacement : elle s'arrête avant les trois boutons, sinon Windows y voit la barre de titre
+                            .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(40.)).window_control_area(WindowControlArea::Drag))
                             .child(
+                                // en position absolue : la page qui défile se met en page une seule fois, à la taille de la zone,
+                                // au lieu d'être mesurée par chaque niveau de la fenêtre avant d'être placée
                                 div()
-                                    .relative()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .flex()
-                                    .flex_col()
-                                    // zone de déplacement : elle s'arrête avant les trois boutons, sinon Windows y voit la barre de titre
-                                    .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(40.)).window_control_area(WindowControlArea::Drag))
+                                    .id(ElementId::NamedInteger("page".into(), self.nav_count))
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.page_scroll)
                                     .child(
+                                        // la molette passe ici avant le défilement de la page : elle glisse au lieu de sauter
                                         div()
-                                            .id(ElementId::NamedInteger("page".into(), self.nav_count))
-                                            .flex_1()
-                                            .min_h(px(0.))
-                                            .overflow_y_scroll()
-                                            .track_scroll(&self.page_scroll)
-                                            .child(
-                                                // la molette passe ici avant le défilement de la page : elle glisse au lieu de sauter
-                                                div()
-                                                    .pt(px(38.))
-                                                    .pb(px(28.))
-                                                    .pl(px(28.))
-                                                    .pr(px(36.))
-                                                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| this.wheel(event, cx)))
-                                                    .child(div().mt(px(-preview_scroll())).child(content)),
-                                            ),
+                                            .pt(px(38.))
+                                            .pb(px(28.))
+                                            .pl(px(28.))
+                                            .pr(px(36.))
+                                            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| this.wheel(event, cx)))
+                                            .child(div().mt(px(-preview_scroll())).child(content)),
                                     ),
                             ),
-                    )
-                    .child(self.status_bar(cx)),
+                    ),
+            )
+            .child(
+                div().absolute().left_0().right_0().bottom_0().child(self.status_bar(cx)),
             )
             .child(Self::caption_buttons())
     }
 
     /// Liste déroulante : bouton, puis choix affichés au-dessus du reste de la page.
+    /// Elle s'ouvre vers le haut quand la place manque en bas, et défile si elle reste trop longue.
     pub(crate) fn dropdown(
         &self,
         key: &'static str,
@@ -1046,14 +1080,34 @@ impl Mixer {
     ) -> Div {
         let open = self.select_open.as_ref().is_some_and(|k| k.as_ref() == key);
         let pick = std::rc::Rc::new(pick);
-        let mut root = div().relative().child(ui::select_button(ElementId::Name(format!("select-{key}").into()), current, open, enabled).on_click(cx.listener(move |this, _, _, cx| {
+        // relève la place libre autour du bouton (sans la barre d'état) pour placer la liste à la prochaine ouverture
+        let room = self.select_room.clone();
+        let measure = canvas(
+            move |bounds, window, _| {
+                let above = f32::from(bounds.top()) - MENU_MARGIN;
+                let below = f32::from(window.viewport_size().height) - STATUS_BAR_H - f32::from(bounds.bottom()) - MENU_MARGIN;
+                room.borrow_mut().insert(key, (above, below));
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let mut root = div().relative().child(measure).child(ui::select_button(ElementId::Name(format!("select-{key}").into()), current, open, enabled).on_click(cx.listener(move |this, _, _, cx| {
             if enabled {
                 this.select_open = if open { None } else { Some(key.into()) };
                 cx.notify();
             }
         })));
         if open {
-            let mut list = ui::menu_panel().id(ElementId::Name(format!("list-{key}").into())).max_h(px(260.)).overflow_y_scroll();
+            // 34 px par choix, plus les marges de la liste
+            let wanted = (options.len() as f32 * 34. + 14.).min(MENU_MAX_H);
+            let (above, below) = self.select_room.borrow().get(key).copied().unwrap_or((0., f32::MAX));
+            let upward = below < wanted && above > below;
+            let height = (if upward { above } else { below } - BUTTON_GAP).clamp(MENU_MIN_H, MENU_MAX_H);
+            // occlude : la molette fait défiler la liste, pas la page derrière
+            let mut list = ui::menu_panel().id(ElementId::Name(format!("list-{key}").into())).max_h(px(height)).overflow_y_scroll().occlude();
             for (i, (label, selected)) in options.into_iter().enumerate() {
                 let pick = pick.clone();
                 list = list.child(ui::menu_item((key, i), None, label, selected).on_click(cx.listener(move |this, _, _, cx| {
@@ -1066,7 +1120,7 @@ impl Mixer {
             root = root.child(deferred(
                 div()
                     .absolute()
-                    .top(px(42.))
+                    .map(|d| if upward { d.bottom(px(38. + BUTTON_GAP)) } else { d.top(px(38. + BUTTON_GAP)) })
                     .left_0()
                     .right_0()
                     .min_w(px(140.))

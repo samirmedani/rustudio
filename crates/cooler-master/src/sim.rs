@@ -4,12 +4,16 @@ use crate::*;
 
 #[derive(Clone)]
 pub struct Sim {
-    pub memory: [u8; 256],
+    pub memory: [u8; 805],
     pub keys: [[u8; 3]; data::LEDS],
     pub disconnected: bool,
     pub writes: usize,
     /// rapport parasite glissé avant chaque réponse (comme une réponse en retard)
     pub noise: bool,
+    pub macro_map: [u16; 104],
+    pub macro_records: Vec<Vec<u8>>,
+    macro_incoming: Vec<u8>,
+    macro_next: u8,
     pending: std::collections::VecDeque<Vec<u8>>,
     incoming: Vec<[u8; REPORT]>,
 }
@@ -30,7 +34,7 @@ const RECORDS: [[u8; 10]; 20] = [
 
 impl Default for Sim {
     fn default() -> Self {
-        let mut memory = [0u8; 256];
+        let mut memory = [0u8; 805];
         for (i, r) in RECORDS.iter().enumerate() {
             memory[i * 10..i * 10 + 10].copy_from_slice(r);
         }
@@ -39,7 +43,8 @@ impl Default for Sim {
         for (i, k) in keys.iter_mut().enumerate().skip(19).take(6) {
             *k = if i < 22 { [0x00, 0xFF, 0x00] } else { [0xFF, 0xFF, 0x00] };
         }
-        Self { memory, keys, disconnected: false, writes: 0, noise: false, pending: Default::default(), incoming: vec![] }
+        let macro_records = (0..12).map(|id| { let mut b=vec![0;355]; b[0]=id; b }).collect();
+        Self { memory, keys, disconnected: false, writes: 0, noise: false, macro_map: [0;104], macro_records, macro_incoming: vec![], macro_next:0, pending: Default::default(), incoming: vec![] }
     }
 }
 
@@ -91,18 +96,44 @@ impl Transport for Sim {
             self.keys_frame(r);
             return Ok(());
         }
+        match r[0] {
+            4 => {
+                if r[1] & 0x80 != 0 { self.macro_incoming.clear(); self.macro_next=1; if r[1]!=0x86{return Ok(());} }
+                else if self.macro_incoming.is_empty()||r[1]!=self.macro_next {self.macro_incoming.clear();return Ok(());}
+                else {self.macro_next+=1;}
+                self.macro_incoming.extend_from_slice(&r[2..]);
+                if self.macro_incoming.len() >= 355 {
+                    let id=self.macro_incoming[0] as usize;
+                    if id < 12 { self.macro_records[id].copy_from_slice(&self.macro_incoming[..355]); self.writes+=1; }
+                    self.macro_incoming.clear();
+                }
+                return Ok(());
+            }
+            5 if r[2] < 12 => {
+                for frame in crate::macros::frames(5, &self.macro_records[r[2] as usize]) { self.reply(frame.to_vec()); }
+                return Ok(());
+            }
+            6 if r[2] < 12 => { let b=&mut self.macro_records[r[2] as usize]; b.fill(0); b[0]=r[2]; self.writes+=1; return Ok(()); }
+            8 if r[2] < 104 && r[3] == 1 => { self.macro_map[r[2] as usize]=u16::from_le_bytes([r[4],r[5]]); self.writes+=1; return Ok(()); }
+            9 => {
+                let b:Vec<_>=self.macro_map.iter().flat_map(|v|v.to_le_bytes()).collect();
+                for frame in crate::macros::frames(9,&b) { self.reply(frame.to_vec()); }
+                return Ok(());
+            }
+            _ => {}
+        }
         if r[1] != MARK {
             return Ok(()); // rapport ignoré, sans réponse, comme le vrai clavier
         }
         let address = u16::from_le_bytes([r[2], r[3]]) as usize;
         let len = u16::from_le_bytes([r[4], r[5]]) as usize;
         match r[0] {
-            OP_READ if address + len <= 256 && len <= REPORT - 6 => {
+            OP_READ if address + len <= self.memory.len() && len <= REPORT - 6 => {
                 let mut out = vec![OP_READ, MARK, r[2], r[3], r[4], r[5]];
                 out.extend_from_slice(&self.memory[address..address + len]);
                 self.reply(out);
             }
-            OP_WRITE if address + len <= 256 && len <= REPORT - 6 => {
+            OP_WRITE if address + len <= self.memory.len() && len <= REPORT - 6 => {
                 self.memory[address..address + len].copy_from_slice(&r[6..6 + len]);
                 self.writes += 1;
             }

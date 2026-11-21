@@ -15,9 +15,14 @@ pub fn inventory(live: bool) -> Value {
         return v;
     }
     json!({"status":"ok","outputs":[
-        {"name":"Casque de démonstration","default":true,"communications":false},
-        {"name":"Sortie de démonstration","default":false,"communications":true}],
-        "inputs":[{"name":"Micro de démonstration","default":true,"communications":true}]})
+        {"id":"demo-system","name":"System (GoXLR de démonstration)","default":true,"communications":false},
+        {"id":"demo-chat","name":"Chat (GoXLR de démonstration)","default":false,"communications":true},
+        {"id":"demo-game","name":"Game (GoXLR de démonstration)"},
+        {"id":"demo-music","name":"Music (GoXLR de démonstration)"},
+        {"id":"demo-sample","name":"Sample (GoXLR de démonstration)"}],
+        "inputs":[{"id":"demo-mic","name":"Chat Mic (GoXLR de démonstration)","default":true,"communications":true},
+        {"id":"demo-stream","name":"Broadcast Stream Mix (GoXLR de démonstration)"},
+        {"id":"demo-vod","name":"VOD (GoXLR de démonstration)"}]})
 }
 
 #[derive(Default)]
@@ -26,14 +31,60 @@ pub struct WinPage {
     busy: bool,
     confirm: bool,
     pub(crate) note: Option<String>,
+    pub(crate) monitor: Option<rustudio_windows_desktop::spectrum::Monitor>,
+    pub(crate) frame: rustudio_windows_desktop::spectrum::Frame,
+    pub(crate) selected: Option<rustudio_windows_desktop::spectrum::Source>,
+    pub(crate) paused: bool,
+    pub(crate) guide_hidden: bool,
+    active: bool,
 }
 impl WinPage {
     pub fn cancel(&mut self) {
         self.confirm = false;
     }
+    pub fn receive(&mut self,data:Value) {self.inventory=Some(data);self.sync_monitor();}
+    pub(crate) fn sync_monitor(&mut self) {
+        use rustudio_windows_desktop::spectrum::{Source,Frame};
+        let mut sources=vec![];let mut preferred=None;
+        if let Some(data)=&self.inventory {
+            for(key,output)in [("outputs",true),("inputs",false)] {
+                for row in data[key].as_array().into_iter().flatten(){
+                    let Some(id)=row["id"].as_str()else{continue};let s=Source{id:id.into(),output};
+                    if preferred.is_none()||output&&row["default"]==true {preferred=Some(s.clone());}
+                    sources.push(s);
+                }
+            }
+        }
+        if !self.selected.as_ref().is_some_and(|s|sources.contains(s)) {self.selected=preferred;self.frame=Frame::default();}
+        if let Some(monitor)=&self.monitor {
+            if self.active&&!self.paused {monitor.configure(sources,self.selected.clone());}else{monitor.stop();}
+        }
+    }
 }
 
 impl Mixer {
+    pub(crate) fn audio_visibility(&mut self,visible:bool,cx:&mut Context<Self>) {
+        self.win.active=visible;
+        if visible&&self.win.monitor.is_none() {
+            self.win.monitor=Some(rustudio_windows_desktop::spectrum::Monitor::new(!self.client.is_live()));
+            let executor=cx.background_executor().clone();
+            cx.spawn(async move|this,cx|{
+                loop {executor.timer(std::time::Duration::from_millis(50)).await;
+                    if this.update(cx,|this,cx|{
+                        if this.page!=crate::desktop::Page::WindowsAudio{return;}
+                        if let Some(m)=&this.win.monitor {
+                            let mut frame=m.frame();
+                            if frame.version!=this.win.frame.version {
+                                if frame.selected!=this.win.selected {frame.ready=false;frame.bands.fill(rustudio_windows_desktop::spectrum::FLOOR);frame.peak_db=rustudio_windows_desktop::spectrum::FLOOR;}
+                                this.win.frame=frame;cx.notify();
+                            }
+                        }
+                    }).is_err(){break;}
+                }
+            }).detach();
+        }
+        self.win.sync_monitor();
+    }
     /// Demande de confirmation du son Windows, en fenêtre par-dessus la page.
     pub(crate) fn win_confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.win.confirm {
@@ -45,7 +96,7 @@ impl Mixer {
                     .items_center()
                     .gap(px(14.))
                     .child(ui::chip(Icon::Alert, ui::ORANGE, 34.))
-                    .child(div().flex_1().text_size(px(13.5)).child("Utiliser les entrées et sorties GoXLR recommandées par défaut dans Windows ?"))
+                    .child(div().flex_1().min_w(px(0.)).text_size(px(13.5)).child("Windows utilisera Chat Mic comme micro. Les sorties déjà sur la GoXLR seront conservées ; les autres passeront sur System, ou Chat pour les appels. Les choix propres à Discord et OBS ne changent pas."))
                     .child(ui::pill("windows-fix-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
                         this.win.cancel();
                         cx.notify();
@@ -54,13 +105,13 @@ impl Mixer {
             )
     }
 
-    pub fn win_audio(&self, cx: &mut Context<Self>) -> Div {
-        let mut root = div().flex().flex_col().gap(px(16.));
+    pub fn win_audio(&self, window: &gpui::Window, cx: &mut Context<Self>) -> Div {
+        let mut root = div().w_full().min_w(px(0.)).whitespace_normal().flex().flex_col().gap(px(16.));
         for issue in self.win.inventory.as_ref().and_then(|v| v["issues"].as_array()).into_iter().flatten() {
             let name = issue["name"].as_str().unwrap_or("un autre périphérique");
             let role = if issue["role"] == "communications" { "pour les appels" } else { "par défaut" };
             let text = match issue["kind"].as_str() {
-                Some("capture-loop") => format!("Windows enregistre « {name} » {role} au lieu de « Chat Mic » : tes amis entendent le stream en écho."),
+                Some("capture-loop") => format!("Windows utilise « {name} » {role} comme micro : tes amis peuvent recevoir le mix du stream ou un écho. Pour leur envoyer ton micro, choisis Chat Mic."),
                 Some("capture-other") => format!("Le micro de Windows {role} est « {name} » : la GoXLR n’est pas utilisée."),
                 Some("capture-none") => format!("Aucun micro Windows {role}."),
                 Some("render-other") => format!("Le son {role} part sur « {name} » au lieu de la GoXLR."),
@@ -68,21 +119,14 @@ impl Mixer {
             };
             root = root.child(ui::notice(false, text));
         }
+        root=root.child(self.audio_guide(f32::from(window.viewport_size().width)>1240.,cx)).child(self.audio_spectrum(cx));
         let mut cards: Vec<gpui::AnyElement> = vec![];
         if let Some(data) = self.win.inventory.as_ref().filter(|v| v["status"] == "ok") {
-            for (key, label, glyph) in [("outputs", "Sorties audio", Icon::Headphones), ("inputs", "Entrées audio", Icon::Mic)] {
-                let mut group = ui::section(glyph, ui::ACCENT, label, None).gap(px(4.));
+            for (key, label, glyph) in [("outputs", "Sorties · du PC vers ton casque", Icon::Headphones), ("inputs", "Entrées · vers tes applis", Icon::Mic)] {
+                let mut group = ui::section(glyph, ui::ACCENT, label, None).w_full().min_w(px(0.)).gap(px(10.));
+                group=group.child(ui::caption(if key=="outputs"{"Le PC envoie le son vers ces voies. Clique une ligne pour voir son spectre."}else{"Choisis une entrée pour la tester, même si aucune appli ne l’utilise encore."}));
                 for (n, row) in data[key].as_array().into_iter().flatten().enumerate() {
-                    let name = row["name"].as_str().unwrap_or("Périphérique audio");
-                    let mut badges = div().flex().gap(px(6.));
-                    if row["default"] == true {
-                        badges = badges.child(ui::badge("Par défaut", ui::GREEN));
-                    }
-                    if row["communications"] == true {
-                        badges = badges.child(ui::badge("Appels", ui::ACCENT));
-                    }
-                    let goxlr = name.to_lowercase().contains("goxlr");
-                    group = group.child(ui::list_row(Some((if goxlr { Icon::Sliders } else { glyph }, if goxlr { ui::ACCENT } else { ui::TEXT2 })), name.to_owned(), goxlr.then(|| "GoXLR".into()), badges, n == 0));
+                    group = group.child(self.audio_endpoint(row,key=="outputs",n,cx));
                 }
                 if data[key].as_array().is_none_or(Vec::is_empty) {
                     group = group.child(hint("Aucun périphérique actif."));
@@ -92,21 +136,23 @@ impl Mixer {
         } else {
             cards.push(ui::card().child(hint("Inventaire audio indisponible. Nouvelle lecture automatique.")).into_any_element());
         }
-        root = root.child(ui::columns(cards));
+        root = root.child(div().grid().grid_cols(2).gap(px(16.)).children(cards));
         if self.client.is_live() {
             root = root.child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(8.))
                     .child(ui::pill("windows-open", Some(Icon::External), "Paramètres de son de Windows", ui::Tone::Plain).on_click(cx.listener(|_, _, _, cx| cx.open_url("ms-settings:sound"))))
                     .when(!self.win.busy, |d| {
-                        d.child(ui::pill("windows-fix", Some(Icon::Check), "Rétablir les défauts GoXLR", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| {
+                        d.child(ui::pill("windows-fix", Some(Icon::Check), "Configurer Windows pour la GoXLR", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| {
                             this.win.confirm = true;
                             cx.notify();
                         })))
                     }),
             );
         }
+        if let Some(note)=&self.win.note {root=root.child(ui::hint(note.clone()));}
         root
     }
 
@@ -123,7 +169,7 @@ impl Mixer {
             let (n, state) = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.win.busy = false;
-                this.win.inventory = Some(state);
+                this.win.receive(state);
                 this.win.note = Some(match n {
                     -1 => "Windows ne voit pas les voies nécessaires de la GoXLR.".into(),
                     0 => "Les périphériques par défaut sont déjà corrects.".into(),

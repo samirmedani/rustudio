@@ -40,7 +40,7 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     assert_eq!(mouse.actions, ["setting", "settings", "refresh"]);
     let keyboard = modules::find("cooler-master-mk770").unwrap();
     assert_eq!(keyboard.kind, "keyboard");
-    assert_eq!(keyboard.actions, ["settings", "refresh"]);
+    assert_eq!(keyboard.actions, ["settings", "refresh", "macros", "macro-assign", "macro-remove"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");
     }

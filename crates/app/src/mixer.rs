@@ -8,7 +8,7 @@ use gpui::{
 };
 use serde_json::{Value, json};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
     sync::mpsc,
@@ -41,6 +41,7 @@ pub struct Mixer {
     pub(crate) page: Page,
     pub(crate) mouse: crate::mouse::MousePage,
     pub(crate) keyboard: crate::keyboard::KeyboardPage,
+    pub(crate) macros: crate::macros::Editor,
     pub(crate) mouse_focus: Vec<FocusHandle>,
     pub(crate) go: crate::goxlr::GoPage,
     pub(crate) go_focus: Vec<FocusHandle>,
@@ -56,6 +57,8 @@ pub struct Mixer {
     pub(crate) confirm: Option<Confirm>,
     pub(crate) menu_open: bool,
     pub(crate) select_open: Option<SharedString>,
+    /// Place libre au-dessus et au-dessous de chaque liste déroulante, relevée à l'affichage précédent.
+    pub(crate) select_room: Rc<RefCell<HashMap<&'static str, (f32, f32)>>>,
     sender: mpsc::SyncSender<Command>,
     gesture: Option<Gesture>,
     pending: HashMap<String, (u64, u8)>,
@@ -87,7 +90,7 @@ pub struct Mixer {
     focus: Vec<FocusHandle>,
     received: usize,
     renders: usize,
-    started: Instant,
+    pub(crate) started: Instant,
 }
 
 impl Mixer {
@@ -148,6 +151,7 @@ impl Mixer {
             usage: Default::default(),
             mouse: crate::mouse::MousePage::default(),
             keyboard: crate::keyboard::KeyboardPage::default(),
+            macros: crate::macros::Editor::new(store.dir().join("macros"), cx),
             mouse_focus: (0..12).map(|_| cx.focus_handle()).collect(),
             go: crate::goxlr::GoPage::default(),
             win: crate::win_session::WinPage::default(),
@@ -169,6 +173,7 @@ impl Mixer {
             confirm: None,
             menu_open: false,
             select_open: None,
+            select_room: Rc::default(),
             sender,
             gesture: None,
             pending: HashMap::new(),
@@ -246,7 +251,7 @@ impl Mixer {
         if arrived {
             self.scroll_goal = None;
         } else {
-            window.request_animation_frame();
+            ui::animation_frame(window);
         }
     }
 
@@ -270,6 +275,9 @@ impl Mixer {
             None => {}
         }
         self.page = page;
+        self.audio_visibility(page == Page::WindowsAudio, cx);
+        if page != Page::KeyboardMacros { self.macros.stop(); }
+        if page == Page::KeyboardMacros { self.macro_command("macros", json!({}), cx); }
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page.is_mouse());
         self.client.set_keyboard_visible(page.is_keyboard());
@@ -338,7 +346,7 @@ impl Mixer {
                 self.update = Some(update);
             }
             Event::Audio(data) => {
-                self.win.inventory = Some(data);
+                self.win.receive(data);
                 force_render = matches!(self.page, Page::WindowsAudio | Page::Mixer);
             }
             Event::MicOsd(state) => {
@@ -346,8 +354,9 @@ impl Mixer {
                 force_render = false;
             }
             Event::MicLevel(level) => {
+                // vumètre déjà en mouvement : sa prochaine image prend la nouvelle mesure, sans redessin en plus
+                force_render = self.page == Page::Go(crate::goxlr::Section::Microphone) && !self.go.level_moving();
                 self.go.level = level;
-                force_render = self.page == Page::Go(crate::goxlr::Section::Microphone);
             }
             Event::Latency(value) => {
                 self.go.latency = Some(value);
@@ -905,6 +914,12 @@ impl Render for Mixer {
         let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
         self.sheet_tick(cx);
         self.step_scroll(window);
+        if self.page == Page::Go(crate::goxlr::Section::Microphone) && self.go.step_level() {
+            ui::animation_frame_every(window, crate::goxlr::LEVEL_FRAME);
+        }
+        if self.page == Page::Keyboard && self.keyboard.shows_previews() {
+            ui::animation_frame_every(window, crate::keyboard::PREVIEW_FRAME);
+        }
         let sheet = self.update_sheet_view(cx);
         let shell = self
             .shell(window, cx)
@@ -1087,10 +1102,8 @@ impl Mixer {
         let value = self.param_value(&format!("param-{key}"), actual);
         let fraction = ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
         let hover = ui::hover_t(&format!("param-{key}"));
+        // bloc simple plutôt qu'une colonne flexbox : la mise en page mesure ses textes une fois au lieu de trois
         div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
             .child(
                 div()
                     .flex()
@@ -1099,7 +1112,7 @@ impl Mixer {
                     .child(div().text_size(px(13.)).text_color(rgb(ui::TEXT)).child(label.into()))
                     .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format(value))),
             )
-            .child(self.param_area(key, range, step, false, enabled, commit, cx).h(px(22.)).w_full().child(ui::hslider(fraction, rgb(ui::ACCENT), hover)))
+            .child(self.param_area(key, range, step, false, enabled, commit, cx).mt(px(4.)).h(px(22.)).w_full().child(ui::hslider(fraction, rgb(ui::ACCENT), hover)))
     }
 
     /// Colonne d'égaliseur : valeur en dB au-dessus, curseur vertical, libellé dessous.
@@ -1119,16 +1132,14 @@ impl Mixer {
         let zero = ((0. - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
         let hover = ui::hover_t(&format!("param-{key}"));
         let shown = if value > 0. { format!("+{}", fmt_num(value)) } else { fmt_num(value) };
+        // blocs empilés, chacun centré dans sa ligne : bien moins de mesures qu'une colonne flexbox centrée
+        let centred = || div().flex().justify_center();
         div()
-            .flex()
-            .flex_col()
-            .items_center()
             .flex_1()
             .min_w(px(0.))
-            .gap(px(8.))
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(if value.abs() < 0.01 { ui::TEXT3 } else { ui::ACCENT })).child(shown))
-            .child(self.param_area(key, range, step, true, enabled, commit, cx).w(px(28.)).h(px(150.)).child(ui::vslider(fraction, zero, rgb(ui::ACCENT), hover, 150.)))
-            .child(below)
+            .child(centred().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(if value.abs() < 0.01 { ui::TEXT3 } else { ui::ACCENT })).child(shown))
+            .child(centred().mt(px(8.)).child(self.param_area(key, range, step, true, enabled, commit, cx).w(px(28.)).h(px(150.)).child(ui::vslider(fraction, zero, rgb(ui::ACCENT), hover, 150.))))
+            .child(div().mt(px(8.)).child(below))
     }
 }
 

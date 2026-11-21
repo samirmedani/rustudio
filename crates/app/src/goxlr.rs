@@ -84,6 +84,9 @@ pub struct GoPage {
     pub(crate) job: Value,
     /// Niveau d'entrée du micro en dB, lu seulement page Micro ouverte.
     pub(crate) level: Option<f64>,
+    /// Niveau affiché par le vumètre : il suit `level` en douceur.
+    level_shown: Option<f64>,
+    level_tick: Option<std::time::Instant>,
     confirm: Option<(&'static str, Value, String)>,
     editing: Option<usize>,
     name: String,
@@ -123,6 +126,30 @@ impl GoPage {
                 .view
                 .as_ref()
                 .is_some_and(|v| v.device.status == "ready")
+    }
+
+    /// Le vumètre est en train de rejoindre la dernière mesure.
+    pub(crate) fn level_moving(&self) -> bool {
+        self.level_tick.is_some()
+    }
+
+    /// Une image du vumètre : l'affichage monte vite vers le niveau mesuré et redescend doucement, comme le
+    /// vumètre d'une console. Renvoie vrai tant qu'il bouge encore.
+    pub(crate) fn step_level(&mut self) -> bool {
+        let Some(target) = self.level else {
+            self.level_shown = None;
+            self.level_tick = None;
+            return false;
+        };
+        let now = std::time::Instant::now();
+        let elapsed = self.level_tick.map_or(0., |at| now.duration_since(at).as_secs_f64().min(0.1));
+        let shown = self.level_shown.unwrap_or(LEVEL_FLOOR);
+        let ease = if target > shown { LEVEL_RISE_S } else { LEVEL_FALL_S };
+        let next = shown + (target - shown) * (1. - (-elapsed / ease).exp());
+        let settled = (target - next).abs() < 0.05;
+        self.level_shown = Some(if settled { target } else { next });
+        self.level_tick = (!settled).then_some(now);
+        !settled
     }
 }
 
@@ -585,9 +612,10 @@ impl Mixer {
             .child(ui::label("Type de branchement"))
             .child(kinds)
             .child(self.slider_row("mic-gain", "Gain", mic["gain_db"].as_f64().unwrap_or(0.), (0., 72.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("mic", json!({"gain_db": v.round() as i64}), cx), cx))
-            .child(level_meter(self.go.level));
+            .child(level_meter(self.go.level_shown, self.go.level));
         for tip in labels(&v.meta["mic_models"][model]["tips"]).take(3) {
-            you = you.child(div().flex().gap(px(8.)).child(ui::icon(Icon::Sparkles, 14., rgb(ui::ACCENT))).child(ui::hint(tip.to_owned()).text_size(px(12.)).flex_1()));
+            // min_w(0) : le conseil revient à la ligne dans la carte au lieu de déborder sur la carte voisine
+            you = you.child(div().flex().items_start().gap(px(8.)).child(div().flex_none().mt(px(2.)).child(ui::icon(Icon::Sparkles, 14., rgb(ui::ACCENT)))).child(ui::hint(tip.to_owned()).text_size(px(12.)).line_height(px(17.)).flex_1().min_w(px(0.))));
         }
         you = you.child(
             div()
@@ -632,21 +660,19 @@ impl Mixer {
             let (b1, b2, b3) = (band.clone(), band.clone(), band.clone());
             // fréquence de la bande, puis ses deux flèches regroupées dans une même pastille sous le curseur
             let below = div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(6.))
-                .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(hz(freq)))
+                .child(div().flex().justify_center().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(hz(freq)))
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(2.))
-                        .p(px(2.))
-                        .rounded_full()
-                        .bg(alpha(0x767680, 0.1))
-                        .child(self.act(ui::round(SharedString::from(format!("eqf-down-{band}")), Icon::ChevronLeft, 22., alpha(0x767680, 0.), rgb(ui::TEXT2)), "dsp", json!({"eq_freq":{(b1):down}}), cx))
-                        .child(self.act(ui::round(SharedString::from(format!("eqf-up-{band}")), Icon::ChevronRight, 22., alpha(0x767680, 0.), rgb(ui::TEXT2)), "dsp", json!({"eq_freq":{(b2):up}}), cx)),
+                    div().mt(px(6.)).flex().justify_center().child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(2.))
+                            .p(px(2.))
+                            .rounded_full()
+                            .bg(alpha(0x767680, 0.1))
+                            .child(self.act(ui::round(SharedString::from(format!("eqf-down-{band}")), Icon::ChevronLeft, 22., alpha(0x767680, 0.), rgb(ui::TEXT2)), "dsp", json!({"eq_freq":{(b1):down}}), cx))
+                            .child(self.act(ui::round(SharedString::from(format!("eqf-up-{band}")), Icon::ChevronRight, 22., alpha(0x767680, 0.), rgb(ui::TEXT2)), "dsp", json!({"eq_freq":{(b2):up}}), cx)),
+                    ),
                 );
             bands = bands.child(self.eq_column(&format!("mic-eq-{band}"), dsp["eq"][&band].as_f64().unwrap_or(0.), (-9., 9.), 1., below.into_any_element(), enabled, move |this, v, cx| this.go_send("dsp", json!({"eq":{(b3.clone()): v.round() as i64}}), cx), cx));
         }
@@ -766,7 +792,7 @@ impl Mixer {
         for (i, freq) in v.meta["hp_bands"].as_array().into_iter().flatten().enumerate() {
             let Some(current) = values.get(i).and_then(Value::as_f64) else { continue };
             let all = values.clone();
-            let below = div().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(hz(freq.as_f64().unwrap_or(0.)));
+            let below = div().flex().justify_center().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(hz(freq.as_f64().unwrap_or(0.)));
             bands = bands.child(self.eq_column(&format!("hp-band-{i}"), current, (-12., 12.), 0.5, below.into_any_element(), enabled, move |this, v, cx| {
                 let mut next = all.clone();
                 next[i] = json!(v);
@@ -1019,7 +1045,8 @@ impl Mixer {
     }
 
     pub fn go_controls(&self, section: Section, cx: &mut Context<Self>) -> Div {
-        let mut root = div().flex().flex_col().gap(px(16.));
+        // bloc simple : la page se met en page en une passe (une colonne flexbox multiplie les mesures de tout ce qu'elle contient)
+        let mut root = div();
         if section == Section::Diagnostic {
             return root.child(self.diagnostic_view(cx));
         }
@@ -1027,7 +1054,7 @@ impl Mixer {
             return root.child(ui::card().items_center().py(px(36.)).child(ui::chip(Icon::Refresh, ui::ACCENT, 52.)).child(ui::title("Lecture des réglages", 17.)).child(hint("En attente des réglages de la GoXLR Mini.")));
         };
         if view.device.status != "ready" {
-            root = root.child(ui::notice(false, "GoXLR indisponible : réglages désactivés jusqu’à son retour."));
+            root = root.child(ui::notice(false, "GoXLR indisponible : réglages désactivés jusqu’à son retour.").mb(px(16.)));
         }
         root.child(match section {
             Section::Routing => self.routing(view, cx),
@@ -1192,6 +1219,10 @@ const LEVEL_FLOOR: f64 = -72.;
 /// Au-dessus : trop fort, la voix sature bientôt. En dessous de LEVEL_GOOD : trop faible pour un bon rapport au bruit.
 const LEVEL_HOT: f64 = -6.;
 const LEVEL_GOOD: f64 = -24.;
+/// Vumètre : temps de montée et de retombée (secondes), puis rythme d'affichage (60 images/s suffisent à l'œil).
+const LEVEL_RISE_S: f64 = 0.035;
+const LEVEL_FALL_S: f64 = 0.28;
+pub(crate) const LEVEL_FRAME: std::time::Duration = std::time::Duration::from_micros(16_600);
 
 /// Couleur et conseil pour un niveau d'entrée donné.
 fn level_reading(db: f64) -> (u32, &'static str) {
@@ -1206,16 +1237,18 @@ fn level_reading(db: f64) -> (u32, &'static str) {
     }
 }
 
-/// Niveau d'entrée du micro en direct : barre segmentée de −72 à 0 dB et conseil.
-fn level_meter(level: Option<f64>) -> Div {
+/// Niveau d'entrée du micro en direct : barre segmentée de −72 à 0 dB et conseil. La barre suit le niveau lissé
+/// (le dernier segment s'allume progressivement), la valeur et le conseil suivent la mesure.
+fn level_meter(shown: Option<f64>, level: Option<f64>) -> Div {
     const SEGMENTS: usize = 36;
-    let lit = level.map(|db| (((db - LEVEL_FLOOR) / -LEVEL_FLOOR).clamp(0., 1.) * SEGMENTS as f64).round() as usize).unwrap_or(0);
+    let filled = shown.map(|db| ((db - LEVEL_FLOOR) / -LEVEL_FLOOR).clamp(0., 1.) * SEGMENTS as f64).unwrap_or(0.);
     let mut bar = div().flex().gap(px(3.)).h(px(18.));
     for n in 0..SEGMENTS {
         // chaque segment garde la couleur de sa zone : vert jusqu'à −6 dB, rouge au-delà
         let db = LEVEL_FLOOR + (n as f64 + 0.5) * -LEVEL_FLOOR / SEGMENTS as f64;
         let zone = if db >= LEVEL_HOT { ui::RED } else if db >= -12. { ui::ORANGE } else { ui::GREEN };
-        bar = bar.child(div().flex_1().h_full().rounded(px(3.)).bg(if n < lit { rgb(zone) } else { alpha(0x767680, 0.14) }));
+        let amount = (filled - n as f64).clamp(0., 1.) as f32;
+        bar = bar.child(div().flex_1().h_full().rounded(px(3.)).bg(ui::lerp(alpha(0x767680, 0.14), rgb(zone), amount)));
     }
     let (value, colour, advice) = match level {
         Some(db) => {
@@ -1225,9 +1258,6 @@ fn level_meter(level: Option<f64>) -> Div {
         None => ("—".to_owned(), ui::TEXT3, "Mesure en attente"),
     };
     div()
-        .flex()
-        .flex_col()
-        .gap(px(6.))
         .child(
             div()
                 .flex()
@@ -1243,7 +1273,7 @@ fn level_meter(level: Option<f64>) -> Div {
                         .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(value)),
                 ),
         )
-        .child(bar)
+        .child(bar.mt(px(6.)))
 }
 
 /// « 420 Mo » ou « 6,1 Go ».

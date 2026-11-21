@@ -57,6 +57,9 @@ impl KeyboardHub {
         json!({"state": s.settings, "v": self.changes()})
     }
     pub fn command(&self, action: &str, body: &Value) -> Result<Value, String> {
+        if !matches!(action, "settings" | "refresh" | "macros" | "macro-assign" | "macro-remove") {
+            return Err("Commande clavier inconnue.".into());
+        }
         if self.rx.lock().unwrap().is_some() {
             return Err("Le module clavier n’est pas démarré".into());
         }
@@ -84,6 +87,7 @@ impl KeyboardHub {
                     if request.as_ref().is_some_and(|r| r.deadline <= Instant::now()) {
                         continue;
                     }
+                    let mut macro_result = None;
                     let result = (|| -> Result<Settings, String> {
                         if keyboard.is_none() {
                             let opened = open(shared.simulated);
@@ -91,6 +95,20 @@ impl KeyboardHub {
                             keyboard = Some(Keyboard::new(opened?));
                         }
                         let kb = keyboard.as_mut().unwrap();
+                        if let Some(r) = &request {
+                            macro_result = match r.action.as_str() {
+                                "macros" => Some(kb.read_macros()?),
+                                "macro-assign" => Some(kb.assign_macro(&serde_json::from_value(r.body.clone()).map_err(|_| "Macro invalide".to_owned())?)?),
+                                "macro-remove" => {
+                                    #[derive(serde::Deserialize)]
+                                    #[serde(deny_unknown_fields)]
+                                    struct Remove { slot: u8 }
+                                    let p: Remove = serde_json::from_value(r.body.clone()).map_err(|_| "Emplacement de macro invalide".to_owned())?;
+                                    Some(kb.remove_macro(p.slot)?)
+                                }
+                                _ => None,
+                            };
+                        }
                         match &request {
                             Some(r) if r.action == "settings" => kb.apply_json(&r.body),
                             _ => kb.read(),
@@ -115,7 +133,7 @@ impl KeyboardHub {
                         shared.version.fetch_add(1, Ordering::Relaxed);
                     }
                     if let Some(r) = request {
-                        let _ = r.answer.send(result.map(|s| json!({"ok": true, "state": s})));
+                        let _ = r.answer.send(result.map(|s| json!({"ok": true, "state": s, "macros": macro_result})));
                     }
                     if keyboard.is_none() {
                         drop(shared);

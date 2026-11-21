@@ -6,7 +6,7 @@ use crate::{
     mixer::Mixer,
     ui::{self, Icon, Tone, alpha, rgb},
 };
-use gpui::{AnimationExt as _, Context, Div, FontWeight, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{Context, Div, FontWeight, IntoElement, SharedString, div, prelude::*, px};
 use rustudio_core::mk770::{self as data, BRIGHTNESS_STEPS, LAYOUT};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -60,6 +60,10 @@ impl KeyboardPage {
     }
     fn live(&self) -> Option<&Settings> {
         self.status.as_ref().filter(|v| v.device.status == "ready")?.state.as_ref()
+    }
+    /// La page des effets montre ses aperçus animés (clavier prêt).
+    pub(crate) fn shows_previews(&self) -> bool {
+        self.live().is_some()
     }
     fn brush(&self) -> String {
         self.brush.clone().unwrap_or_else(|| "#0071E3".into())
@@ -211,7 +215,7 @@ impl Mixer {
             .bg(if selected { alpha(ui::ACCENT, 0.07) } else { ui::lerp(alpha(ui::PAPER, 0.7), rgb(ui::PAPER), t) })
             .border_1()
             .border_color(if selected { alpha(ui::ACCENT, 0.9) } else { ui::lerp(alpha(ui::INK, 0.08), alpha(ui::ACCENT, 0.3), t) })
-            .child(preview(id, colour, reverse))
+            .child(preview(id, colour, reverse, self.started.elapsed().as_secs_f32()))
             .child(div().w_full().text_center().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).child(e.name))
             .child(div().text_size(px(11.)).text_color(rgb(if e.reactive { ui::ORANGE_TEXT } else { ui::TEXT3 })).child(effect_kind(id)))
             .when(selected, |d| {
@@ -513,9 +517,12 @@ const PREVIEW_COLS: usize = 12;
 const PREVIEW_ROWS: usize = 4;
 const CELL: f32 = 9.;
 const STEP: f32 = 12.;
+/// Rythme des aperçus : 30 images/s suffisent à ces petites animations (l'animation intégrée suivait l'écran, 360 Hz ici).
+pub(crate) const PREVIEW_FRAME: std::time::Duration = std::time::Duration::from_micros(33_300);
 
-/// Aperçu animé d'un effet sur un mini clavier : ce que le vrai clavier affiche, à peu près.
-fn preview(effect: u8, colour: u32, reverse: bool) -> impl IntoElement {
+/// Aperçu animé d'un effet sur un mini clavier : ce que le vrai clavier affiche, à peu près. `clock` : secondes
+/// écoulées, l'aperçu en tire sa position dans le cycle de l'effet.
+fn preview(effect: u8, colour: u32, reverse: bool, clock: f32) -> impl IntoElement {
     let w = PREVIEW_COLS as f32 * STEP - (STEP - CELL);
     let h = PREVIEW_ROWS as f32 * STEP - (STEP - CELL);
     let seconds = match effect {
@@ -524,27 +531,22 @@ fn preview(effect: u8, colour: u32, reverse: bool) -> impl IntoElement {
         7 | 13 | 14 => 4.0,
         _ => 2.4,
     };
+    let t = (clock % seconds) / seconds;
     div().p(px(8.)).rounded(px(10.)).bg(ui::raw(0x1c1c1e)).child(
-        div().w(px(w)).h(px(h)).with_animation(
-            SharedString::from(format!("mk770-preview-{effect}")),
-            gpui::Animation::new(std::time::Duration::from_secs_f32(seconds)).repeat(),
-            move |d, t| {
-                d.child(
-                    gpui::canvas(
-                        |_, _, _| (),
-                        move |bounds, _, window, _| {
-                            for y in 0..PREVIEW_ROWS {
-                                for x in 0..PREVIEW_COLS {
-                                    let c = cell_colour(effect, colour, reverse, x, y, t);
-                                    let origin = bounds.origin + gpui::point(px(x as f32 * STEP), px(y as f32 * STEP));
-                                    window.paint_quad(gpui::fill(gpui::Bounds::new(origin, gpui::size(px(CELL), px(CELL))), ui::raw(c)).corner_radii(gpui::Corners::all(px(2.))));
-                                }
-                            }
-                        },
-                    )
-                    .size_full(),
-                )
-            },
+        div().w(px(w)).h(px(h)).child(
+            gpui::canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    for y in 0..PREVIEW_ROWS {
+                        for x in 0..PREVIEW_COLS {
+                            let c = cell_colour(effect, colour, reverse, x, y, t);
+                            let origin = bounds.origin + gpui::point(px(x as f32 * STEP), px(y as f32 * STEP));
+                            window.paint_quad(gpui::fill(gpui::Bounds::new(origin, gpui::size(px(CELL), px(CELL))), ui::raw(c)).corner_radii(gpui::Corners::all(px(2.))));
+                        }
+                    }
+                },
+            )
+            .size_full(),
         ),
     )
 }

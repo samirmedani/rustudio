@@ -6,6 +6,7 @@ pub mod lighting;
 pub mod mics;
 pub mod mixer_profile;
 pub mod mk770;
+pub mod keyboard_macro;
 pub mod notes;
 pub mod modules;
 pub mod release;

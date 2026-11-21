@@ -272,7 +272,7 @@ pub fn echo_sweeps(sr: f64) -> Vec<f32> {
     out
 }
 
-fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
+pub(crate) fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let n = re.len();
     let mut j = 0;
     for i in 1..n {
@@ -475,7 +475,7 @@ pub fn latency_analyse(rec: &[f32], sr: f64, rec_t0: f64, arrivals: &[(usize, f6
 }
 
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use super::*;
     use crate::audio::Endpoint;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -493,15 +493,15 @@ mod win {
     const LOOPBACK: u32 = 0x0002_0000;
     const FLOAT_SUBTYPE: [u8; 16] = [3, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71];
 
-    struct Fmt {
-        float: bool,
-        rate: u32,
-        block: u16,
-        channels: u16,
-        block_bits: u16,
+    pub(crate) struct Fmt {
+        pub(crate) float: bool,
+        pub(crate) rate: u32,
+        pub(crate) block: u16,
+        pub(crate) channels: u16,
+        pub(crate) block_bits: u16,
     }
 
-    unsafe fn device(id: &str) -> Result<IMMDevice, String> {
+    pub(crate) unsafe fn device(id: &str) -> Result<IMMDevice, String> {
         let e: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
         let w: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
         e.GetDevice(PCWSTR(w.as_ptr())).map_err(|e| e.to_string())
@@ -509,7 +509,7 @@ mod win {
 
     /// Ouvre la voie en mode partagé (200 ms de tampon) dans son format de mixage ; en mode exclusif (diagnostic :
     /// sans le mixeur ni les effets de Windows), en 48 kHz, 24 bits dans 32, stéréo, le format des voies GoXLR.
-    unsafe fn open(dev: &IMMDevice, flags: u32) -> Result<(IAudioClient, Fmt), String> {
+    pub(crate) unsafe fn open(dev: &IMMDevice, flags: u32) -> Result<(IAudioClient, Fmt), String> {
         open_mode(dev, flags, false)
     }
     unsafe fn open_mode(dev: &IMMDevice, flags: u32, exclusive: bool) -> Result<(IAudioClient, Fmt), String> {

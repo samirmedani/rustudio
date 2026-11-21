@@ -279,6 +279,21 @@ impl Client {
         serde_json::from_value(body["state"].clone()).map_err(|_| "Réglages du clavier relus illisibles.".into())
     }
 
+    pub fn keyboard_macros(&self, action: &str, params: &Value) -> Result<Vec<rustudio_core::keyboard_macro::Slot>, String> {
+        if !matches!(action, "macros" | "macro-assign" | "macro-remove") { return Err("Commande de macro inconnue.".into()); }
+        self.keyboard_view()?;
+        let result=self.agent.post(&format!("{}{}/{}", self.base, crate::keyboard::MODULE,action))
+            .timeout(Duration::from_secs(18)).set("X-Rustudio","1").send_json(params.clone());
+        let response=match result {
+            Ok(r)=>r,
+            Err(ureq::Error::Status(_,r))=>return Err(r.into_json::<Value>().ok().and_then(|v|v["error"].as_str().map(str::to_owned)).unwrap_or_else(||"Commande de macro refusée.".into())),
+            Err(e)=>return Err(format!("Commande de macro non confirmée : {e}")),
+        };
+        let body:Value=response.into_json().map_err(|_|"Réponse de macro illisible.".to_owned())?;
+        if body["ok"]!=true {return Err("Macro non confirmée.".into());}
+        serde_json::from_value(body["macros"].clone()).map_err(|_|"Macros relues illisibles.".into())
+    }
+
     pub fn mouse_view(&self) -> Result<crate::mouse::MouseView, String> {
         let view: crate::mouse::MouseView =
             serde_json::from_value(self.get(&format!("{}/state", crate::mouse::MODULE))?)
@@ -721,7 +736,8 @@ pub fn start(
                     .ok()
                     .filter(|state| state["connected"] == true)
                     .and_then(|state| state["live"]["mic_db"].as_f64())
-                    .map(f64::round)
+                    // au dixième : des paliers d'un décibel faisaient sauter le vumètre
+                    .map(|db| (db * 10.).round() / 10.)
             } else {
                 None
             };
@@ -731,7 +747,8 @@ pub fn start(
                     break;
                 }
             }
-            std::thread::sleep(Duration::from_millis(if visible { 90 } else { 300 }));
+            // le moteur relit le niveau toutes les 30 ms tant que la page Micro est ouverte
+            std::thread::sleep(Duration::from_millis(if visible { 30 } else { 300 }));
         }
     });
     let inventory_client = client.clone();

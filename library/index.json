@@ -95,7 +95,8 @@
         "Effets lumineux",
         "Luminosité",
         "Vitesse",
-        "Couleur par touche"
+          "Couleur par touche",
+          "Macros embarquées (validation matérielle en cours)"
       ],
       "builtin": true,
       "author": "samirmedani",

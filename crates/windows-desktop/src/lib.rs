@@ -2,8 +2,10 @@
 pub mod audio;
 pub mod badge;
 pub mod hotkey;
+pub mod keyboard;
 pub mod session;
 pub mod soundcheck;
+pub mod spectrum;
 pub mod usage;
 
 #[cfg(windows)]
