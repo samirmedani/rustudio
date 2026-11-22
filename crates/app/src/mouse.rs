@@ -547,8 +547,11 @@ impl Mixer {
             Page::MouseSensitivity => div().max_w(px(640.)).child(dpi.flex_none()),
             Page::MouseSensor => div().max_w(px(640.)).child(sensor.flex_none()),
             Page::MousePower => div().max_w(px(640.)).child(power),
-            _ => div().flex().items_start().gap(px(16.)).child(dpi)
-                .child(div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)).child(sensor.flex_none()).child(power)),
+            _ => ui::settings_columns(
+                crate::desktop::page_width(window),
+                vec![dpi.into_any_element()],
+                vec![sensor.into_any_element(), power.into_any_element()],
+            ),
         };
         content
             .child(settings)

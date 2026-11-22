@@ -594,7 +594,7 @@ impl Mixer {
         }
         root = root.child(ui::grid(
             vec![saved.into_any_element(), board.into_any_element()],
-            2,
+            ui::columns_that_fit(crate::desktop::page_width(window), 390., 10., 2),
         ));
         let editing = m.name_focus.is_focused(window);
         let name = ui::field(

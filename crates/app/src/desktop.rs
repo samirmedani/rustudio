@@ -20,6 +20,12 @@ const STATUS_BAR_H: f32 = 42.;
 /// Barre latérale : largeur et écart avec les bords de la fenêtre.
 const SIDEBAR_W: f32 = 240.;
 const SIDEBAR_MARGIN: f32 = 16.;
+const PAGE_LEFT: f32 = 28.;
+const PAGE_RIGHT: f32 = 36.;
+
+pub(crate) fn page_width(window: &Window) -> f32 {
+    f32::from(window.viewport_size().width) - SIDEBAR_W - SIDEBAR_MARGIN - PAGE_LEFT - PAGE_RIGHT
+}
 /// Listes déroulantes : hauteur bornée, écart avec le bouton et marge gardée avec les bords de la page.
 const MENU_MAX_H: f32 = 260.;
 const MENU_MIN_H: f32 = 110.;
@@ -995,11 +1001,11 @@ impl Mixer {
             Page::Profiles => self.profiles_view(window, cx).into_any_element(),
             Page::Mixer => self.mixer_view(cx).into_any_element(),
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => self.mouse_view(window, cx).into_any_element(),
-            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(cx).into_any_element(),
+            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(page_width(window), cx).into_any_element(),
             Page::KeyboardMacros => self.macros_view(window, cx).into_any_element(),
             Page::WindowsAudio => self.win_audio(window,cx).into_any_element(),
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, window, cx).into_any_element(),
-            Page::Go(section) => self.go_controls(section, cx).into_any_element(),
+            Page::Go(section) => self.go_controls(section, page_width(window), cx).into_any_element(),
         };
         // Changement de page : le contenu glisse et apparaît en douceur.
         let content = div()
@@ -1053,8 +1059,8 @@ impl Mixer {
                                         div()
                                             .pt(px(38.))
                                             .pb(px(28.))
-                                            .pl(px(28.))
-                                            .pr(px(36.))
+                                            .pl(px(PAGE_LEFT))
+                                            .pr(px(PAGE_RIGHT))
                                             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| this.wheel(event, cx)))
                                             .child(div().mt(px(-preview_scroll())).child(content)),
                                     ),
@@ -1280,7 +1286,9 @@ impl Mixer {
         let enabled = self.enabled();
         let editing = self.profile_focus.is_focused(window);
         let input = ui::field("profile-name", &self.profile_focus, &self.profile_name, "Nom du profil (facultatif)", editing, true)
-            .w(px(280.))
+            .flex_auto()
+            .min_w(px(200.))
+            .max_w(px(280.))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 match ui::edit_text(&mut this.profile_name, event, 40, |_| true, cx) {
                     ui::Edit::Submit => this.save_current(cx),
@@ -1296,6 +1304,7 @@ impl Mixer {
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap(px(10.))
                         .child(input)
@@ -1326,6 +1335,7 @@ impl Mixer {
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap(px(8.))
                         .when(enabled && self.profile_request.is_none(), |el| {
@@ -1343,7 +1353,7 @@ impl Mixer {
             cards.push(card.into_any_element());
         }
         if !cards.is_empty() {
-            page = page.child(ui::columns(cards));
+            page = page.child(ui::grid(cards, ui::columns_that_fit(page_width(window), 340., 10., 2)));
         }
         page
     }
@@ -1440,7 +1450,7 @@ impl Mixer {
                 .gap(px(16.)), "card-audio")
                 .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::WindowsAudio, cx)))
                 .child(ui::chip(Icon::Volume, ui::ACCENT, 34.))
-                .child(div().flex().flex_col().flex_1().child(ui::title("Son Windows", 15.)).child(hint("Micros, casques et sorties actives, avec ceux que Windows utilise par défaut.")))
+                .child(div().flex().flex_col().flex_1().min_w(px(0.)).child(ui::title("Son Windows", 15.)).child(hint("Micros, casques et sorties actives, avec ceux que Windows utilise par défaut.")))
                 .child(
                     ui::pill("open-audio", None, "Afficher", Tone::Plain)
                         .child(ui::icon(Icon::ChevronRight, 15., rgb(ui::TEXT)))

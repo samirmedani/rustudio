@@ -300,7 +300,6 @@ impl Mixer {
             _ => &self.go.name,
         };
         ui::field(("go-text", index), &self.go_focus[index], current, placeholder, self.go.editing == Some(index), true)
-            .min_w(px(200.))
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                 this.go.editing = Some(index);
                 cx.notify();
@@ -432,9 +431,10 @@ impl Mixer {
         }
         let save = div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap(px(10.))
-            .child(self.go_text("name", "Nom de ta scène", cx).flex_1())
+            .child(self.go_text("name", "Nom de ta scène", cx).flex_auto().min_w(px(156.)))
             .child(self.act(ui::pill("scene-save", Some(Icon::Plus), "Enregistrer l’état actuel", ui::Tone::Primary), "scene-save", json!({"name":self.go.name}), cx));
         let list = ui::section(Icon::Layers, ui::ACCENT, "Scènes", Some("Un clic applique faders, routage et micro".into())).child(ui::grid(tiles, 3)).child(save);
         let auto = &v.state["auto_scenes"];
@@ -500,12 +500,12 @@ impl Mixer {
         div().flex().flex_col().gap(px(16.)).child(list).child(automation)
     }
 
-    fn lighting(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
+    fn lighting(&self, v: &GoView, width: f32, cx: &mut Context<Self>) -> Div {
         let s = &v.state["lighting"];
         let enabled = self.go.enabled();
         let mut themes: Vec<AnyElement> = vec![];
         for (id, t) in entries(&v.meta["themes"]) {
-            let mut dots = div().flex().gap(px(5.));
+            let mut dots = div().flex().flex_wrap().gap(px(5.));
             for c in labels(&t["preview"]) {
                 dots = dots.child(ui::swatch(u32::from_str_radix(c, 16).unwrap_or(0), 16.));
             }
@@ -583,10 +583,10 @@ impl Mixer {
             }
             colours = colours.child(ui::list_row(None, colour_target(id), None, squares, n == 0));
         }
-        split(vec![look.into_any_element()], vec![colours.into_any_element()])
+        ui::settings_columns(width, vec![look.into_any_element()], vec![colours.into_any_element()])
     }
 
-    fn microphone(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
+    fn microphone(&self, v: &GoView, width: f32, cx: &mut Context<Self>) -> Div {
         let s = &v.state;
         let mic = &s["mic"];
         let enabled = self.go.enabled();
@@ -727,13 +727,14 @@ impl Mixer {
         if s["voice_print"].is_object() {
             print = print.child(self.ask_go(ui::pill("voice-forget", Some(Icon::Trash), "Oublier l’empreinte", ui::Tone::Plain), "voice-forget", json!({}), "Effacer l’empreinte vocale de ce micro ?", cx));
         }
-        split(
+        ui::settings_columns(
+            width,
             vec![you.into_any_element(), voices.into_any_element(), eq.into_any_element(), dynamics.into_any_element()],
             vec![print.into_any_element(), chart.into_any_element(), fx.into_any_element(), button_card.into_any_element(), listen.into_any_element()],
         )
     }
 
-    fn headphones(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
+    fn headphones(&self, v: &GoView, width: f32, cx: &mut Context<Self>) -> Div {
         let eq = &v.state["hp_eq"];
         let enabled = self.go.enabled();
         let on = eq["enabled"] == true;
@@ -772,6 +773,7 @@ impl Mixer {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(8.))
                     .pt(px(6.))
                     .child(self.ask_go(ui::pill("hp-install", Some(Icon::Download), "Installer le composant", ui::Tone::Plain), "hp-eq-setup", json!({}), "Installer Equalizer APO (composant de correction du casque) sur Windows ?", cx))
@@ -803,9 +805,10 @@ impl Mixer {
         let mut custom = ui::section(Icon::Bookmark, ui::GREEN, "Mes réglages de casque", None).child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
                 .gap(px(10.))
-                .child(self.go_text("name", "Nom du réglage", cx).flex_1())
+                .child(self.go_text("name", "Nom du réglage", cx).flex_auto().min_w(px(156.)))
                 .child(self.act(ui::pill("hp-save", Some(Icon::Check), "Enregistrer", ui::Tone::Primary), "hp-eq-save", json!({"name":self.go.name}), cx)),
         );
         for (n, (name, _)) in entries(&eq["custom"]).enumerate() {
@@ -823,12 +826,10 @@ impl Mixer {
                 n == 0,
             ));
         }
+        // Les sections empilées en blocs réservent la hauteur réelle de chaque carte.
         div()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(split(vec![correction.into_any_element()], vec![custom.into_any_element()]))
-            .child(style_card)
+            .child(ui::settings_columns(width, vec![correction.into_any_element()], vec![custom.into_any_element()]).mb(px(16.)))
+            .child(style_card.mb(px(16.)))
             .child(eq_card)
     }
 
@@ -943,7 +944,7 @@ impl Mixer {
         cx.notify();
     }
 
-    fn diagnostic_view(&self, cx: &mut Context<Self>) -> Div {
+    fn diagnostic_view(&self, width: f32, cx: &mut Context<Self>) -> Div {
         let url = self.client.overlay_url();
         let actions = div()
             .flex()
@@ -1012,7 +1013,8 @@ impl Mixer {
         let obs = ui::section(Icon::Monitor, 0x5856d6, "Incrustation OBS", None)
             .child(hint("Ajoute une « Source navigateur » dans OBS avec ce lien : la pastille du micro s’affiche dans ton live.").text_size(px(12.)))
             .child(ui::list_row(None, url.clone(), None, ui::pill("obs-url", Some(Icon::Bookmark), "Copier", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone())))), true));
-        split(
+        ui::settings_columns(
+            width,
             vec![state.into_any_element(), obs.into_any_element()],
             vec![self.latency_card(cx).into_any_element(), test.into_any_element(), self.echo_panel(cx).into_any_element()],
         )
@@ -1044,11 +1046,11 @@ impl Mixer {
         None
     }
 
-    pub fn go_controls(&self, section: Section, cx: &mut Context<Self>) -> Div {
+    pub fn go_controls(&self, section: Section, width: f32, cx: &mut Context<Self>) -> Div {
         // bloc simple : la page se met en page en une passe (une colonne flexbox multiplie les mesures de tout ce qu'elle contient)
         let mut root = div();
         if section == Section::Diagnostic {
-            return root.child(self.diagnostic_view(cx));
+            return root.child(self.diagnostic_view(width, cx));
         }
         let Some(view) = self.go.view.as_ref() else {
             return root.child(ui::card().items_center().py(px(36.)).child(ui::chip(Icon::Refresh, ui::ACCENT, 52.)).child(ui::title("Lecture des réglages", 17.)).child(hint("En attente des réglages de la GoXLR Mini.")));
@@ -1059,21 +1061,15 @@ impl Mixer {
         root.child(match section {
             Section::Routing => self.routing(view, cx),
             Section::Scenes => self.scenes(view, cx),
-            Section::Light => self.lighting(view, cx),
-            Section::Microphone => self.microphone(view, cx),
-            Section::Headphones => self.headphones(view, cx),
+            Section::Light => self.lighting(view, width, cx),
+            Section::Microphone => self.microphone(view, width, cx),
+            Section::Headphones => self.headphones(view, width, cx),
             Section::Diagnostic => unreachable!(),
         })
     }
 }
 
 const ORANGE_SUN: u32 = 0xff9500;
-
-/// Deux colonnes indépendantes (gauche / droite), chacune empilée.
-fn split(left: Vec<AnyElement>, right: Vec<AnyElement>) -> Div {
-    let col = |items: Vec<AnyElement>| div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)).children(items);
-    div().flex().items_start().gap(px(16.)).child(col(left)).child(col(right))
-}
 
 fn hz(f: f64) -> String {
     if f >= 1000. { format!("{} kHz", fmt_num(f / 1000.)) } else { format!("{} Hz", f.round()) }

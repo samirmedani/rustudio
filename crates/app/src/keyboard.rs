@@ -142,8 +142,8 @@ impl Mixer {
             .child(ui::pill("mk770-refresh", Some(Icon::Refresh), "Actualiser", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.keyboard_send(Value::Null, "Réglages relus", cx))))
     }
 
-    pub fn keyboard_view(&self, cx: &mut Context<Self>) -> Div {
-        let root = div().flex().flex_col().gap(px(16.));
+    pub fn keyboard_view(&self, width: f32, cx: &mut Context<Self>) -> Div {
+        let root = div();
         let Some(s) = self.keyboard.live().cloned() else {
             let error = self.keyboard.status.as_ref().and_then(|v| v.device.error.clone());
             return root.child(
@@ -161,7 +161,7 @@ impl Mixer {
         let current = s.effects.get(active as usize).cloned();
         match self.page {
             Page::KeyboardSettings => return root.max_w(px(620.)).child(self.keyboard_tune(&s, current, cx)),
-            Page::KeyboardPaint => return root.child(self.keyboard_painter(cx)),
+            Page::KeyboardPaint => return root.child(self.keyboard_painter(width, cx)),
             Page::KeyboardShortcuts => return root.max_w(px(480.)).child(shortcuts(self.keyboard.os_mode_help, cx)),
             Page::KeyboardInfo => return root.max_w(px(480.)).child(specs(&s)),
             _ => {}
@@ -186,12 +186,21 @@ impl Mixer {
             let reverse = rec.is_some_and(|r| r.reverse);
             tiles.push(self.effect_tile(e, e.id == active, enabled, colour, reverse, cx).into_any_element());
         }
-        let effects = ui::section(Icon::Sparkles, ui::ACCENT, "Effets lumineux", Some("Un clic l’affiche sur le clavier".into())).child(ui::grid(tiles, 3));
-
-        // à gauche on choisit l'effet, à droite on le règle ; la fiche du clavier suit
-        let left = div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)).child(effects);
-        let right = div().flex().flex_col().flex_none().w(px(330.)).gap(px(16.)).child(self.keyboard_tune(&s, current, cx));
-        root.child(metrics).child(div().flex().items_start().gap(px(16.)).child(left).child(right))
+        const TUNE_WIDTH: f32 = 330.;
+        let side_by_side = width >= 800.;
+        let gallery_width = if side_by_side { width - TUNE_WIDTH - 16. } else { width };
+        let columns = ui::columns_that_fit(gallery_width - 42., 185., 10., 3);
+        let effects = ui::section(Icon::Sparkles, ui::ACCENT, "Effets lumineux", Some("Un clic l’affiche sur le clavier".into()))
+            .child(ui::grid(tiles, columns));
+        let tune = self.keyboard_tune(&s, current, cx);
+        let panels = if side_by_side {
+            div().flex().items_start().gap(px(16.))
+                .child(effects.flex_1().min_w(px(0.)))
+                .child(tune.flex_none().w(px(TUNE_WIDTH)))
+        } else {
+            div().child(effects.mb(px(16.))).child(tune)
+        };
+        root.child(metrics.mb(px(16.))).child(panels)
     }
 
     /// Carte d'un effet : aperçu animé, nom centré, type d'effet.
@@ -286,7 +295,7 @@ impl Mixer {
     }
 
     /// Couleur par touche : un pinceau, le clavier dessiné, puis « Appliquer au clavier ».
-    fn keyboard_painter(&self, cx: &mut Context<Self>) -> Div {
+    fn keyboard_painter(&self, width: f32, cx: &mut Context<Self>) -> Div {
         let k = &self.keyboard;
         let colours = k.colours();
         let brush = k.brush();
@@ -299,13 +308,23 @@ impl Mixer {
                 cx.notify();
             })));
         }
-        let mut board = div().flex().flex_col().gap(px(GAP)).p(px(14.)).rounded(px(16.)).bg(alpha(ui::INK, 0.05));
+        let row_width = |row: &[data::Key]| {
+            row.iter().map(|key| {
+                key.width * KEY + (key.width - 1.).max(0.) * GAP
+                    + if key.leds.is_empty() && key.label.is_empty() { 0. } else { GAP }
+            }).sum::<f32>() - GAP
+        };
+        let widest = LAYOUT.iter().map(|row| row_width(row)).fold(0., f32::max);
+        let scale = ((width - 72.) / widest).clamp(0., 1.);
+        let key_size = KEY * scale;
+        let gap = GAP * scale;
+        let mut board = div().flex().flex_col().gap(px(gap)).p(px(14.)).rounded(px(16.)).bg(alpha(ui::INK, 0.05));
         for (r, row) in LAYOUT.iter().enumerate() {
-            let mut line = div().flex().gap(px(GAP));
+            let mut line = div().flex().gap(px(gap));
             for (i, key) in row.iter().enumerate() {
-                let width = key.width * KEY + (key.width - 1.).max(0.) * GAP;
+                let width = key.width * key_size + (key.width - 1.).max(0.) * gap;
                 if key.leds.is_empty() && key.label.is_empty() {
-                    line = line.child(div().flex_none().w(px(width - GAP)).h(px(KEY)));
+                    line = line.child(div().flex_none().w(px(width - gap)).h(px(key_size)));
                     continue;
                 }
                 let colour = key.leds.first().map(|&l| colours[l as usize].clone()).unwrap_or_else(|| "#000000".into());
@@ -321,9 +340,9 @@ impl Mixer {
                     .items_center()
                     .justify_center()
                     .w(px(width))
-                    .h(px(KEY))
+                    .h(px(key_size))
                     .rounded(px(7.))
-                    .text_size(px(10.5))
+                    .text_size(px(10.5 * scale))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor(gpui::CursorStyle::PointingHand)
                     .bg(if lit { ui::raw(c) } else { alpha(ui::INK, 0.07) })
@@ -350,6 +369,7 @@ impl Mixer {
         let dirty = k.paint.is_some();
         let actions = div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap(px(8.))
             .child(ui::pill("mk770-fill", Some(Icon::Palette), "Tout remplir", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {

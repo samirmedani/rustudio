@@ -244,7 +244,7 @@ fn run() -> Result<(), String> {
                         ..Default::default()
                     }),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(1000.), px(660.))),
+                    window_min_size: Some(size(px(960.), px(660.))),
                     focus: visible,
                     show: visible,
                     ..Default::default()

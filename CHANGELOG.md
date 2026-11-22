@@ -1,5 +1,13 @@
 # Nouveautés
 
+## 6.4.1 — 22 novembre 2026
+
+Rustudio 6.4.1 corrige l’affichage de la page Casque et adapte les réglages aux fenêtres en demi-écran.
+
+**Corrigé**
+- **Cartes de la page Casque** : la carte « Style de son » s’affiche sous les réglages du casque sans les recouvrir.
+- **Fenêtre en demi-écran** : les cartes des réglages, les boutons et les aperçus s’adaptent à la place disponible.
+
 ## 6.4.0 — 21 novembre 2026
 
 Rustudio 6.4.0 affiche le son de Windows en direct avec son spectre, ajoute un éditeur de macros pour le MK770, encore expérimental, et rend l’appli plus légère.

@@ -784,6 +784,7 @@ pub fn field(id: impl Into<ElementId>, focus: &FocusHandle, text: &str, placehol
         .tab_stop(enabled)
         .flex()
         .items_center()
+        .min_w(px(0.))
         .h(px(36.))
         .px(px(12.))
         .rounded(px(11.))
@@ -799,13 +800,13 @@ pub fn field(id: impl Into<ElementId>, focus: &FocusHandle, text: &str, placehol
                 handle.focus(window)
             }
         })
-        .child(if editing {
+        .child(div().flex_1().min_w(px(0.)).truncate().child(if editing {
             format!("{text}│")
         } else if empty {
             placeholder.to_owned()
         } else {
             text.to_owned()
-        });
+        }));
     hoverable(el, key)
 }
 
@@ -865,8 +866,8 @@ pub fn select_button(id: impl Into<ElementId>, text: impl Into<SharedString>, op
         .text_size(px(13.5))
         .when(enabled, |d| d.cursor(CursorStyle::PointingHand))
         .when(!enabled, |d| d.opacity(0.55))
-        .child(text.into())
-        .child(icon(Icon::ChevronDown, 15., rgb(TEXT2)));
+        .child(div().flex_1().min_w(px(0.)).truncate().child(text.into()))
+        .child(div().flex_none().child(icon(Icon::ChevronDown, 15., rgb(TEXT2))));
     hoverable(el, key)
 }
 pub fn menu_panel() -> Div {
@@ -900,8 +901,8 @@ pub fn menu_item(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<
         .bg(lerp(rest, alpha(ACCENT, if selected { 0.15 } else { 0.08 }), t))
         .when(selected, |d| d.text_color(rgb(ACCENT)))
         .when_some(glyph, |d, i| d.child(icon(i, 17., rgb(if selected { ACCENT } else { TEXT2 }))))
-        .child(text.into())
-        .when(selected, |d| d.child(div().flex_1().flex().justify_end().child(icon(Icon::Check, 15., rgb(ACCENT)))));
+        .child(div().flex_1().min_w(px(0.)).truncate().child(text.into()))
+        .when(selected, |d| d.child(div().flex_none().child(icon(Icon::Check, 15., rgb(ACCENT)))));
     hoverable(el, key)
 }
 
@@ -945,7 +946,7 @@ pub fn list_row(glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>,
 
 /// Contrôle segmenté (choix exclusif court) : un rail gris, le choix actif en blanc.
 pub fn segmented() -> Div {
-    div().flex().w_full().p(px(3.)).gap(px(3.)).rounded(px(11.)).bg(alpha(0x767680, 0.12))
+    div().flex().flex_wrap().w_full().p(px(3.)).gap(px(3.)).rounded(px(11.)).bg(alpha(0x767680, 0.12))
 }
 pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
     let id: ElementId = id.into();
@@ -953,10 +954,11 @@ pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bo
     let t = if selected { 0. } else { hover_t(&key) };
     let el = div()
         .id(id)
-        .flex_1()
+        .flex_auto()
         .flex()
         .items_center()
         .justify_center()
+        .whitespace_nowrap()
         .h(px(30.))
         .px(px(10.))
         .rounded(px(8.))
@@ -1023,6 +1025,10 @@ pub fn device_grid(items: Vec<AnyElement>, window: &gpui::Window) -> Div {
 /// son texte qu'une fois au lieu de plusieurs passes de flexbox imbriquées.
 pub fn grid(items: Vec<AnyElement>, cols: usize) -> Div {
     div().grid().grid_cols(cols as u16).gap(px(10.)).children(items)
+}
+
+pub fn columns_that_fit(width: f32, minimum: f32, gap: f32, limit: usize) -> usize {
+    (((width + gap) / (minimum + gap)).floor() as usize).clamp(1, limit)
 }
 
 /// Étiquette d'état colorée (Installée, Nouvelle, Conseillé…).
@@ -1138,17 +1144,24 @@ pub fn rich_text(markdown: &str) -> Div {
     root
 }
 
-/// Répartit des cartes sur deux colonnes équilibrées.
-pub fn columns(items: Vec<AnyElement>) -> Div {
-    let (mut left, mut right) = (div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)), div().flex().flex_col().flex_1().min_w(px(0.)).gap(px(16.)));
-    for (i, item) in items.into_iter().enumerate() {
-        if i % 2 == 0 {
-            left = left.child(item);
-        } else {
-            right = right.child(item);
-        }
+/// Une colonne de blocs réserve la hauteur naturelle de ses cartes.
+pub fn stack_cards(items: impl IntoIterator<Item = AnyElement>) -> Div {
+    div().children(items.into_iter().enumerate().map(|(i, item)| {
+        div().when(i != 0, |d| d.mt(px(16.))).child(item)
+    }))
+}
+
+/// Les deux groupes de réglages s'empilent quand une carte serait trop étroite.
+pub fn settings_columns(width: f32, left: Vec<AnyElement>, right: Vec<AnyElement>) -> Div {
+    if columns_that_fit(width, 420., 16., 2) == 1 {
+        return stack_cards(left.into_iter().chain(right));
     }
-    div().flex().items_start().gap(px(16.)).child(left).child(right)
+    div()
+        .flex()
+        .items_start()
+        .gap(px(16.))
+        .child(stack_cards(left).flex_1().min_w(px(0.)))
+        .child(stack_cards(right).flex_1().min_w(px(0.)))
 }
 
 #[cfg(test)]
@@ -1162,6 +1175,15 @@ mod tests {
         assert_eq!(device_columns(1600., 3), 3);
         assert_eq!(device_columns(1600., 2), 2);
         assert_eq!(device_columns(1600., 0), 1);
+    }
+
+    #[test]
+    fn grilles_respectent_la_largeur_minimale_et_les_espaces() {
+        assert_eq!(columns_that_fit(680., 420., 16., 2), 1);
+        assert_eq!(columns_that_fit(855., 420., 16., 2), 1);
+        assert_eq!(columns_that_fit(856., 420., 16., 2), 2);
+        assert_eq!(columns_that_fit(532., 185., 10., 3), 2);
+        assert_eq!(columns_that_fit(620., 185., 10., 3), 3);
     }
 
     fn luminance(c: u32) -> f32 {
