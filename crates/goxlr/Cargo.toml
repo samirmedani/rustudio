@@ -13,3 +13,7 @@ serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 libloading = "0.9"
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Usb", "Win32_Security",
+  "Win32_Storage_FileSystem", "Win32_System_IO",
+] }

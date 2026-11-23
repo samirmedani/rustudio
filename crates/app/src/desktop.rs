@@ -233,6 +233,7 @@ pub(crate) fn device_state(device: Option<&Device>) -> (&'static str, State) {
         // le pilote GoXLR ne voit pas le firmware de laboratoire : sans lui, la Mini paraîtrait débranchée
         Some((_, Some("lab"))) => ("Firmware Rustudio en essai", State::Info),
         Some(("audio", _)) => ("Connectée · Firmware Rustudio", State::Info),
+        Some(("ready", Some("audio"))) => ("Connectée · Firmware Rustudio", State::Ok),
         Some(("ready", Some("golden"))) => ("Firmware de secours (Golden)", State::Warn),
         Some(("ready", _)) => ("Connecté", State::Ok),
         Some(("asleep", _)) => ("En veille · bouge-la pour la réveiller", State::Info),
@@ -990,9 +991,11 @@ impl Mixer {
         if self.page.space() != Some(Space::GoXlr) {
             return None;
         }
-        let message = match self.device("goxlr-mini")?.firmware_kind.as_deref() {
-            Some("golden") => "La GoXLR Mini a démarré sur son firmware de secours (Golden) : un retour arrière a eu lieu et son firmware officiel ne s’est pas lancé. Réinstalle le firmware officiel.",
-            Some("audio") => "Le firmware Rustudio fournit le micro et le casque dans Son Windows. Le mixeur et les commandes de la GoXLR sont indisponibles avec ce firmware.",
+        let device = self.device("goxlr-mini")?;
+        let message = match (device.status.as_str(), device.firmware_kind.as_deref()) {
+            (_, Some("golden")) => "La GoXLR Mini a démarré sur son firmware de secours (Golden) : un retour arrière a eu lieu et son firmware officiel ne s’est pas lancé. Réinstalle le firmware officiel.",
+            ("audio", _) => "Le firmware Rustudio fournit le micro et le casque dans Son Windows. Mets à jour Rustudio pour piloter le mixeur et les commandes avec ce firmware.",
+            ("ready", Some("audio")) => "Firmware Rustudio : le mixeur pilote la sortie System, le casque, la sortie ligne et le micro. Les effets, le sampler et le retour micro ne sont pas encore pris en charge.",
             _ => return None,
         };
         Some(ui::notice(false, message))

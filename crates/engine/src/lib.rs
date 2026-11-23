@@ -31,7 +31,7 @@ pub mod win;
 
 use std::sync::Arc;
 
-/// Chargeur du pilote : la fausse GoXLR en mode simule, la DLL officielle sinon.
+/// Chargeur du pilote : la fausse GoXLR en mode simule, sinon la DLL officielle et le firmware Rustudio (WinUSB).
 pub fn make_loader(cfg: &config::Config) -> (rustudio_goxlr::Loader, Option<rustudio_goxlr::sim::Sim>) {
     if cfg.simulate {
         let fw = std::env::var("RUSTUDIO_SIM_FW").ok().and_then(|s| {
@@ -44,7 +44,16 @@ pub fn make_loader(cfg: &config::Config) -> (rustudio_goxlr::Loader, Option<rust
     }
     #[cfg(windows)]
     {
-        (Box::new(|| rustudio_goxlr::dll::Dll::load(&rustudio_goxlr::dll::default_path()).map(|d| Box::new(d) as Box<dyn rustudio_goxlr::Tusb>)), None)
+        use rustudio_goxlr::{dll::Dll, winusb::Lab, Combined, Tusb};
+        let loader = || {
+            let official = Dll::load(&rustudio_goxlr::dll::default_path()).map(|d| Box::new(d) as Box<dyn Tusb>);
+            // sans pilote officiel, seule une Mini sur le firmware Rustudio peut encore etre pilotee
+            if official.is_err() && rustudio_goxlr::winusb::interface_paths().is_empty() {
+                return official;
+            }
+            Ok(Box::new(Combined::new(official.ok(), Box::new(Lab::default()))) as Box<dyn Tusb>)
+        };
+        (Box::new(loader), None)
     }
     #[cfg(not(windows))]
     {

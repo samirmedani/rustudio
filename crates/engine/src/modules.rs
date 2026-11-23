@@ -28,7 +28,13 @@ fn goxlr_runtime(health: &str, g: &Inner, simulated: bool, info: &DevInfo) -> Mo
 /// GoXLR : seule la liste USB de Windows le voit.
 pub(crate) fn goxlr_firmware_kind(g: &Inner, info: &DevInfo) -> Option<FirmwareKind> {
     if g.connected {
-        Some(if info.golden() { FirmwareKind::Golden } else { FirmwareKind::Official })
+        Some(if info.rustudio {
+            FirmwareKind::Audio
+        } else if info.golden() {
+            FirmwareKind::Golden
+        } else {
+            FirmwareKind::Official
+        })
     } else {
         match g.usb.as_deref() {
             Some("mini-lab") => Some(FirmwareKind::Lab),

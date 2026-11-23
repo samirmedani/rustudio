@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 pub mod dll;
 pub mod sim;
 pub mod stream;
+#[cfg(windows)]
+pub mod winusb;
 
 /// API Thesycon du pilote (goxlr_audioapi_x64.dll), ou son equivalent simule.
 pub trait Tusb: Send {
@@ -34,6 +36,71 @@ pub trait Tusb: Send {
 }
 
 pub type Loader = Box<dyn Fn() -> Result<Box<dyn Tusb>, String> + Send>;
+
+/// Pilote officiel et firmware Rustudio dans une seule liste d'appareils : ceux du pilote d'abord.
+pub struct Combined {
+    official: Option<Box<dyn Tusb>>,
+    rustudio: Box<dyn Tusb>,
+    official_count: u32,
+}
+
+/// Bit des handles du firmware Rustudio, absents des handles du pilote officiel.
+const RUSTUDIO_HANDLE: u32 = 1 << 31;
+
+impl Combined {
+    pub fn new(official: Option<Box<dyn Tusb>>, rustudio: Box<dyn Tusb>) -> Self {
+        Combined { official, rustudio, official_count: 0 }
+    }
+    fn split(&mut self, h: u32) -> (&mut dyn Tusb, u32) {
+        match self.official.as_deref_mut() {
+            Some(official) if h & RUSTUDIO_HANDLE == 0 => (official, h),
+            _ => (self.rustudio.as_mut(), h & !RUSTUDIO_HANDLE),
+        }
+    }
+}
+
+impl Tusb for Combined {
+    fn enumerate(&mut self) -> u32 {
+        let code = self.official.as_mut().map(|t| t.enumerate()).unwrap_or(0);
+        self.rustudio.enumerate();
+        code
+    }
+    fn device_count(&mut self) -> u32 {
+        self.official_count = self.official.as_mut().map(|t| t.device_count()).unwrap_or(0);
+        self.official_count + self.rustudio.device_count()
+    }
+    fn open_by_index(&mut self, idx: u32) -> Result<u32, u32> {
+        match self.official.as_mut() {
+            Some(official) if idx < self.official_count => official.open_by_index(idx),
+            _ => self.rustudio.open_by_index(idx - self.official_count).map(|h| h | RUSTUDIO_HANDLE),
+        }
+    }
+    fn instance_id(&mut self, h: u32) -> Option<String> {
+        let (t, h) = self.split(h);
+        t.instance_id(h)
+    }
+    fn vendor_out(&mut self, h: u32, request: u32, data: &[u8]) -> u32 {
+        let (t, h) = self.split(h);
+        t.vendor_out(h, request, data)
+    }
+    fn vendor_in(&mut self, h: u32, request: u32, len: usize) -> Result<Vec<u8>, u32> {
+        let (t, h) = self.split(h);
+        t.vendor_in(h, request, len)
+    }
+    fn close(&mut self, h: u32) {
+        let (t, h) = self.split(h);
+        t.close(h)
+    }
+    fn status_text(&self, code: u32) -> String {
+        self.official.as_ref().map(|t| t.status_text(code)).unwrap_or_else(|| self.rustudio.status_text(code))
+    }
+    fn stream_stats(&mut self, h: u32) -> Option<stream::StreamStats> {
+        if h & RUSTUDIO_HANDLE != 0 {
+            return None;
+        }
+        self.official.as_mut()?.stream_stats(h)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum DevError {
@@ -89,6 +156,8 @@ pub struct DevInfo {
     pub serial: Option<String>,
     pub firmware: Option<String>,
     pub fw: [u32; 4],
+    /// Mini sur le firmware Rustudio (USB 1209:0002), pilotee par WinUSB.
+    pub rustudio: bool,
     pub stats: Stats,
     pub busy_since: Option<Instant>,
     pub stage: Option<String>,
@@ -194,9 +263,15 @@ impl GoXlr {
         for idx in 0..n {
             let t = self.tusb.as_mut().unwrap();
             let Ok(h) = t.open_by_index(idx) else { continue };
-            if t.instance_id(h).map(|s| s.contains("VID_1220")).unwrap_or(false) {
+            let id = t.instance_id(h).unwrap_or_default();
+            let rustudio = id.contains("VID_1209&PID_0002");
+            if id.contains("VID_1220") || rustudio {
                 self.h = Some(h);
-                self.info.lock().unwrap().stats.opens += 1;
+                {
+                    let mut info = self.info.lock().unwrap();
+                    info.stats.opens += 1;
+                    info.rustudio = rustudio;
+                }
                 self.stage(Some("ouverture de la GoXLR"));
                 let r = self.activate().and_then(|_| self.read_info());
                 self.stage(None);
@@ -340,7 +415,8 @@ impl GoXlr {
         let mut i = self.info.lock().unwrap();
         i.serial = Some(serial);
         i.fw = fw;
-        i.firmware = Some(fw.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("."));
+        let version = fw.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+        i.firmware = Some(if i.rustudio { format!("Rustudio ({version})") } else { version });
         Ok(())
     }
 

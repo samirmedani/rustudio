@@ -35,6 +35,20 @@ fn sorted(mut v: Vec<f64>) -> Vec<f64> {
     v
 }
 
+/// Au-delà, un niveau n'est plus celui du micro en ce moment : le fil USB a pris du retard ou s'est figé.
+const LEVEL_MAX_AGE: Duration = Duration::from_millis(500);
+
+/// Garde une mesure du niveau seulement si le fil USB vient de la lire : une lecture déjà comptée, ou trop vieille,
+/// fausserait le gain et l'empreinte en répétant le même niveau.
+fn fresh_level(v: Option<f64>, t: Option<Instant>, seen: &mut Option<Instant>, now: Instant) -> Option<f64> {
+    let (v, t) = (v?, t?);
+    if *seen == Some(t) || now.saturating_duration_since(t) > LEVEL_MAX_AGE {
+        return None;
+    }
+    *seen = Some(t);
+    Some(v)
+}
+
 pub fn start_job(ctl: &Arc<Ctl>, kind: &str, p: Value) -> Result<f64, ApiError> {
     let started = now_epoch();
     {
@@ -96,20 +110,20 @@ fn set_gain_and_wait(ctl: &Ctl, mtype: &str, gain: i32) -> JR<()> {
 }
 
 fn sample(ctl: &Ctl, seconds: f64, p0: f64, p1: f64) -> JR<Vec<f64>> {
-    let mut vals = vec![];
+    let (mut vals, mut seen) = (vec![], None);
     let t0 = Instant::now();
     while t0.elapsed().as_secs_f64() < seconds {
         if cancelled(ctl) {
             return Err(JobErr::Cancelled);
         }
-        let v = {
+        let (v, t) = {
             let g = ctl.lock();
             if !g.connected {
                 return Err("GoXLR déconnectée pendant l’analyse".to_string().into());
             }
-            g.live.mic_db
+            (g.live.mic_db, g.live.level_t)
         };
-        if let Some(v) = v {
+        if let Some(v) = fresh_level(v, t, &mut seen, Instant::now()) {
             vals.push(v);
         }
         let prog = p0 + (p1 - p0) * t0.elapsed().as_secs_f64() / seconds;
@@ -133,15 +147,14 @@ fn sample_voice(ctl: &Ctl, seconds: f64, p0: f64, p1: f64) -> JR<(Vec<f64>, bool
             }
             (g.live.mic_db, g.live.level_t)
         };
-        if let Some(v) = v {
+        if let Some(v) = fresh_level(v, t, &mut seen, Instant::now()) {
             vals.push(v);
-            if t != seen && v >= CLIP_DB {
+            if v >= CLIP_DB {
                 clips += 1;
                 if clips >= 3 && t0.elapsed().as_secs_f64() < 5.0 {
                     return Ok((vals, true));
                 }
             }
-            seen = t;
         }
         let prog = p0 + (p1 - p0) * t0.elapsed().as_secs_f64() / seconds;
         update(ctl, &[("progress", json!((prog * 1000.0).round() / 1000.0))]);
@@ -660,4 +673,22 @@ fn segments(take: &VoiceTake, t0: f64, dur: f64) -> Vec<Segment> {
         .map(|(phase, a, b, g)| Segment { phase: *phase, start_s: (a - t0).max(0.0), end_s: (b - t0).min(dur), gain_db: *g })
         .filter(|s| s.end_s - s.start_s >= 0.5)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn niveau_fige_ou_deja_compte_ecarte() {
+        let t = Instant::now();
+        let mut seen = None;
+        assert_eq!(fresh_level(Some(-20.0), Some(t), &mut seen, t), Some(-20.0));
+        // le fil USB n'a rien relu depuis : la même lecture ne compte pas deux fois
+        assert_eq!(fresh_level(Some(-20.0), Some(t), &mut seen, t + Duration::from_millis(40)), None);
+        // fil USB figé : la dernière lecture est trop vieille pour représenter le micro
+        let mut seen = None;
+        assert_eq!(fresh_level(Some(-20.0), Some(t), &mut seen, t + Duration::from_millis(900)), None);
+        assert_eq!(fresh_level(None, None, &mut seen, t), None);
+    }
 }

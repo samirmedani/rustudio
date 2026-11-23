@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 6.5.0 — 23 novembre 2026
+
+Rustudio 6.5.0 pilote la GoXLR Mini qui utilise le firmware Rustudio expérimental et fiabilise le gain automatique.
+
+**Nouveau**
+- **Mixeur avec le firmware Rustudio** : sur une GoXLR Mini qui utilise le firmware Rustudio expérimental, Rustudio pilote à nouveau les faders, les boutons, les voyants, les volumes, les coupures et le gain du micro. Les effets, le sampler et le retour micro ne sont pas disponibles avec ce firmware.
+
+**Corrigé**
+- **Gain automatique et empreinte vocale plus fiables** : si la lecture du niveau du micro prend du retard, Rustudio ignore les mesures périmées au lieu de compter plusieurs fois la même. Le gain calculé reflète ta voix du moment.
+
 ## 6.4.2 — 23 novembre 2026
 
 **Nouveau**
