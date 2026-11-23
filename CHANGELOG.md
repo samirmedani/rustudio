@@ -2,10 +2,15 @@
 
 ## 6.5.0 — 23 novembre 2026
 
-Rustudio 6.5.0 pilote la GoXLR Mini qui utilise le firmware Rustudio expérimental et fiabilise le gain automatique.
+Rustudio 6.5.0 envoie chaque appli sur sa voie, revoit la page Casque et le thème sombre, et pilote complètement la GoXLR Mini qui utilise le firmware Rustudio expérimental.
 
 **Nouveau**
-- **Mixeur avec le firmware Rustudio** : sur une GoXLR Mini qui utilise le firmware Rustudio expérimental, Rustudio pilote à nouveau les faders, les boutons, les voyants, les volumes, les coupures et le gain du micro. Les effets, le sampler et le retour micro ne sont pas disponibles avec ce firmware.
+- **Chaque appli sur sa voie** : Rustudio envoie Discord et les autres applis de discussion vers Chat, Spotify et les lecteurs de musique vers Musique, et tes jeux vers Jeu, dans les réglages de son de Windows. Une sortie que tu as déjà choisie pour une appli est gardée, sauf si elle vise un périphérique débranché. Réglable dans Réglages.
+- **Page Casque plus compacte** : l’égaliseur, le choix du casque et la pause en live tiennent sur une ligne, les styles de son sont des pastilles, et toute la page tient sur un écran.
+- **Thème sombre plus noir** : fond presque noir, cartes et filets plus discrets.
+- **Mixeur plus compact** : faders moins hauts, les autres voies restent visibles sans faire défiler.
+- **Firmware Rustudio expérimental : mixeur complet** : Rustudio pilote les faders, les boutons, les voyants, les volumes, les coupures, le gain du micro et le retour micro quand tu l’actives. Windows voit cinq sorties séparées, Système, Jeu, Chat, Musique et Samples, et chaque fader règle la sienne. Les styles de son s’appliquent à chacune.
+- **Firmware Rustudio expérimental : interface adaptée** : les réglages qui n’existent pas avec ce firmware (traitements et préréglages de voix, effets, sampler, prises Line In et Console, sorties Stream et Sampler) sont masqués. Le Diagnostic montre ses compteurs : paquets perdus, échantillons corrigés et boucle la plus longue. Le test du micro, l’empreinte vocale et le réglage des périphériques Windows reconnaissent ses sorties et son micro.
 
 **Corrigé**
 - **Gain automatique et empreinte vocale plus fiables** : si la lecture du niveau du micro prend du retard, Rustudio ignore les mesures périmées au lieu de compter plusieurs fois la même. Le gain calculé reflète ta voix du moment.

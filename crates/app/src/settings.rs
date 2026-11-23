@@ -214,6 +214,23 @@ impl Mixer {
                 false,
             ));
         }
+        if self.client.is_live() {
+            use rustudio_windows_desktop::app_routes;
+            let routes = app_routes::enabled(&app_routes::default_pref());
+            general = general.child(ui::list_row(
+                Some((Icon::Route, ui::ACCENT)),
+                "Chaque appli sur sa voie",
+                Some("Discord vers Chat, Spotify vers Musique, tes jeux vers Jeu. Une sortie déjà choisie dans Windows est gardée.".into()),
+                ui::toggle("app-routes-toggle", routes, true).on_click(cx.listener(move |this, _, _, cx| {
+                    this.library.notice = Some(match app_routes::set_enabled(&app_routes::default_pref(), !routes) {
+                        Ok(()) => (true, if routes { "Sorties par appli : désactivées.".into() } else { "Sorties par appli : activées.".into() }),
+                        Err(e) => (false, e),
+                    });
+                    this.library_load(Page::Settings, cx);
+                })),
+                false,
+            ));
+        }
         let mut looks = ui::segmented();
         for choice in ui::Appearance::ALL {
             looks = looks.child(ui::seg(gpui::SharedString::from(format!("appearance-{}", choice.name())), choice.label(), ui::appearance() == choice).on_click(cx.listener(move |this, _, _, cx| {

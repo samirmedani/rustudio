@@ -1,4 +1,5 @@
 //! Intégration Windows partagée : aucune dépendance à la boîte à outils de l'interface.
+pub mod app_routes;
 pub mod audio;
 pub mod badge;
 pub mod hotkey;

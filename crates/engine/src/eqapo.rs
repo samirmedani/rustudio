@@ -294,7 +294,15 @@ mod win {
             }
             let Ok(p) = root.open_subkey_with_flags(format!(r"{guid}\Properties"), KEY_READ | KEY_WOW64_64KEY) else { continue };
             let (Ok(name), Ok(dev)) = (p.get_value::<String, _>(NAME_PROP), p.get_value::<String, _>(DEVICE_PROP)) else { continue };
-            if !dev.to_lowercase().contains("goxlr") || !HP_CHANNELS.contains(&name.as_str()) {
+            // Firmware Rustudio : une sortie Windows par voie, à son nom (System : « Rustudio Mini Audio »).
+            let name = if let Some(channel) = rustudio_core::hpeq::rustudio_channel(&dev) {
+                channel.to_owned()
+            } else if dev.to_lowercase().contains("goxlr") && HP_CHANNELS.contains(&name.as_str()) {
+                name
+            } else {
+                continue;
+            };
+            if out.contains_key(&name) {
                 continue;
             }
             let mut inst = false;

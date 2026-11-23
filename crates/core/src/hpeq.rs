@@ -7,6 +7,24 @@ use serde_json::Value;
 pub const HP_BANDS: [i32; 10] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 pub const HP_Q: f64 = 1.41;
 pub const HP_CHANNELS: [&str; 5] = ["Game", "Music", "System", "Chat", "Sample"];
+/// Nom Windows de la Mini sous firmware Rustudio : sa première sortie (avec le micro) est la voie System.
+pub const RUSTUDIO_DEVICE: &str = "Rustudio Mini Audio";
+
+/// Voie GoXLR d'un périphérique Windows du firmware Rustudio : « Rustudio Mini Audio » pour System, puis
+/// « Rustudio Game », « Rustudio Chat », « Rustudio Music » et « Rustudio Sample ».
+pub fn rustudio_channel(device: &str) -> Option<&'static str> {
+    if device.eq_ignore_ascii_case(RUSTUDIO_DEVICE) {
+        return Some("System");
+    }
+    let name = device.strip_prefix("Rustudio ")?;
+    HP_CHANNELS.iter().copied().find(|c| *c != "System" && c.eq_ignore_ascii_case(name))
+}
+
+/// Motifs « Device: » d'Equalizer APO pour une voie : la voie du pilote GoXLR et celle du firmware Rustudio.
+fn device_patterns(channel: &str) -> Vec<String> {
+    let rustudio = if channel == "System" { RUSTUDIO_DEVICE.to_owned() } else { format!("Rustudio {channel}") };
+    vec![format!("GoXLR {channel}"), rustudio]
+}
 pub const LIVE_APPS: [&str; 8] =
     ["obs64", "obs32", "obs", "streamlabs obs", "streamlabs desktop", "xsplit.core", "twitchstudio", "meld studio"];
 pub const CONFIG_FILE: &str = "rustudio.txt";
@@ -230,7 +248,7 @@ pub fn config_text(eq: &HpEq, active: bool, why: &str) -> String {
     ));
     lines.push(format!(
         "Device: {}",
-        eq.channels.iter().map(|c| format!("GoXLR {c}")).collect::<Vec<_>>().join("; ")
+        eq.channels.iter().flat_map(|c| device_patterns(c)).collect::<Vec<_>>().join("; ")
     ));
     lines.push(format!("Preamp: {pre:.1} dB"));
     for (i, (kind, f0, g, q)) in flt.iter().enumerate() {

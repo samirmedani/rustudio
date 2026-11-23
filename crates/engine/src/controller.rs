@@ -607,6 +607,22 @@ impl Ctl {
         }
     }
 
+    /// Compteurs du firmware Rustudio, lus par le fil USB. Vérifié d'abord sans toucher l'appareil : une requête
+    /// inconnue du firmware officiel serait une erreur USB, et toute erreur USB ferme puis rouvre la connexion.
+    pub fn firmware_counters(&self) -> ApiResult {
+        if !self.dev_info.lock().unwrap().rustudio {
+            return Err(ApiError { status: 404, msg: "Compteurs réservés au firmware Rustudio".into() });
+        }
+        let read = |dev: &mut GoXlr| {
+            dev.firmware_counters().map(|c| {
+                json!({"streaming": c.streaming, "packets": c.packets, "missed": c.missed, "underruns": c.underruns,
+                       "drops": c.drops, "repeats": c.repeats, "queue_min": c.queue_min, "queue_max": c.queue_max,
+                       "max_loop_us": c.max_loop_us, "slow_loops": c.slow_loops})
+            })
+        };
+        self.call(Box::new(read), Duration::from_secs(2))
+    }
+
     /// Execute f dans la boucle USB et attend le resultat (commande brute).
     pub fn call(&self, f: CallFn, timeout: Duration) -> ApiResult {
         if !self.lock().connected {

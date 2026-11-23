@@ -162,12 +162,21 @@ fn fichier_equalizer_apo() {
     let eq = normalize_hp_eq(&json!({"headphone": "Sennheiser HD 560S", "bands": [4, 5, 3, 1, 0, 0, 0, 0, 0, 0], "channels": ["Game", "Chat"]}), None);
     let t = config_text(&eq, true, "");
     assert!(t.is_ascii());
-    assert!(t.contains("Device: GoXLR Game; GoXLR Chat"), "{t}");
+    assert!(t.contains("Device: GoXLR Game; Rustudio Game; GoXLR Chat; Rustudio Chat"), "{t}");
     assert!(t.contains("Filter 1: ON LSC Fc 105 Hz Gain 9.0 dB Q 0.70"), "{t}");
     assert!(t.contains("Filter 11: ON PK Fc 31 Hz Gain 4.0 dB Q 1.41"), "{t}");
     assert!(t.trim_end().ends_with("Device: all"));
     assert!(!config_text(&eq, false, "live").contains("Filter"));
     assert_eq!(style("basses").unwrap().bands[0], 4);
+    // Firmware Rustudio : « Rustudio Mini Audio » porte System, chaque autre voie a sa sortie à son nom.
+    let system = normalize_hp_eq(&json!({"channels": ["Music", "System"]}), None);
+    assert!(config_text(&system, true, "").contains("Device: GoXLR Music; Rustudio Music; GoXLR System; Rustudio Mini Audio"));
+    use rustudio_core::hpeq::rustudio_channel;
+    assert_eq!(rustudio_channel("Rustudio Mini Audio"), Some("System"));
+    assert_eq!(rustudio_channel("Rustudio Game"), Some("Game"));
+    assert_eq!(rustudio_channel("Rustudio Sample"), Some("Sample"));
+    assert_eq!(rustudio_channel("Rustudio System"), None);
+    assert_eq!(rustudio_channel("TC-Helicon GoXLR Mini"), None);
 }
 
 #[test]

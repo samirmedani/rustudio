@@ -7,6 +7,20 @@ use serde_json::{json, Value};
 pub const MIC: &str = "Chat Mic";
 pub const SOUND: &str = "System";
 pub const VOICE: &str = "Chat";
+/// Nom Windows de la Mini sous firmware Rustudio : une sortie et un micro.
+pub const RUSTUDIO_DEVICE: &str = "Rustudio Mini Audio";
+
+/// Nom de voie GoXLR d'une entree ou sortie Windows, et si elle appartient a la GoXLR. Firmware Rustudio :
+/// « Rustudio Mini Audio » porte System et le micro (Chat Mic), puis une sortie par voie a son nom.
+pub fn goxlr_channel(device: &str, name: String, capture: bool) -> (String, bool) {
+    if device.eq_ignore_ascii_case(RUSTUDIO_DEVICE) {
+        ((if capture { MIC } else { SOUND }).to_owned(), true)
+    } else if let (false, Some(channel)) = (capture, device.strip_prefix("Rustudio ").filter(|c| ["Game", "Chat", "Music", "Sample"].contains(c))) {
+        (channel.to_owned(), true)
+    } else {
+        (name, device.to_lowercase().contains("goxlr"))
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
@@ -93,7 +107,8 @@ mod win {
             let p = root.open_subkey_with_flags(format!(r"{guid}\Properties"), KEY_READ | KEY_WOW64_64KEY).ok();
             let get = |n: &str| p.as_ref().and_then(|p| p.get_value::<String, _>(n).ok()).unwrap_or_default();
             let prefix = if capture { "{0.0.1.00000000}." } else { "{0.0.0.00000000}." };
-            out.push(Endpoint { id: format!("{prefix}{guid}"), name: get(DESC), goxlr: get(IFACE).to_lowercase().contains("goxlr") });
+            let (name, goxlr) = goxlr_channel(&get(IFACE), get(DESC), capture);
+            out.push(Endpoint { id: format!("{prefix}{guid}"), name, goxlr });
         }
         out
     }
@@ -279,5 +294,20 @@ mod tests {
         let bad = status_from(&render, &capture, [Some("r3".into()), Some("r2".into()), Some("c2".into()), Some("c1".into())]);
         let kinds: Vec<&str> = bad["issues"].as_array().unwrap().iter().map(|i| i["kind"].as_str().unwrap()).collect();
         assert_eq!(kinds, vec!["capture-loop", "render-other"]);
+    }
+    #[test]
+    fn voies_du_firmware_rustudio() {
+        assert_eq!(goxlr_channel("Rustudio Mini Audio", "Microphone".into(), true), (MIC.to_owned(), true));
+        assert_eq!(goxlr_channel("Rustudio Mini Audio", "Haut-parleurs".into(), false), (SOUND.to_owned(), true));
+        assert_eq!(goxlr_channel("TC-Helicon GoXLR Mini", "Chat".into(), false), ("Chat".to_owned(), true));
+        assert_eq!(goxlr_channel("Realtek USB2.0 Audio", "Haut-parleurs".into(), false), ("Haut-parleurs".to_owned(), false));
+        assert_eq!(goxlr_channel("Rustudio Chat", "Haut-parleurs".into(), false), (VOICE.to_owned(), true));
+        assert_eq!(goxlr_channel("Rustudio Game", "Haut-parleurs".into(), false), ("Game".to_owned(), true));
+        // Une sortie et un micro suffisent : pas de probleme signale.
+        let render = vec![ep("r1", SOUND, true)];
+        let capture = vec![ep("c1", MIC, true)];
+        let ok = status_from(&render, &capture, [Some("r1".into()), Some("r1".into()), Some("c1".into()), Some("c1".into())]);
+        assert_eq!(ok["goxlr"], true);
+        assert_eq!(ok["issues"], json!([]));
     }
 }

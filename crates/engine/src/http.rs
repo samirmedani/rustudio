@@ -101,6 +101,11 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                 "/api/update" => ctl.update_snapshot(),
                 "/api/update/history" => ctl.updater.history(query.split('&').any(|q| q == "refresh=1")),
                 "/api/support" => crate::support::support(ctl),
+                // compteurs du firmware Rustudio (refusés sans toucher l'appareil sur le firmware officiel)
+                "/api/firmware" => match ctl.firmware_counters() {
+                    Ok(v) => v,
+                    Err(e) => return json_resp(req, &json!({"error": e.msg}), e.status),
+                },
                 "/api/usb" if ctl.simulated() => json!({"found": false, "simulated": true}),
                 "/api/usb" => crate::usbmap::query(),
                 "/api/glitches" => {

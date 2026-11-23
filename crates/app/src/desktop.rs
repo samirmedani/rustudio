@@ -986,6 +986,11 @@ impl Mixer {
             .when_some(self.firmware_notice(), |d, notice| d.child(notice.w_full().mb(px(18.))))
     }
 
+    /// Mini pilotée sous firmware Rustudio : une seule sortie Windows, ni traitements ni effets.
+    pub(crate) fn rustudio_firmware(&self) -> bool {
+        self.device("goxlr-mini").is_some_and(|d| d.status == "ready" && d.firmware_kind.as_deref() == Some("audio"))
+    }
+
     /// Explique les limitations des firmwares alternatifs sur les pages GoXLR.
     fn firmware_notice(&self) -> Option<Div> {
         if self.page.space() != Some(Space::GoXlr) {
@@ -995,7 +1000,7 @@ impl Mixer {
         let message = match (device.status.as_str(), device.firmware_kind.as_deref()) {
             (_, Some("golden")) => "La GoXLR Mini a démarré sur son firmware de secours (Golden) : un retour arrière a eu lieu et son firmware officiel ne s’est pas lancé. Réinstalle le firmware officiel.",
             ("audio", _) => "Le firmware Rustudio fournit le micro et le casque dans Son Windows. Mets à jour Rustudio pour piloter le mixeur et les commandes avec ce firmware.",
-            ("ready", Some("audio")) => "Firmware Rustudio : le mixeur pilote la sortie System, le casque, la sortie ligne et le micro. Les effets, le sampler et le retour micro ne sont pas encore pris en charge.",
+            // firmware Rustudio piloté : chaque réglage sans effet porte sa propre étiquette, pas de bandeau
             _ => return None,
         };
         Some(ui::notice(false, message))

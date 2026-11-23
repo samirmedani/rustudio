@@ -219,6 +219,22 @@ fn golden_reconnu_a_la_connexion() {
 }
 
 #[test]
+fn compteurs_firmware_sans_reconnexion() {
+    // firmware officiel : refus immédiat, l'appareil n'est pas interrogé, aucune reconnexion
+    let b = Bench::new();
+    let err = b.ctl.firmware_counters().unwrap_err();
+    assert_eq!(err.status, 404);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(b.ctl.health()["reconnects"], 0);
+    assert!(b.ctl.lock().connected);
+    // firmware Rustudio : compteurs lus par le fil USB, connexion intacte
+    let b = Bench::with_fw([1, 2, 99, 1]);
+    let c = b.ctl.firmware_counters().unwrap();
+    assert_eq!((c["streaming"].as_bool(), c["queue_min"].as_u64(), c["max_loop_us"].as_u64()), (Some(true), Some(1026), Some(61)));
+    assert_eq!(b.ctl.health()["reconnects"], 0);
+}
+
+#[test]
 fn api_repond_pendant_un_blocage_usb() {
     let b = Bench::new();
     b.sim.hang(1.5);

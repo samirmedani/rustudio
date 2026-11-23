@@ -30,6 +30,8 @@ const COMMAND: u8 = 0x10;
 const ANSWER: u8 = 0x11;
 const HELLO: u8 = 0x12;
 const OPEN: u8 = 0x13;
+const AUDIO_STATS: u8 = 0x09;
+const HEADPHONE_STATS: u8 = 0x0A;
 const TRANSFER_TIMEOUT_MS: u32 = 2_000;
 
 /// Chemins des interfaces WinUSB du firmware Rustudio presentes.
@@ -162,6 +164,8 @@ impl Tusb for Lab {
         let request = match request {
             0 => HELLO,
             3 => ANSWER,
+            crate::REQ_FIRMWARE_AUDIO => AUDIO_STATS,
+            crate::REQ_FIRMWARE_HEADPHONES => HEADPHONE_STATS,
             _ => return Err(ERROR_GEN_FAILURE),
         };
         let mut buf = vec![0u8; len];

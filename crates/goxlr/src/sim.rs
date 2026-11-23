@@ -313,6 +313,9 @@ pub struct SimInner {
 }
 
 /// Fausse GoXLR partagee entre le fil USB (via SimTusb) et le banc de test.
+/// Version annoncée par le firmware Rustudio de la Mini.
+pub const RUSTUDIO_FIRMWARE: [u32; 4] = [1, 2, 99, 1];
+
 #[derive(Clone)]
 pub struct Sim(pub Arc<Mutex<SimInner>>);
 
@@ -455,6 +458,10 @@ impl Tusb for SimTusb {
         Ok(h)
     }
     fn instance_id(&mut self, _h: u32) -> Option<String> {
+        // RUSTUDIO_SIM_FW=1.2.99.1 : la fausse Mini se présente comme sous firmware Rustudio (démonstrations, captures)
+        if self.0.lock().dev.firmware == RUSTUDIO_FIRMWARE {
+            return Some("USB\\VID_1209&PID_0002\\SIM".into());
+        }
         Some("USB\\VID_1220&PID_8FE4\\SIM".into())
     }
     fn vendor_out(&mut self, h: u32, request: u32, data: &[u8]) -> u32 {
@@ -501,6 +508,11 @@ impl Tusb for SimTusb {
                     return Err(TSTATUS_STALL);
                 }
                 s.pending.pop_front().unwrap().1
+            }
+            crate::REQ_FIRMWARE_AUDIO if s.dev.firmware == RUSTUDIO_FIRMWARE => [1u32, 480_000, 2_880_000, 0, 0, 2400].iter().flat_map(|w| w.to_le_bytes()).collect(),
+            crate::REQ_FIRMWARE_HEADPHONES if s.dev.firmware == RUSTUDIO_FIRMWARE => {
+                let words: [u32; 19] = [1, 1, 2_880_000, 0, 0, 0, 131, 1, 0, 0, 1026, 1086, 12, 0, 9 | 6 << 16, 7, 0, 0, 0];
+                words.iter().flat_map(|w| w.to_le_bytes()).collect()
             }
             _ => vec![],
         };

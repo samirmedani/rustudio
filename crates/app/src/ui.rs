@@ -117,7 +117,7 @@ pub fn is_dark() -> bool {
 }
 
 /// Surface des cartes en sombre (PAPER translucide) ; un élément en relief, rgb(PAPER), est un peu plus clair.
-const DARK_SURFACE: u32 = 0x3a3a3c;
+const DARK_SURFACE: u32 = 0x18181b;
 
 /// Couleur réellement dessinée pour une couleur de la palette claire.
 fn themed(c: u32, dark: bool) -> u32 {
@@ -129,9 +129,10 @@ fn themed(c: u32, dark: bool) -> u32 {
         };
     }
     match c {
-        PAPER => 0x48484a,
+        // presque noir, cartes et reliefs à peine plus clairs, comme les éditeurs sombres récents
+        PAPER => 0x26262a,
         INK => 0xffffff,
-        BG => 0x161618,
+        BG => 0x0b0b0c,
         TEXT => 0xf5f5f7,
         0x3a3a3c => 0xd1d1d6,
         TEXT2 => 0xaeaeb2,
@@ -142,11 +143,11 @@ fn themed(c: u32, dark: bool) -> u32 {
         RED_TEXT => 0xff6961,
         ORANGE_TEXT => 0xffb340,
         // rail des faders, panneau près de l'horloge, barres du graphique de voix, onglet actif de la barre latérale
-        0xe3e3e8 => 0x2a2a2c,
-        0xeeeef2 => 0x333336,
-        0xf7f7f9 => 0x1e1e20,
-        0xc7c7cc => 0x636366,
-        0xf3f8ff => 0x3d4656,
+        0xe3e3e8 => 0x222225,
+        0xeeeef2 => 0x27272b,
+        0xf7f7f9 => 0x141416,
+        0xc7c7cc => 0x4a4a4f,
+        0xf3f8ff => 0x1b2433,
         other => other,
     }
 }
@@ -179,7 +180,7 @@ pub fn rgb(c: u32) -> Hsla {
 }
 /// Fond pastel d'une couleur : mélange vers la surface (t = 0 : couleur pure, t = 1 : surface).
 pub fn tint(c: u32, t: f32) -> Hsla {
-    if is_dark() { blend(c, 0x2c2c2e, t) } else { blend(c, WHITE, t) }
+    if is_dark() { blend(c, 0x18181b, t) } else { blend(c, WHITE, t) }
 }
 /// Couleur lisible sur son propre fond pastel : plus sombre en clair, plus claire en sombre.
 pub fn shade(c: u32, t: f32) -> Hsla {
@@ -421,7 +422,7 @@ pub fn icon(name: Icon, size: f32, colour: impl Into<Hsla>) -> Svg {
 /// Fond de l'appli : lumière douce et halos pastel, sous toutes les cartes.
 pub fn ambient() -> impl IntoElement {
     // en sombre, l'image claire ne laisse qu'un halo coloré discret sur le fond
-    img(AMBIENT.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).opacity(if is_dark() { 0.1 } else { 1. })
+    img(AMBIENT.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).opacity(if is_dark() { 0.035 } else { 1. })
 }
 pub fn logo(size: f32) -> impl IntoElement {
     img(LOGO.clone()).flex_none().size(px(size))
@@ -966,7 +967,7 @@ pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bo
         .font_weight(FontWeight::MEDIUM)
         .cursor(CursorStyle::PointingHand)
         // en sombre, l'onglet choisi doit trancher sur le rail : un gris plus clair que les surfaces
-        .when(selected, |d| d.bg(if is_dark() { raw(0x636366) } else { rgb(PAPER) }).shadow(vec![shadow(1., 3., 0.1)]))
+        .when(selected, |d| d.bg(if is_dark() { raw(0x3a3a3f) } else { rgb(PAPER) }).shadow(vec![shadow(1., 3., 0.1)]))
         .when(!selected, |d| d.bg(lerp(alpha(PAPER, 0.), alpha(PAPER, 0.55), t)).text_color(lerp(rgb(0x3a3a3c), rgb(TEXT), t)))
         .child(text.into());
     hoverable(el, key)

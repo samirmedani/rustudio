@@ -132,6 +132,13 @@ fn run() -> Result<(), String> {
             "--hotkey" => hotkey = Some(args.next().ok_or("Raccourci manquant.")?),
             "--inspect" => inspect = true,
             "--profiles-dir" => profiles_dir = Some(std::path::PathBuf::from(args.next().ok_or("Dossier de profils manquant.")?)),
+            // une passe de « chaque appli sur sa voie », détaillée, puis sortie (vérification sur un PC)
+            "--sorties-auto" => {
+                for line in rustudio_windows_desktop::app_routes::run_once() {
+                    println!("{line}");
+                }
+                return Ok(());
+            }
             "--self-test" => self_test = true,
             // ouvre le panneau de l'icône dès le démarrage (captures et bancs de test)
             "--panel" => {}
@@ -196,6 +203,10 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    // Chaque appli sur sa voie (Discord → Chat, Spotify → Music, jeux → Game) : appli installée seulement.
+    if instance.is_some() {
+        rustudio_windows_desktop::app_routes::start(rustudio_windows_desktop::app_routes::default_pref());
+    }
     // Raccourci du micro : seulement pour l'appli installée (ou un essai explicite avec « --hotkey »).
     shortcut::start(
         dir.parent().unwrap_or(&dir).join("raccourci-micro.txt"),

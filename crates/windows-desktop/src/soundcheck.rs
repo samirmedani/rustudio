@@ -10,9 +10,15 @@ use serde_json::{json, Value};
 /// Les pilotes GoXLR 5.57 et 5.68 nomment différemment les mêmes voies de capture.
 #[cfg(any(windows, test))]
 fn select_goxlr_endpoint(endpoints: Vec<crate::audio::Endpoint>, wanted: &str) -> Option<crate::audio::Endpoint> {
-    endpoints.into_iter().find(|e| {
+    let matches = |e: &crate::audio::Endpoint, wanted: &str| {
         e.goxlr && (e.name == wanted || matches!((wanted, e.name.as_str()), ("Broadcast Stream Mix", "Stream Mix 1") | ("VOD", "Stream Mix 2")))
-    })
+    };
+    match endpoints.iter().find(|e| matches(e, wanted)) {
+        Some(e) => Some(e.clone()),
+        // Firmware Rustudio : une seule sortie (System) porte aussi la voix de Chat.
+        None if wanted == crate::audio::VOICE => endpoints.into_iter().find(|e| matches(e, crate::audio::SOUND)),
+        None => None,
+    }
 }
 
 /// Ce qu'une voie a donné pendant le test.
@@ -1088,6 +1094,10 @@ mod tests {
         assert!(select_goxlr_endpoint(vec![ep("autre", "Stream Mix 1", false)], "Broadcast Stream Mix").is_none());
         assert_eq!(select_goxlr_endpoint(vec![ep("vod", "Stream Mix 2", true)], "VOD").unwrap().id, "vod");
         assert_eq!(select_goxlr_endpoint(vec![ep("sample", "Sample", true)], "Sample").unwrap().id, "sample");
+        // Firmware Rustudio : Chat se replie sur la seule sortie, System ; une vraie voie Chat reste prioritaire.
+        assert_eq!(select_goxlr_endpoint(vec![ep("sortie", "System", true)], "Chat").unwrap().id, "sortie");
+        assert_eq!(select_goxlr_endpoint(vec![ep("sortie", "System", true), ep("chat", "Chat", true)], "Chat").unwrap().id, "chat");
+        assert!(select_goxlr_endpoint(vec![ep("sortie", "System", true)], "Sample").is_none());
     }
 
     fn tone(n: usize, fs: f64, amp: f32) -> Vec<f32> {

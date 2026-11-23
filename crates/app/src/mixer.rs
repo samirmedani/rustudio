@@ -20,7 +20,8 @@ const WHEEL_LINE: f32 = 34.;
 /// Défilement doux : temps d'approche de la position visée (en secondes), comme un navigateur.
 const SCROLL_EASE: f32 = 0.07;
 
-const TRAVEL: f32 = 214.;
+// course compacte : les autres voies restent visibles sous les faders sans faire défiler
+const TRAVEL: f32 = 160.;
 const FADER_W: f32 = 68.;
 const FADER_R: f32 = 22.;
 const VOLUME_INTERVAL: Duration = Duration::from_millis(45);
@@ -660,12 +661,14 @@ impl Mixer {
         } else {
             (alpha(0x767680, 0.12), rgb(0x3a3a3c), Icon::Volume)
         };
+        let ignored = self.rustudio_firmware() && firmware_ignores(&channel.id);
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_w(px(0.))
             .items_center()
+            .when(ignored, |d| d.opacity(0.5))
             .child(ui::hover_fill(
                 div()
                     .id(("assign", index))
@@ -688,7 +691,7 @@ impl Mixer {
                             .overflow_hidden()
                             .child(div().text_size(px(16.5)).font_weight(FontWeight::SEMIBOLD).truncate().child(channel.label.clone()))
                             // une seule ligne, coupée proprement : le texte ne déborde jamais sur la voie voisine
-                            .child(ui::caption(format!("Fader {}", index + 1)).truncate()),
+                            .child(ui::caption(if ignored { format!("Fader {} · sans effet ici", index + 1) } else { format!("Fader {}", index + 1) }).truncate()),
                     )
                     .child(ui::icon(Icon::ChevronDown, 14., rgb(ui::TEXT3)).flex_none())
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -702,16 +705,16 @@ impl Mixer {
             .child(track)
             .child(
                 div()
-                    .mt(px(12.))
+                    .mt(px(8.))
                     .flex()
                     .items_baseline()
                     .justify_center()
-                    .child(div().text_size(px(40.)).line_height(px(44.)).font_weight(FontWeight::LIGHT).child(percent(value).to_string()))
-                    .child(div().ml(px(2.)).text_size(px(18.)).text_color(rgb(ui::TEXT3)).child("%")),
+                    .child(div().text_size(px(32.)).line_height(px(36.)).font_weight(FontWeight::LIGHT).child(percent(value).to_string()))
+                    .child(div().ml(px(2.)).text_size(px(15.)).text_color(rgb(ui::TEXT3)).child("%")),
             )
             .child(
-                ui::round(("mute", index), glyph, 48., mute_bg, mute_fg)
-                    .mt(px(10.))
+                ui::round(("mute", index), glyph, 40., mute_bg, mute_fg)
+                    .mt(px(6.))
                     .when(muted, |d| d.shadow(vec![gpui::BoxShadow { color: alpha(if partial { ui::ORANGE } else { ui::RED }, 0.3), offset: gpui::point(px(0.), px(6.)), blur_radius: px(18.), spread_radius: px(0.) }]))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle(&c, &target, cx))),
             )
@@ -738,7 +741,7 @@ impl Mixer {
         ui::card()
             .child(ui::card_title(Some((Icon::Sliders, ui::ACCENT)), format!("Fader {}", i + 1), Some("Choisis sa voie et ce que coupe son bouton".into())))
             .child(ui::label("Voie"))
-            .child(div().flex().flex_wrap().gap(px(8.)).children(snap.channels.iter().map(|ch| {
+            .child(div().flex().flex_wrap().gap(px(8.)).children(snap.channels.iter().filter(|ch| !(self.rustudio_firmware() && firmware_ignores(&ch.id))).map(|ch| {
                 let id = ch.id.clone();
                 let fader = f.id.clone();
                 ui::button(format!("choose-{id}"), ch.label.clone(), f.channel == id).on_click(cx.listener(move |this, _, _, cx| {
@@ -769,7 +772,7 @@ impl Mixer {
             .flex()
             .items_center()
             .gap(px(14.))
-            .py(px(10.))
+            .py(px(7.))
             .when(!first, |d| d.border_t_1().border_color(alpha(ui::INK, 0.07)))
             .child(ui::chip(channel_icon(&ch.id), colour, 32.))
             .child(
@@ -801,7 +804,8 @@ impl Mixer {
                 "Sample" => "sample",
                 _ => return false,
             };
-            n.contains("goxlr") && n.contains(word)
+            // pilote GoXLR « System (TC-Helicon GoXLR) », firmware Rustudio « … (Rustudio Game) »
+            ((n.contains("goxlr") || n.contains("rustudio ")) && n.contains(word)) || (id == "System" && n.contains("rustudio mini audio"))
         };
         let o = outputs.iter().find(named)?;
         match (o["default"] == true, o["communications"] == true) {
@@ -813,7 +817,8 @@ impl Mixer {
     }
 
     fn others(&self, snap: &Snapshot, cx: &mut Context<Self>) -> Div {
-        let free: Vec<&Channel> = snap.channels.iter().filter(|ch| !snap.faders.iter().any(|f| f.channel == ch.id)).collect();
+        let firmware = self.rustudio_firmware();
+        let free: Vec<&Channel> = snap.channels.iter().filter(|ch| !snap.faders.iter().any(|f| f.channel == ch.id) && !(firmware && firmware_ignores(&ch.id))).collect();
         let groups: [(&str, &str, Icon, &[&str]); 3] = [
             ("Sons de ton PC", "Chaque appli choisit sa sortie GoXLR dans ses réglages audio (ou dans les paramètres de son de Windows).", Icon::Monitor, &["System", "Game", "Chat", "Music", "Sample"]),
             ("Prises de la GoXLR", "Seulement si un appareil est branché derrière la GoXLR.", Icon::Plug, &["LineIn", "Console"]),
@@ -1159,4 +1164,10 @@ fn position_fraction(bounds: Bounds<Pixels>, at: gpui::Point<Pixels>, vertical: 
         f32::from(at.x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
     };
     fraction.clamp(0., 1.)
+}
+
+/// Voies sans effet sous firmware Rustudio : il expose une sortie Windows par voie du PC, mais aucune prise
+/// Line In ni Console.
+pub(crate) fn firmware_ignores(channel: &str) -> bool {
+    matches!(channel, "LineIn" | "Console")
 }

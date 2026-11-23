@@ -37,6 +37,47 @@ pub trait Tusb: Send {
 
 pub type Loader = Box<dyn Fn() -> Result<Box<dyn Tusb>, String> + Send>;
 
+/// Requêtes de lecture propres au firmware Rustudio (jamais envoyées au pilote officiel) : compteurs du flux
+/// USB Audio (6 mots) et de la sortie casque (19 mots), dans l'ordre de `FirmwareCounters`.
+pub const REQ_FIRMWARE_AUDIO: u32 = 0x109;
+pub const REQ_FIRMWARE_HEADPHONES: u32 = 0x10A;
+
+/// Compteurs du firmware Rustudio, depuis l'ouverture du flux (audio) ou depuis le démarrage (boucle).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FirmwareCounters {
+    pub streaming: bool,
+    pub packets: u32,
+    pub missed: u32,
+    pub underruns: u32,
+    pub drops: u32,
+    pub repeats: u32,
+    pub queue_min: u32,
+    pub queue_max: u32,
+    /// Tour de boucle le plus long depuis la lecture précédente, en microsecondes.
+    pub max_loop_us: u32,
+    pub slow_loops: u32,
+}
+
+impl FirmwareCounters {
+    pub fn from_words(audio: &[u32], headphones: &[u32]) -> FirmwareCounters {
+        let a = |i: usize| audio.get(i).copied().unwrap_or(0);
+        let h = |i: usize| headphones.get(i).copied().unwrap_or(0);
+        FirmwareCounters {
+            streaming: a(0) != 0,
+            packets: a(1),
+            missed: a(4),
+            underruns: h(3),
+            drops: h(8),
+            repeats: h(9),
+            queue_min: h(10),
+            queue_max: h(11),
+            // ticks de 5,12 µs
+            max_loop_us: (u64::from(h(12)) * 512 / 100) as u32,
+            slow_loops: h(13),
+        }
+    }
+}
+
 /// Pilote officiel et firmware Rustudio dans une seule liste d'appareils : ceux du pilote d'abord.
 pub struct Combined {
     official: Option<Box<dyn Tusb>>,
@@ -318,6 +359,16 @@ impl GoXlr {
         r.map_err(|code| self.err(&format!("VendorIn({request})"), code))
     }
 
+    /// Le firmware Rustudio traite la commande des sa reception : sa reponse se lit sans les 30 ms d'attente
+    /// qu'exige le pilote officiel.
+    fn read_timing(&self) -> Timing {
+        if self.info.lock().unwrap().rustudio {
+            Timing { first_read_wait: Duration::ZERO, retry_wait: Duration::from_millis(1), ..self.timing }
+        } else {
+            self.timing
+        }
+    }
+
     fn activate(&mut self) -> Res<()> {
         self.req_in(0, 24)?;
         self.req_out(1, &[])?;
@@ -364,12 +415,13 @@ impl GoXlr {
         self.req_out(2, &frame)?;
         self.info.lock().unwrap().stats.commands += 1;
         let t0 = Instant::now();
-        let mut wait = self.timing.first_read_wait;
-        while t0.elapsed() < self.timing.response_timeout {
+        let timing = self.read_timing();
+        let mut wait = timing.first_read_wait;
+        while t0.elapsed() < timing.response_timeout {
             if !wait.is_zero() {
                 sleep(wait);
             }
-            wait = self.timing.retry_wait;
+            wait = timing.retry_wait;
             let resp = match self.req_in(3, 1040) {
                 Ok(r) => r,
                 Err(e) if e.code() == Some(STATUS_STALL) => {
@@ -475,6 +527,17 @@ impl GoXlr {
         let enc = [b[4] as i8, b[5] as i8, b[6] as i8, b[7] as i8];
         Ok((mask, [b[8], b[9], b[10], b[11]], enc))
     }
+    /// Compteurs du firmware Rustudio : erreur sur une Mini au firmware officiel, qui ne les connaît pas.
+    pub fn firmware_counters(&mut self) -> Res<FirmwareCounters> {
+        if !self.info.lock().unwrap().rustudio {
+            return Err(DevError::Device("Compteurs réservés au firmware Rustudio".into()));
+        }
+        let words = |bytes: Vec<u8>| bytes.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect::<Vec<_>>();
+        let audio = words(self.req_in(REQ_FIRMWARE_AUDIO, 24)?);
+        let headphones = words(self.req_in(REQ_FIRMWARE_HEADPHONES, 76)?);
+        Ok(FirmwareCounters::from_words(&audio, &headphones))
+    }
+
     pub fn mic_level(&mut self) -> Res<u16> {
         let b = self.command(0x80C << 12, &[])?;
         if b.len() < 2 {
@@ -520,3 +583,90 @@ pub fn f32_bytes(v: f64) -> [u8; 4] {
     (v as f32).to_le_bytes()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Appareil qui repond des la reception de la commande, comme le firmware Rustudio.
+    #[derive(Default)]
+    struct Immediate {
+        frame: Vec<u8>,
+    }
+
+    impl Tusb for Immediate {
+        fn enumerate(&mut self) -> u32 {
+            0
+        }
+        fn device_count(&mut self) -> u32 {
+            1
+        }
+        fn open_by_index(&mut self, _idx: u32) -> Result<u32, u32> {
+            Ok(1)
+        }
+        fn instance_id(&mut self, _h: u32) -> Option<String> {
+            None
+        }
+        fn vendor_out(&mut self, _h: u32, _request: u32, data: &[u8]) -> u32 {
+            self.frame = data.to_vec();
+            0
+        }
+        fn vendor_in(&mut self, _h: u32, _request: u32, _len: usize) -> Result<Vec<u8>, u32> {
+            let mut answer = self.frame[..16].to_vec();
+            answer[4..6].copy_from_slice(&0u16.to_le_bytes());
+            Ok(answer)
+        }
+        fn close(&mut self, _h: u32) {}
+        fn status_text(&self, _code: u32) -> String {
+            String::new()
+        }
+    }
+
+    fn device(rustudio: bool) -> GoXlr {
+        let mut goxlr = GoXlr::new(Box::new(|| Err(String::new())));
+        goxlr.tusb = Some(Box::new(Immediate::default()));
+        goxlr.h = Some(1);
+        goxlr.info.lock().unwrap().rustudio = rustudio;
+        goxlr
+    }
+
+    fn elapsed(rustudio: bool) -> Duration {
+        let mut goxlr = device(rustudio);
+        let t0 = Instant::now();
+        for _ in 0..5 {
+            goxlr.command(0x80F, &[]).unwrap();
+        }
+        t0.elapsed()
+    }
+
+    #[test]
+    fn compteurs_du_firmware_rustudio() {
+        let audio = [1, 480_000, 2_880_000, 0, 3, 2400];
+        let mut headphones = [0u32; 19];
+        headphones[3] = 2;
+        headphones[8] = 5;
+        headphones[9] = 7;
+        headphones[10] = 1026;
+        headphones[11] = 1086;
+        headphones[12] = 11; // ticks de 5,12 µs
+        headphones[13] = 4;
+        let c = FirmwareCounters::from_words(&audio, &headphones);
+        assert!(c.streaming);
+        assert_eq!((c.packets, c.missed, c.underruns, c.drops, c.repeats), (480_000, 3, 2, 5, 7));
+        assert_eq!((c.queue_min, c.queue_max, c.max_loop_us, c.slow_loops), (1026, 1086, 56, 4));
+        // réponse tronquée : les mots absents valent zéro, jamais de panique
+        assert_eq!(FirmwareCounters::from_words(&[], &[]), FirmwareCounters::default());
+    }
+
+    #[test]
+    fn compteurs_refuses_au_firmware_officiel() {
+        let mut goxlr = device(false);
+        assert!(goxlr.firmware_counters().is_err());
+    }
+
+    #[test]
+    fn firmware_rustudio_lu_sans_attente() {
+        assert!(elapsed(true) < Duration::from_millis(50), "5 commandes sans attente de 30 ms");
+        assert!(elapsed(false) >= Duration::from_millis(150), "pilote officiel : 30 ms avant chaque lecture");
+    }
+}

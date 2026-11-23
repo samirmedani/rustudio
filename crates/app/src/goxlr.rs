@@ -178,7 +178,9 @@ impl Client {
         Ok(
             json!({"support":self.get("/api/support")?,"usb":self.get("/api/usb")?,
             "glitches":self.get("/api/glitches")?,"live":self.get("/api/live")?["job"],
-            "echo":self.go_command("echo-check",json!({}))?}),
+            "echo":self.go_command("echo-check",json!({}))?,
+            // seulement sous firmware Rustudio ; ailleurs le moteur répond par une erreur, ignorée
+            "firmware":self.get("/api/firmware").ok()}),
         )
     }
 }
@@ -344,7 +346,9 @@ impl Mixer {
     }
 
     fn routing(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
-        let outputs: Vec<&str> = labels(&v.meta["outputs"]).collect();
+        // Firmware Rustudio : le micro et les cinq sorties du PC, vers le casque, le micro de Windows et la sortie ligne.
+        let firmware = self.rustudio_firmware();
+        let outputs: Vec<&str> = labels(&v.meta["outputs"]).filter(|o| !firmware || matches!(*o, "Headphones" | "ChatMic" | "LineOut")).collect();
         let enabled = self.go.enabled();
         let vod = v.state["vod"]["mode"] == "no-music";
         let mut head = div().flex().items_end().pb(px(10.)).child(div().w(px(190.)));
@@ -364,7 +368,7 @@ impl Mixer {
             );
         }
         let mut matrix = ui::section(Icon::Route, ui::ACCENT, "Qui entend quoi", Some("Clique une case pour envoyer ou couper".into())).child(head);
-        for (n, input) in labels(&v.meta["inputs"]).enumerate() {
+        for (n, input) in labels(&v.meta["inputs"]).filter(|i| !firmware || !matches!(*i, "LineIn" | "Console")).enumerate() {
             let (name, sub, glyph) = input_info(input);
             let mut row = div()
                 .flex()
@@ -384,7 +388,10 @@ impl Mixer {
             for &output in &outputs {
                 let on = v.state["routing"][input][output] == true;
                 let automatic = vod && v.meta["vod_output"] == output && input == "Music";
-                let cell = if automatic {
+                // firmware Rustudio : le micro de Windows ne reçoit que la voix, pas les sons du PC
+                let cell = if firmware && output == "ChatMic" && input != "Microphone" {
+                    ui::caption("—").into_any_element()
+                } else if automatic {
                     ui::badge("Auto", ui::ORANGE).into_any_element()
                 } else {
                     self.act(ui::check_cell(SharedString::from(format!("route-{input}-{output}")), on, enabled), "route", json!({"input":input,"output":output,"enabled":!on}), cx).into_any_element()
@@ -400,7 +407,7 @@ impl Mixer {
             self.act(ui::toggle("vod-toggle", vod, enabled), "settings", json!({"vod":{"mode":if vod {"off"} else {"no-music"}}}), cx),
             true,
         ));
-        div().flex().flex_col().gap(px(16.)).child(matrix).child(vod_card)
+        div().flex().flex_col().gap(px(16.)).child(matrix).when(!firmware, |d| d.child(vod_card))
     }
 
     fn scenes(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
@@ -634,7 +641,12 @@ impl Mixer {
             let tile = ui::tile(SharedString::from(format!("mic-preset-{id}")), Some((preset_icon(id), preset_colour(id))), p["label"].as_str().unwrap_or(id).to_owned(), p["desc"].as_str().map(|d| d.to_owned().into()), s["mic_preset"] == id.as_str(), (id == advised).then(|| ("Conseillé".into(), ui::GREEN)));
             presets.push(self.act(tile, "mic-preset", json!({"name":id}), cx).into_any_element());
         }
-        let voices = ui::section(Icon::Wave, 0x5856d6, "Préréglages de voix", Some(if s["voice_print"].is_object() { "Calculés sur ta voix".into() } else { "Crée ton empreinte pour les ajuster".into() })).child(ui::grid(presets, 2));
+        let voices_aside = if s["voice_print"].is_object() {
+            Some("Calculés sur ta voix".into())
+        } else {
+            Some("Crée ton empreinte pour les ajuster".into())
+        };
+        let voices = ui::section(Icon::Wave, 0x5856d6, "Préréglages de voix", voices_aside).child(ui::grid(presets, 2));
         let mut fx = ui::section(Icon::Sliders, ui::ACCENT, "Traitements", None);
         for (n, (key, label, sub)) in [
             ("eq", "Égaliseur", "Corrige le timbre de ta voix"),
@@ -713,19 +725,25 @@ impl Mixer {
                             .child(even(self.act(ui::pill("mic-listen", Some(Icon::Play), "M’entendre 30 s", ui::Tone::Plain), "mic-listen", json!({"seconds":30}), cx)))
                             .child(even(self.act(ui::pill("mic-listen-stop", Some(Icon::Stop), "Arrêter", ui::Tone::Plain), "mic-listen", json!({"seconds":0}), cx))),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .child(even(self.act(ui::pill("mic-ab-raw", None, "Voix brute", ui::Tone::Plain), "mic-ab", json!({"bypass":true}), cx)))
-                            .child(even(self.act(ui::pill("mic-ab-processed", None, "Voix traitée", ui::Tone::Plain), "mic-ab", json!({"bypass":false}), cx))),
-                    ),
+                    .when(!self.rustudio_firmware(), |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .gap(px(8.))
+                                .child(even(self.act(ui::pill("mic-ab-raw", None, "Voix brute", ui::Tone::Plain), "mic-ab", json!({"bypass":true}), cx)))
+                                .child(even(self.act(ui::pill("mic-ab-processed", None, "Voix traitée", ui::Tone::Plain), "mic-ab", json!({"bypass":false}), cx))),
+                        )
+                    }),
             )
             .child(self.listen_panel(cx));
         let chart = self.voice_chart(s["mic_preset"].as_str().filter(|p| *p != "brut" && *p != "custom").unwrap_or("studio"));
         let mut print = self.voice_panel(cx);
         if s["voice_print"].is_object() {
             print = print.child(self.ask_go(ui::pill("voice-forget", Some(Icon::Trash), "Oublier l’empreinte", ui::Tone::Plain), "voice-forget", json!({}), "Effacer l’empreinte vocale de ce micro ?", cx));
+        }
+        // Firmware Rustudio : la voix sort brute. Préréglages, empreinte, traitements et effets n'y existent pas.
+        if self.rustudio_firmware() {
+            return ui::settings_columns(width, vec![you.into_any_element(), button_card.into_any_element()], vec![listen.into_any_element()]);
         }
         ui::settings_columns(
             width,
@@ -755,40 +773,70 @@ impl Mixer {
             }
             chips = chips.child(self.act(ui::pill(SharedString::from(format!("hp-channel-{channel}")), checked.then_some(Icon::Check), input_info(channel).0, if checked { ui::Tone::Soft } else { ui::Tone::Plain }), "hp-eq", json!({"channels":selected}), cx));
         }
-        let correction = ui::section(Icon::Headphones, ui::ACCENT, "Correction du casque", None)
-            .child(ui::list_row(None, "Égaliseur du casque", Some("Corrige ton casque et applique le style choisi.".into()), self.act(ui::toggle("hp-enabled", on, enabled), "hp-eq", json!({"enabled":!on}), cx), true))
-            .child(ui::list_row(
-                None,
-                "Ton casque",
-                Some("Courbe mesurée, pour un son neutre.".into()),
-                div().w(px(250.)).child(self.dropdown("hp-model", if current.is_empty() { "Aucune correction".into() } else { current.clone() }, options, enabled, move |this, i, cx| {
-                    let pick = if i == 0 { Value::Null } else { json!(picks[i - 1]) };
-                    this.go_send("hp-eq", json!({"headphone": pick}), cx)
-                }, cx)),
-                false,
-            ))
-            .child(ui::list_row(None, "Pause pendant un live", Some("Le stream garde un son neutre quand OBS diffuse.".into()), self.act(ui::toggle("hp-pause", paused, enabled), "hp-eq", json!({"pause_live":!paused}), cx), false))
-            .child(div().pt(px(6.)).child(ui::label("Voies corrigées")))
-            .child(chips)
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .pt(px(6.))
-                    .child(self.ask_go(ui::pill("hp-install", Some(Icon::Download), "Installer le composant", ui::Tone::Plain), "hp-eq-setup", json!({}), "Installer Equalizer APO (composant de correction du casque) sur Windows ?", cx))
-                    .child(self.ask_go(ui::pill("hp-remove", Some(Icon::Trash), "Retirer", ui::Tone::Plain), "hp-eq-remove", json!({}), "Retirer le composant de correction du casque ?", cx)),
-            );
-        let mut styles: Vec<AnyElement> = vec![];
+        let corrected = eq["channels"].as_array().map(|c| c.len()).unwrap_or(0);
+        let status = if on { format!("Actif sur {corrected} voie{}", if corrected > 1 { "s" } else { "" }) } else { "Coupé".to_owned() };
+        // Les réglages qu'on touche souvent tiennent sur une ligne : marche/arrêt, casque, pause en live.
+        let quick = ui::card().py(px(14.)).child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(18.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(self.act(ui::toggle("hp-enabled", on, enabled), "hp-eq", json!({"enabled":!on}), cx))
+                        .child(div().flex().flex_col().child(ui::title("Égaliseur du casque", 15.)).child(ui::caption(status))),
+                )
+                .child(div().flex_1())
+                .child(
+                    div().flex().items_center().gap(px(10.)).child(ui::label("Casque")).child(div().w(px(230.)).child(self.dropdown(
+                        "hp-model",
+                        if current.is_empty() { "Aucune correction".into() } else { current.clone() },
+                        options,
+                        enabled,
+                        move |this, i, cx| {
+                            let pick = if i == 0 { Value::Null } else { json!(picks[i - 1]) };
+                            this.go_send("hp-eq", json!({"headphone": pick}), cx)
+                        },
+                        cx,
+                    ))),
+                )
+                .child(div().flex().items_center().gap(px(10.)).child(ui::label("Pause en live")).child(self.act(ui::toggle("hp-pause", paused, enabled), "hp-eq", json!({"pause_live":!paused}), cx))),
+        );
+        // Styles en pastilles : tous visibles d'un coup d'œil, la description du style choisi en dessous.
+        let mut style_row = div().flex().flex_wrap().gap(px(8.));
+        let mut chosen_desc: Option<String> = None;
         for (id, st) in entries(&v.meta["hp_styles"]) {
             if let Some(required) = st["headphone"].as_str()
                 && eq["headphone"] != required {
                     continue;
                 }
-            let tile = ui::tile(SharedString::from(format!("hp-style-{id}")), Some((style_icon(id), style_colour(id))), st["label"].as_str().unwrap_or(id).to_owned(), st["desc"].as_str().map(|d| d.to_owned().into()), eq["style"] == id.as_str(), st["headphone"].is_string().then(|| ("Pour ton casque".into(), 0x5856d6)));
-            styles.push(self.act(tile, "hp-eq", json!({"style":id}), cx).into_any_element());
+            let selected = eq["style"] == id.as_str();
+            if selected {
+                chosen_desc = st["desc"].as_str().map(str::to_owned);
+            }
+            let label = st["label"].as_str().unwrap_or(id).to_owned();
+            let chip = ui::pill(SharedString::from(format!("hp-style-{id}")), Some(style_icon(id)), label, if selected { ui::Tone::Primary } else { ui::Tone::Plain });
+            style_row = style_row.child(self.act(chip, "hp-eq", json!({"style":id}), cx));
         }
-        let style_card = ui::section(Icon::Music, 0xff2d55, "Style de son", None).child(ui::grid(styles, 3));
+        let style_card = ui::section(Icon::Music, 0xff2d55, "Style de son", None)
+            .child(style_row)
+            .when_some(chosen_desc, |d, desc| d.child(ui::hint(desc).text_size(px(12.5))));
+        // Voies et composant Windows : réglés une fois, regroupés à part.
+        let channels_card = ui::section(Icon::Headphones, ui::ACCENT, "Voies corrigées", Some("Equalizer APO".into()))
+            .child(chips)
+
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .child(self.ask_go(ui::pill("hp-install", Some(Icon::Download), "Installer le composant", ui::Tone::Plain), "hp-eq-setup", json!({}), "Installer Equalizer APO (composant de correction du casque) sur Windows ?", cx))
+                    .child(self.ask_go(ui::pill("hp-remove", Some(Icon::Trash), "Retirer", ui::Tone::Plain), "hp-eq-remove", json!({}), "Retirer le composant de correction du casque ?", cx)),
+            );
         let values = eq["bands"].as_array().cloned().unwrap_or_default();
         let mut bands = div().flex().gap(px(2.));
         for (i, freq) in v.meta["hp_bands"].as_array().into_iter().flatten().enumerate() {
@@ -826,11 +874,12 @@ impl Mixer {
                 n == 0,
             ));
         }
-        // Les sections empilées en blocs réservent la hauteur réelle de chaque carte.
-        div()
-            .child(ui::settings_columns(width, vec![correction.into_any_element()], vec![custom.into_any_element()]).mb(px(16.)))
-            .child(style_card.mb(px(16.)))
-            .child(eq_card)
+        // Barre rapide en haut, puis le son à gauche (style, courbe) et les réglages rares à droite.
+        div().child(quick.mb(px(16.))).child(ui::settings_columns(
+            width,
+            vec![style_card.into_any_element(), eq_card.into_any_element()],
+            vec![custom.into_any_element(), channels_card.into_any_element()],
+        ))
     }
 
     pub(crate) fn run_latency_test(&mut self, cx: &mut Context<Self>) {
@@ -879,6 +928,9 @@ impl Mixer {
                 ui::status(ms(period), ui::State::Info),
                 false,
             ));
+        }
+        if self.rustudio_firmware() {
+            return card;
         }
         card = card.child(hint("« Mesurer » joue trois sons aigus très courts, envoyés seulement vers le Stream Mix, et chronomètre leur retour. Évite pendant un live.").text_size(px(12.)));
         card = if self.go.latency_running {
@@ -959,8 +1011,11 @@ impl Mixer {
             let cuts = report["coupures_usb_24h"]["nombre"].as_u64();
             let mut rows: Vec<(Icon, String, String, ui::State)> = vec![
                 (Icon::Power, "Moteur".into(), match report["moteur"]["etat"].as_str().unwrap_or("inconnu") { "ok" => "En marche".to_owned(), other => other.to_owned() }, if engine_ok { ui::State::Ok } else { ui::State::Warn }),
-                (Icon::Plug, "Coupures USB (24 h)".into(), cuts.map(|n| if n == 0 { "Aucune".to_owned() } else { n.to_string() }).unwrap_or_else(|| "Non mesurées".into()), if cuts.unwrap_or(0) == 0 { ui::State::Ok } else { ui::State::Warn }),
             ];
+            // les coupures sont comptées par le pilote officiel : rien à montrer sous firmware Rustudio
+            if !self.rustudio_firmware() {
+                rows.push((Icon::Plug, "Coupures USB (24 h)".into(), cuts.map(|n| if n == 0 { "Aucune".to_owned() } else { n.to_string() }).unwrap_or_else(|| "Non mesurées".into()), if cuts.unwrap_or(0) == 0 { ui::State::Ok } else { ui::State::Warn }));
+            }
             if d["usb"]["found"] == true {
                 let cpu = d["usb"]["controller_cpu"] == true;
                 rows.push((Icon::Gauge, "Contrôleur USB".into(), if cpu { "Relié au processeur".into() } else { "À vérifier".into() }, if cpu { ui::State::Ok } else { ui::State::Warn }));
@@ -1013,11 +1068,39 @@ impl Mixer {
         let obs = ui::section(Icon::Monitor, 0x5856d6, "Incrustation OBS", None)
             .child(hint("Ajoute une « Source navigateur » dans OBS avec ce lien : la pastille du micro s’affiche dans ton live.").text_size(px(12.)))
             .child(ui::list_row(None, url.clone(), None, ui::pill("obs-url", Some(Icon::Bookmark), "Copier", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone())))), true));
-        ui::settings_columns(
-            width,
-            vec![state.into_any_element(), obs.into_any_element()],
-            vec![self.latency_card(cx).into_any_element(), test.into_any_element(), self.echo_panel(cx).into_any_element()],
-        )
+        // Firmware Rustudio : le test des voies vise les voies du pilote officiel, absentes ici.
+        let mut right = vec![self.latency_card(cx).into_any_element()];
+        if let Some(card) = self.firmware_card() {
+            right.insert(0, card.into_any_element());
+        }
+        if !self.rustudio_firmware() {
+            right.push(test.into_any_element());
+        }
+        right.push(self.echo_panel(cx).into_any_element());
+        ui::settings_columns(width, vec![state.into_any_element(), obs.into_any_element()], right)
+    }
+
+    /// Compteurs du firmware Rustudio : ce que le pilote officiel comptait, mesuré par la Mini elle-même.
+    fn firmware_card(&self) -> Option<Div> {
+        if !self.rustudio_firmware() {
+            return None;
+        }
+        let f = self.go.diagnostics.as_ref().map(|d| &d["firmware"]).filter(|f| f.is_object())?;
+        let n = |k: &str| f[k].as_u64().unwrap_or(0);
+        let corrections = n("drops") + n("repeats");
+        let healthy = n("missed") == 0 && n("underruns") == 0 && corrections == 0;
+        let mut card = ui::section(Icon::Activity, ui::GREEN, "Firmware Rustudio", Some(if f["streaming"] == true { "Son en cours".into() } else { "Aucun son en cours".into() }))
+            .child(ui::status(if healthy { "Son sans coupure" } else { "Coupures relevées" }, if healthy { ui::State::Ok } else { ui::State::Warn }));
+        let rows = [
+            (Icon::Plug, "Paquets audio perdus", n("missed").to_string(), "Depuis l’ouverture du son par Windows."),
+            (Icon::Wave, "Échantillons corrigés", corrections.to_string(), "Sautés ou répétés pour rattraper un retard."),
+            (Icon::Gauge, "Manques de son", n("underruns").to_string(), "La puce n’avait plus rien à jouer."),
+            (Icon::Activity, "Boucle la plus longue", format!("{} µs", n("max_loop_us")), "Au-delà de 125 µs, un paquet USB peut se perdre."),
+        ];
+        for (i, (glyph, title, value, sub)) in rows.into_iter().enumerate() {
+            card = card.child(ui::list_row(Some((glyph, ui::TEXT2)), title, Some(sub.into()), ui::caption(value), i == 0));
+        }
+        Some(card)
     }
 
     /// Demande de confirmation GoXLR, affichée en fenêtre par-dessus la page.
@@ -1143,17 +1226,6 @@ fn style_icon(id: &str) -> Icon {
         _ => Icon::Music,
     }
 }
-fn style_colour(id: &str) -> u32 {
-    match id {
-        "neutre" => 0x34c759,
-        id if id.contains("basse") || id.contains("rap") => 0xff2d55,
-        "jeu" | "competitif" => 0x0071e3,
-        "voix" => 0xff9500,
-        "film" | "immersion" => 0x5856d6,
-        _ => 0xaf52de,
-    }
-}
-
 pub fn verify(client: &Client) -> Result<(), String> {
     if client.is_live() {
         return Err("Les essais GoXLR exigent un moteur simulé.".into());
