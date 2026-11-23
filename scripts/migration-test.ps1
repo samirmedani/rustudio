@@ -48,7 +48,8 @@ if (Test-Path (Join-Path $data 'state.json')) { throw 'Rustudio est deja passe s
 
 # 1. la vraie GoXLR Mini 4.8.0, telle que publiee
 $setup = Join-Path $tmp 'GoXLR-Mini-Setup-4.8.0.exe'
-Invoke-WebRequest 'https://github.com/samirmedani/goxlr-mini/releases/download/v4.8.0/GoXLR-Mini-Setup.exe' -OutFile $setup -UseBasicParsing
+# copie exacte de l'installeur publié en 4.8.0 (ancien dépôt goxlr-mini retiré de GitHub), en pré-version de test
+Invoke-WebRequest 'https://github.com/samirmedani/rustudio/releases/download/outils-tests/GoXLR-Mini-Setup-4.8.0.exe' -OutFile $setup -UseBasicParsing
 if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'fdfaeda4cfc09480ef99298e4e4d708f2436f39c87a150deb9e160c66d01f269') { throw 'Empreinte de GoXLR Mini 4.8.0 incorrecte' }
 $p = Start-Process $setup -ArgumentList '/quiet', '/nodesktop', '/nostartup' -Wait -PassThru
 if ($p.ExitCode -ne 0) { Fail "Installation de GoXLR Mini 4.8.0 echouee (code $($p.ExitCode))" }
