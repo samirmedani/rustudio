@@ -2,45 +2,62 @@
 //! Aucun acces direct au materiel : les vues relisent l'etat connu et les actions passent par son controleur.
 use crate::api::{ApiError, ApiResult};
 use crate::controller::{Ctl, Inner};
-use rustudio_core::modules::{self, ModuleRuntime, ModuleStatus};
+use rustudio_core::modules::{self, FirmwareKind, ModuleRuntime, ModuleStatus};
+use rustudio_goxlr::DevInfo;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-fn goxlr_runtime(health: &str, connected: bool, simulated: bool, firmware: Option<String>, error: Option<String>) -> ModuleRuntime {
+fn goxlr_runtime(health: &str, g: &Inner, simulated: bool, info: &DevInfo) -> ModuleRuntime {
     let status = match health {
         "ok" => ModuleStatus::Ready,
+        "audio" => ModuleStatus::Audio,
         "absent" => ModuleStatus::Disconnected,
         "starting" => ModuleStatus::Starting,
         "blocked" => ModuleStatus::Blocked,
         _ => ModuleStatus::Error,
     };
     ModuleRuntime {
-        id: modules::GOXLR_MINI.id, status, connected, simulated,
-        firmware: if connected { firmware } else { None },
-        error: if status == ModuleStatus::Ready { None } else { error },
+        id: modules::GOXLR_MINI.id, status, connected: g.connected, simulated,
+        firmware: if g.connected { info.firmware.clone() } else { None },
+        firmware_kind: goxlr_firmware_kind(g, info),
+        error: if matches!(status, ModuleStatus::Ready | ModuleStatus::Audio) { None } else { g.last_error.clone() },
+    }
+}
+
+/// Officiel ou Golden d'après la version lue à la connexion. Le firmware de laboratoire ne parle pas au pilote
+/// GoXLR : seule la liste USB de Windows le voit.
+pub(crate) fn goxlr_firmware_kind(g: &Inner, info: &DevInfo) -> Option<FirmwareKind> {
+    if g.connected {
+        Some(if info.golden() { FirmwareKind::Golden } else { FirmwareKind::Official })
+    } else {
+        match g.usb.as_deref() {
+            Some("mini-lab") => Some(FirmwareKind::Lab),
+            Some("mini-audio") => Some(FirmwareKind::Audio),
+            _ => None,
+        }
     }
 }
 
 impl Ctl {
-    pub(crate) fn module_devices_locked(&self, g: &Inner, firmware: Option<String>) -> [ModuleRuntime; 3] {
-        [goxlr_runtime(self.health_status(g), g.connected, self.simulated(), firmware, g.last_error.clone()), self.mouse.runtime(), self.keyboard.runtime()]
+    pub(crate) fn module_devices_locked(&self, g: &Inner, info: &DevInfo) -> [ModuleRuntime; 3] {
+        [goxlr_runtime(self.health_status(g), g, self.simulated(), info), self.mouse.runtime(), self.keyboard.runtime()]
     }
 
     pub fn modules_snapshot(&self) -> Value {
-        let firmware = self.dev_info.lock().unwrap().firmware.clone();
+        let info = self.dev_info.lock().unwrap().clone();
         let g = self.lock();
-        json!({"installed": modules::installed(), "devices": self.module_devices_locked(&g, firmware)})
+        json!({"installed": modules::installed(), "devices": self.module_devices_locked(&g, &info)})
     }
 
     pub fn module_state_snapshot(&self, id: &str) -> ApiResult {
         let module = modules::find(id).ok_or_else(|| unknown_module(id))?;
         match module.id {
             "goxlr-mini" => {
-                let firmware = self.dev_info.lock().unwrap().firmware.clone();
+                let info = self.dev_info.lock().unwrap().clone();
                 let v = self.version();
                 let g = self.lock();
                 let live = &g.live;
-                Ok(json!({"module": module, "device": self.module_devices_locked(&g, firmware)[0],
+                Ok(json!({"module": module, "device": self.module_devices_locked(&g, &info)[0],
                     "state": g.state.to_value(), "meta": crate::views::meta(&g.state, g.connected && g.mix2),
                     "live": {"fader_positions": live.fader_positions, "mic_db": live.mic_db,
                         "pressed": live.pressed, "encoders": live.encoders}, "v": v}))

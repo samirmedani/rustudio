@@ -62,10 +62,16 @@ fn adaptateur_suit_connexion_erreur_et_simulation() {
     ctl.lock().connected = true;
     ctl.beat();
     assert_eq!(devices()[0], json!({"id": "goxlr-mini", "status": "ready", "connected": true,
-        "simulated": true, "firmware": "1.2.1.49", "error": null}));
+        "simulated": true, "firmware": "1.2.1.49", "firmware_kind": "official", "error": null}));
+    ctl.dev_info.lock().unwrap().fw = [1, 0, 0, 21];
+    assert_eq!(devices()[0]["firmware_kind"], "golden", "Golden signale un retour arrière");
     ctl.lock().connected = false;
     ctl.lock().present = Some(false);
     assert!(devices()[0]["firmware"].is_null(), "un firmware ancien ne prouve pas qu'un appareil est connecté");
+    assert!(devices()[0]["firmware_kind"].is_null());
+    ctl.lock().usb = Some("mini-lab".into());
+    assert_eq!(devices()[0]["firmware_kind"], "lab", "le firmware de laboratoire se voit sans le pilote GoXLR");
+    assert_eq!(devices()[0]["status"], "disconnected");
     assert_eq!(ctl.modules_snapshot()["installed"], installed, "débrancher le matériel ne désinstalle pas son module");
     assert_eq!(controller(false).modules_snapshot()["devices"][0]["simulated"], false);
 }

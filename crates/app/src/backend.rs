@@ -34,6 +34,9 @@ pub struct Device {
     pub status: String,
     pub simulated: bool,
     pub firmware: Option<String>,
+    /// « official », « golden », « lab » ou « audio » (firmware Rustudio en USB Audio).
+    #[serde(default)]
+    pub firmware_kind: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -45,6 +48,10 @@ pub struct Inventory {
     /// Ce qui se lit d'un coup d'œil sur les cartes de « Mes appareils ».
     #[serde(default)]
     pub glance: Glance,
+    #[serde(skip)]
+    pub engine_version: Option<String>,
+    #[serde(skip)]
+    pub engine_supervised: Option<bool>,
 }
 
 /// État en direct résumé sur l'accueil. Chaque valeur manque tant que son appareil n'est pas prêt.
@@ -398,6 +405,8 @@ impl Client {
             glance.keyboard_effect = Some(rustudio_core::mk770::effect_name(effect as u8).to_owned());
         }
         result.glance = glance;
+        result.engine_version = live["app_version"].as_str().map(str::to_owned);
+        result.engine_supervised = live["supervised"].as_bool();
         Ok(result)
     }
 

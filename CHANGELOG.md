@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 6.4.2 — 23 novembre 2026
+
+**Nouveau**
+- **Firmware de secours signalé** : si ta GoXLR Mini démarre sur son firmware de secours (Golden) parce que son firmware officiel ne s’est pas lancé, Rustudio l’affiche en orange sur sa carte et sur ses pages pour que tu le réinstalles.
+- **Détails du moteur** : clique sur le résumé des performances dans la barre du bas pour voir le mode du moteur, sa version et son temps de réponse.
+
+**Corrigé**
+- **Arrêt du service Rustudio** : Windows voit tout de suite que le service s’arrête. Le gestionnaire de services et les scripts qui l’arrêtent ne signalent plus d’échec quand l’arrêt prend quelques secondes.
+- **GoXLR Mini sous firmware Rustudio** : la carte indique que la Mini est connectée en USB Audio et ouvre Son Windows pour accéder au micro et au casque.
+
 ## 6.4.1 — 22 novembre 2026
 
 Rustudio 6.4.1 corrige l’affichage de la page Casque et adapte les réglages aux fenêtres en demi-écran.

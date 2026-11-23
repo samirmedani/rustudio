@@ -105,9 +105,12 @@ détection USB. Pour un autre appareil, ajoute son propre état d'exécution et 
 Dans la vue propre au module, `module` est son descripteur et `device` son état d'exécution. `state`, `meta` et
 `live` contiennent ses réglages, ses métadonnées et ses valeurs en direct ; `v` permet de repérer un changement.
 
-Chaque entrée de `devices` contient `id`, `status`, `connected`, `simulated`, `firmware` et `error`. Les statuts sont
-`ready`, `disconnected`, `starting`, `error` et `blocked`. Les réglages et commandes restent propres au module ;
-ce registre ne remplace pas leur implémentation.
+Chaque entrée de `devices` contient `id`, `status`, `connected`, `simulated`, `firmware`, `firmware_kind` et `error`.
+Les statuts sont `ready`, `audio`, `asleep`, `disconnected`, `starting`, `error` et `blocked`.
+Le statut `audio` indique une Mini présente avec le micro et la sortie USB Audio de Rustudio.
+`connected` reste à `false` pour signaler que les commandes du mixeur sont indisponibles.
+`firmware_kind` vaut `official`, `golden` (firmware de secours de la GoXLR), `lab` (firmware de laboratoire),
+`audio` (firmware Rustudio avec USB Audio) ou `null` quand le module ne le reconnaît pas.
 
 ### Commandes du module et commandes globales
 

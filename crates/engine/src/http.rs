@@ -228,7 +228,11 @@ fn sim_act(ctl: &Arc<Ctl>, name: &str, p: &Value) -> Result<Value, ApiError> {
         "down" => sim.button_down(&s("button")?),
         "up" => sim.button_up(&s("button")?),
         "fader" => sim.move_fader(num(get(p, "index")).unwrap_or(0.0) as usize % 4, num(get(p, "value")).unwrap_or(0.0) as i32),
-        "unplug" => sim.unplug(),
+        // ce que Windows voit ensuite sur l'USB : "none" par défaut, "failed", "full" ou "mini-lab"
+        "unplug" => {
+            sim.lock().unplugged_usb = get(p, "usb").as_str().unwrap_or("none").into();
+            sim.unplug();
+        }
         "usb-drop" => sim.stream_drop(num(get(p, "ms")).unwrap_or(1.0).max(1.0) as u32),
         "plug" => sim.plug(),
         "hang" => sim.hang(num(get(p, "seconds")).unwrap_or(20.0)),

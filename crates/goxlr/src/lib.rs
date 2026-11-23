@@ -101,6 +101,10 @@ impl DevInfo {
     pub fn submixes(&self) -> bool {
         self.fw >= [1, 2, 0, 46]
     }
+    /// Golden : firmware de secours (1.0.0.x) que la Mini lance quand son firmware principal ne démarre plus.
+    pub fn golden(&self) -> bool {
+        self.fw[..3] == [1, 0, 0]
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

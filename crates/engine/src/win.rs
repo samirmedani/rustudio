@@ -213,7 +213,8 @@ pub fn pid_alive(pid: u32) -> bool {
 }
 
 /// Ce que Windows voit sur l'USB, sans passer par le pilote GoXLR (aucun risque pour ses handles) :
-/// "mini", "full" (GoXLR complete, non geree), "failed" (un appareil n'arrive pas a se presenter), "none".
+/// "mini", "mini-lab", "mini-audio" (firmwares Rustudio), "full" (GoXLR complete, non geree),
+/// "failed" (un appareil n'arrive pas a se presenter), "none".
 pub fn usb_scan() -> Option<String> {
     #[cfg(windows)]
     {
@@ -231,17 +232,43 @@ pub fn usb_scan() -> Option<String> {
             }
             let ids: Vec<String> =
                 String::from_utf16_lossy(&buf).split('\0').filter(|s| !s.is_empty()).map(|s| s.to_uppercase()).collect();
-            return Some(classify_usb(&ids));
+            return Some(classify_usb(&ids, &lab_interfaces()));
         }
     }
     #[cfg(not(windows))]
     None
 }
 
-pub fn classify_usb(ids: &[String]) -> String {
+/// Interface WinUSB que declare le firmware de laboratoire (descripteurs Microsoft OS 2.0). Son VID/PID de test
+/// pid.codes peut servir a d'autres montages : seule cette interface est propre a Rustudio.
+#[cfg(windows)]
+fn lab_interfaces() -> Vec<String> {
+    use windows_sys::core::GUID;
+    use windows_sys::Win32::Devices::DeviceAndDriverInstallation::*;
+    const LAB_INTERFACE: GUID = GUID::from_u128(0x36bbebd8_15b3_4316_a6ed_b1265f3cebff);
+    let mut len = 0u32;
+    // une liste vide ne contient que son caractere nul final
+    unsafe {
+        let flags = CM_GET_DEVICE_INTERFACE_LIST_PRESENT;
+        if CM_Get_Device_Interface_List_SizeW(&mut len, &LAB_INTERFACE, std::ptr::null(), flags) != CR_SUCCESS || len <= 1 {
+            return Vec::new();
+        }
+        let mut list = vec![0u16; len as usize];
+        if CM_Get_Device_Interface_ListW(&LAB_INTERFACE, std::ptr::null(), list.as_mut_ptr(), len, flags) != CR_SUCCESS {
+            return Vec::new();
+        }
+        String::from_utf16_lossy(&list).split('\0').filter(|path| !path.is_empty()).map(str::to_ascii_uppercase).collect()
+    }
+}
+
+pub fn classify_usb(ids: &[String], lab: &[String]) -> String {
     use rustudio_core::consts::{USB_FULL, USB_MINI};
     if ids.iter().any(|i| i.starts_with(USB_MINI)) {
         "mini".into()
+    } else if lab.iter().any(|path| path.starts_with(r"\\?\USB#VID_1209&PID_0002&MI_03#")) {
+        "mini-audio".into()
+    } else if !lab.is_empty() {
+        "mini-lab".into()
     } else if ids.iter().any(|i| i.starts_with(USB_FULL)) {
         "full".into()
     } else if ids.iter().any(|i| i.starts_with("USB\\VID_0000&") || i.contains("DESCRIPTOR_FAILURE")) {

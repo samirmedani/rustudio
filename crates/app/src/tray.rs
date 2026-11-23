@@ -50,7 +50,8 @@ fn goxlr_connected(live: &Value) -> bool {
 }
 
 fn connected_devices(live: &Value) -> usize {
-    live["modules"]["devices"].as_array().into_iter().flatten().filter(|d| d["connected"] == true).count()
+    live["modules"]["devices"].as_array().into_iter().flatten()
+        .filter(|d| d["connected"] == true || d["status"] == "audio").count()
 }
 
 /// État de l'icône et infobulle, comme l'appli précédente.
@@ -63,6 +64,8 @@ fn status(live: Option<&Value>) -> (&'static str, String) {
     let key = if count == 0 || (connected && health != "ok") { "off" } else if !connected || mic == "on" { "on" } else if mic == "all" { "muted" } else { "part" };
     let text = if count == 0 {
         "Rustudio · aucun appareil connecté".to_string()
+    } else if health == "audio" && count == 1 {
+        "Rustudio · GoXLR Mini · firmware Rustudio (USB Audio)".into()
     } else if !connected {
         format!("Rustudio · {count} appareil{s} connecté{s}", s = if count > 1 { "s" } else { "" })
     } else if health != "ok" {

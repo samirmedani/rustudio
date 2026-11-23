@@ -179,12 +179,43 @@ fn absente_dit_ce_que_voit_windows() {
     assert_eq!(b.ctl.live_snapshot(false)["usb"], "none");
     b.sim.lock().unplugged_usb = "failed".into();
     assert!(wait_for(3.0, || b.ctl.lock().usb.as_deref() == Some("failed")));
+    b.sim.lock().unplugged_usb = "mini-lab".into();
+    assert!(wait_for(3.0, || b.ctl.lock().usb.as_deref() == Some("mini-lab")));
+    assert_eq!(b.ctl.health()["firmware_kind"], "lab");
+    b.sim.lock().unplugged_usb = "mini-audio".into();
+    assert!(wait_for(3.0, || b.ctl.health()["present"] == true));
+    let health = b.ctl.health();
+    assert_eq!(health["status"], "audio");
+    assert_eq!(health["firmware_kind"], "audio");
+    assert_eq!(health["connected"], false, "le mixeur reste indisponible");
+    assert_eq!(b.ctl.live_snapshot(false)["modules"]["devices"][0]["status"], "audio");
     b.sim.plug();
     assert!(wait_for(8.0, || {
         let g = b.ctl.lock();
         g.connected && g.usb.as_deref() == Some("mini")
     }));
+    assert_eq!(b.ctl.health()["firmware_kind"], "official");
     assert!(rustudio_engine::log::recent(80).iter().any(|l| l.contains("ne fait peut-être que charger")));
+    assert!(rustudio_engine::log::recent(80).iter().any(|l| l.contains("firmware de laboratoire Rustudio")));
+}
+
+#[test]
+fn audio_rustudio_requiert_son_interface_winusb() {
+    use rustudio_engine::win::classify_usb;
+    let ids = vec![r"USB\VID_1209&PID_0002\TEST".into()];
+    assert_eq!(classify_usb(&ids, &[]), "none");
+    let paths = vec![r"\\?\USB#VID_1209&PID_0002&MI_03#TEST".into()];
+    assert_eq!(classify_usb(&ids, &paths), "mini-audio");
+    let ids = vec![format!("{}TEST", rustudio_core::consts::USB_MINI)];
+    assert_eq!(classify_usb(&ids, &paths), "mini");
+}
+
+#[test]
+fn golden_reconnu_a_la_connexion() {
+    let b = Bench::with_fw([1, 0, 0, 21]);
+    let health = b.ctl.health();
+    assert_eq!((health["firmware"].as_str(), health["firmware_kind"].as_str()), (Some("1.0.0.21"), Some("golden")));
+    assert_eq!(b.ctl.live_snapshot(false)["modules"]["devices"][0]["firmware_kind"], "golden");
 }
 
 #[test]

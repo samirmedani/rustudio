@@ -2,10 +2,10 @@
 use crate::config::{Config, SERVICE_NAME};
 use std::ffi::{OsStr, OsString};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use windows_service::service::*;
-use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+use windows_service::service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle};
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 use windows_service::{define_windows_service, service_dispatcher};
 
@@ -18,15 +18,6 @@ pub fn run_dispatcher() -> Result<(), String> {
 fn service_main(_args: Vec<OsString>) {
     let stop = Arc::new(AtomicBool::new(false));
     let s2 = stop.clone();
-    let handler = move |ev| match ev {
-        ServiceControl::Stop | ServiceControl::Shutdown => {
-            s2.store(true, Ordering::SeqCst);
-            ServiceControlHandlerResult::NoError
-        }
-        ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-        _ => ServiceControlHandlerResult::NotImplemented,
-    };
-    let Ok(h) = service_control_handler::register(SERVICE_NAME, handler) else { return };
     let status = |state: ServiceState, accept: ServiceControlAccept| ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: state,
@@ -36,6 +27,23 @@ fn service_main(_args: Vec<OsString>) {
         wait_hint: Duration::from_secs(10),
         process_id: None,
     };
+    // L'arrêt en cours est signalé tout de suite : sans lui, Stop-Service conclut à un échec dès que l'arrêt du
+    // moteur dépasse 2 s, et un script qui relance ensuite le service le trouve encore actif.
+    let handle = Arc::new(OnceLock::<ServiceStatusHandle>::new());
+    let h2 = handle.clone();
+    let handler = move |ev| match ev {
+        ServiceControl::Stop | ServiceControl::Shutdown => {
+            s2.store(true, Ordering::SeqCst);
+            if let Some(h) = h2.get() {
+                let _ = h.set_service_status(status(ServiceState::StopPending, ServiceControlAccept::empty()));
+            }
+            ServiceControlHandlerResult::NoError
+        }
+        ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+        _ => ServiceControlHandlerResult::NotImplemented,
+    };
+    let Ok(h) = service_control_handler::register(SERVICE_NAME, handler) else { return };
+    let _ = handle.set(h);
     let _ = h.set_service_status(status(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN));
     crate::supervisor::supervise(Config::from_env(), stop);
     let _ = h.set_service_status(status(ServiceState::Stopped, ServiceControlAccept::empty()));

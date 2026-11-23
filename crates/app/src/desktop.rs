@@ -229,12 +229,16 @@ fn capability(id: &str) -> &str {
     }
 }
 pub(crate) fn device_state(device: Option<&Device>) -> (&'static str, State) {
-    match device.map(|d| d.status.as_str()) {
-        Some("ready") => ("Connecté", State::Ok),
-        Some("asleep") => ("En veille · bouge-la pour la réveiller", State::Info),
-        Some("starting") => ("Détection en cours", State::Warn),
-        Some("disconnected") => ("Débranché", State::Idle),
-        Some("error" | "blocked") => ("Connexion à vérifier", State::Error),
+    match device.map(|d| (d.status.as_str(), d.firmware_kind.as_deref())) {
+        // le pilote GoXLR ne voit pas le firmware de laboratoire : sans lui, la Mini paraîtrait débranchée
+        Some((_, Some("lab"))) => ("Firmware Rustudio en essai", State::Info),
+        Some(("audio", _)) => ("Connectée · Firmware Rustudio", State::Info),
+        Some(("ready", Some("golden"))) => ("Firmware de secours (Golden)", State::Warn),
+        Some(("ready", _)) => ("Connecté", State::Ok),
+        Some(("asleep", _)) => ("En veille · bouge-la pour la réveiller", State::Info),
+        Some(("starting", _)) => ("Détection en cours", State::Warn),
+        Some(("disconnected", _)) => ("Débranché", State::Idle),
+        Some(("error" | "blocked", _)) => ("Connexion à vérifier", State::Error),
         _ => ("Indisponible", State::Idle),
     }
 }
@@ -574,13 +578,12 @@ impl Mixer {
         )
     }
 
-    /// Barre d'état en bas de la fenêtre : moteur, mesures de l'appli et version.
+    /// Barre d'état en bas de la fenêtre : appareils, mesures et version.
     fn status_bar(&self, cx: &mut Context<Self>) -> Div {
-        let engine = self.inventory.is_some();
         let detected = self
             .inventory
             .as_ref()
-            .map(|i| i.devices.iter().filter(|d| matches!(d.status.as_str(), "ready" | "asleep")).count())
+            .map(|i| i.devices.iter().filter(|d| matches!(d.status.as_str(), "ready" | "asleep" | "audio")).count())
             .unwrap_or(0);
         let sub = if !self.client.is_live() {
             "Démonstration".to_owned()
@@ -601,24 +604,15 @@ impl Mixer {
             .border_color(alpha(ui::INK, 0.06))
             .bg(alpha(ui::PAPER, 0.55))
             .text_size(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(7.))
-                    .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(if engine { ui::GREEN } else { ui::RED })))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::TEXT)).child(if engine { "Moteur connecté" } else { "Moteur indisponible" }))
-                    .child(ui::caption(sub)),
-            )
+            .child(ui::caption(sub))
             .child(divider())
-            .child(self.performance())
+            .child(self.performance(cx))
             .child(div().flex_1())
             .child(self.update_widget(cx))
     }
 
-    /// Mesures de l'appli, chacune avec sa note en couleur ; au survol, ce qu'elles veulent dire.
-    fn performance(&self) -> Stateful<Div> {
+    /// Mesures et détails du moteur, regroupés dans le panneau de performance.
+    fn performance(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let ms = self.client.engine_response_time().map(|time| time.as_secs_f64() * 1000.);
         let measures = [
             Measure {
@@ -668,6 +662,7 @@ impl Mixer {
         };
         let key = "perf-summary";
         let t = ui::hover_t(key);
+        let open = self.performance_open;
         let mut strip = div()
             .flex()
             .items_center()
@@ -676,7 +671,7 @@ impl Mixer {
             .pl(px(10.))
             .pr(px(12.))
             .rounded_full()
-            .bg(ui::lerp(alpha(ui::INK, 0.), alpha(ui::INK, 0.05), t))
+            .bg(ui::lerp(alpha(ui::INK, 0.), alpha(ui::INK, 0.05), if open { 1. } else { t }))
             .child(
                 div()
                     .flex()
@@ -695,7 +690,7 @@ impl Mixer {
                     .child(div().font_weight(FontWeight::MEDIUM).text_color(rgb(grade_text(m.grade))).child(m.value.clone().unwrap_or_else(|| "—".into()))),
             );
         }
-        let panel = (t > 0.01).then(|| {
+        let panel = open.then(|| {
             let mut list = div().flex().flex_col().gap(px(12.));
             for m in &measures {
                 let meaning = m.grade.map(|g| m.meaning[g as usize]).unwrap_or("Mesure en cours…");
@@ -716,8 +711,29 @@ impl Mixer {
                         .child(ui::caption(meaning).line_height(px(17.))),
                 );
             }
+            let (engine, state, detail) = match &self.inventory {
+                Some(data) => {
+                    let mode = match (self.client.is_live(), data.engine_supervised) {
+                        (false, _) => "Démonstration",
+                        (true, Some(true)) => "Moteur supervisé",
+                        (true, Some(false)) => "Moteur autonome",
+                        (true, None) => "Moteur local",
+                    };
+                    let detail = data.engine_version.as_ref().map_or_else(|| mode.to_owned(), |v| format!("{mode} · {v}"));
+                    ("Moteur connecté", State::Ok, detail)
+                }
+                None => ("Moteur indisponible", State::Error, String::new()),
+            };
+            let firmware = match self.device("goxlr-mini").and_then(|d| d.firmware_kind.as_deref()) {
+                Some("official") => Some("Firmware officiel"),
+                Some("golden") => Some("Firmware de secours (Golden)"),
+                Some("lab") => Some("Firmware Rustudio en essai"),
+                Some("audio") => Some("Firmware Rustudio · USB Audio"),
+                _ => None,
+            };
             deferred(
                 div()
+                    .id("performance-panel")
                     .absolute()
                     .bottom(px(38.))
                     .left_0()
@@ -728,16 +744,39 @@ impl Mixer {
                     .border_1()
                     .border_color(alpha(ui::INK, 0.08))
                     .shadow(ui::soft_shadow())
-                    .opacity(t)
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                        // Le bouton dans la barre du bas ferme lui-même le panneau au clic.
+                        if event.position.y < window.viewport_size().height - px(STATUS_BAR_H) {
+                            this.performance_open = false;
+                            cx.notify();
+                        }
+                    }))
                     .flex()
                     .flex_col()
                     .gap(px(14.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD).child("Ce que Rustudio consomme"))
+                    .child(
+                        div().flex().items_center().justify_between().gap(px(8.))
+                            .child(ui::status(engine, state))
+                            .child(ui::caption(detail)),
+                    )
+                    .when_some(firmware, |d, firmware| {
+                        d.child(ui::caption(format!("GoXLR Mini · {firmware}")))
+                    })
                     .child(list)
                     .child(ui::caption("Mesuré chaque seconde sur ton PC.")),
             )
         });
-        ui::hoverable(div().id(key).relative().flex_none().child(strip).children(panel), key.to_owned())
+        let button = ui::hoverable(
+            strip.id(key).cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.performance_open = !open;
+                    cx.notify();
+                }))
+                .child(ui::icon(Icon::ChevronDown, 12., rgb(ui::TEXT3))),
+            key.to_owned(),
+        );
+        div().id("performance-popover").relative().flex_none().child(button).children(panel)
     }
 
     /// Droite de la barre d'état : version, état et bouton de mise à jour (cherche, puis installe d'un clic).
@@ -943,6 +982,20 @@ impl Mixer {
             .items_start()
             .when_some(back, |d, b| d.child(b))
             .child(self.header_main(module, cx))
+            .when_some(self.firmware_notice(), |d, notice| d.child(notice.w_full().mb(px(18.))))
+    }
+
+    /// Explique les limitations des firmwares alternatifs sur les pages GoXLR.
+    fn firmware_notice(&self) -> Option<Div> {
+        if self.page.space() != Some(Space::GoXlr) {
+            return None;
+        }
+        let message = match self.device("goxlr-mini")?.firmware_kind.as_deref() {
+            Some("golden") => "La GoXLR Mini a démarré sur son firmware de secours (Golden) : un retour arrière a eu lieu et son firmware officiel ne s’est pas lancé. Réinstalle le firmware officiel.",
+            Some("audio") => "Le firmware Rustudio fournit le micro et le casque dans Son Windows. Le mixeur et les commandes de la GoXLR sont indisponibles avec ce firmware.",
+            _ => return None,
+        };
+        Some(ui::notice(false, message))
     }
 
     fn header_main(&self, module: Option<&Descriptor>, cx: &mut Context<Self>) -> Div {
@@ -1019,6 +1072,12 @@ impl Mixer {
             );
         div()
             .id("rustudio")
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if this.performance_open && event.keystroke.key == "escape" {
+                    this.performance_open = false;
+                    cx.notify();
+                }
+            }))
             .relative()
             .size_full()
             .font_family(ui::FONT)
@@ -1362,15 +1421,25 @@ impl Mixer {
         let device = self.device(&module.id);
         let (status, state) = device_state(device);
         let status = if device.is_some_and(|d| d.simulated) { format!("{status} · Appareil simulé") } else { status.to_owned() };
-        let target = module_page(&module.id);
+        let audio_only = device.is_some_and(|d| d.status == "audio");
+        let target = if audio_only { Some(Page::WindowsAudio) } else { module_page(&module.id) };
+        let summary = if audio_only {
+            "Micro et casque via USB Audio. Les commandes du mixeur sont indisponibles.".to_owned()
+        } else {
+            module.summary.clone()
+        };
         let detail = device.and_then(|d| d.firmware.clone()).map(|fw| format!("Firmware {fw}"));
         // même structure et même hauteur pour toutes les cartes : 4 capacités au plus, le reste en « +N »
         let mut tags = div().flex().flex_none().flex_wrap().items_start().gap(px(6.)).min_h(px(24.));
-        for c in module.capabilities.iter().take(3) {
-            tags = tags.child(ui::tag(capability(c).to_owned()));
-        }
-        if module.capabilities.len() > 3 {
-            tags = tags.child(ui::tag(format!("+{}", module.capabilities.len() - 3)));
+        if audio_only {
+            tags = tags.child(ui::tag("Micro")).child(ui::tag("Casque"));
+        } else {
+            for c in module.capabilities.iter().take(3) {
+                tags = tags.child(ui::tag(capability(c).to_owned()));
+            }
+            if module.capabilities.len() > 3 {
+                tags = tags.child(ui::tag(format!("+{}", module.capabilities.len() - 3)));
+            }
         }
         let glance = self.inventory.as_ref().and_then(|i| glance_row(&module.id, &i.glance));
         let card = ui::card()
@@ -1391,7 +1460,7 @@ impl Mixer {
             .child(ui::status(status, state))
             // la ligne « en direct » garde sa place même vide : les cartes restent alignées
             .child(div().min_h(px(32.)).flex().items_center().children(glance))
-            .child(hint(module.summary.clone()).text_size(px(12.5)).line_height(px(19.)))
+            .child(hint(summary).text_size(px(12.5)).line_height(px(19.)))
             .child(tags)
             .child(
                 div()
@@ -1407,7 +1476,7 @@ impl Mixer {
                     .child(ui::caption(detail.unwrap_or_default()))
                     .when_some(target, |d, page| {
                         d.child(
-                            ui::pill(ElementId::Name(format!("open-{}", module.id).into()), None, "Ouvrir", Tone::Primary)
+                            ui::pill(ElementId::Name(format!("open-{}", module.id).into()), None, if audio_only { "Son Windows" } else { "Ouvrir" }, Tone::Primary)
                                 .h(px(38.))
                                 .px(px(18.))
                                 .child(ui::icon(Icon::ChevronRight, 15., rgb(ui::WHITE)))
@@ -1571,5 +1640,29 @@ fn grade_text(grade: Option<Grade>) -> u32 {
         Some(Grade::Good) => ui::ACCENT,
         Some(Grade::Fair) => ui::ORANGE_TEXT,
         Some(Grade::High) => ui::RED_TEXT,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn goxlr(device: serde_json::Value) -> Device {
+        serde_json::from_value(device).unwrap()
+    }
+
+    #[test]
+    fn firmware_officiel_golden_ou_labo_affiche() {
+        let official = goxlr(json!({"id": "goxlr-mini", "status": "ready", "simulated": false, "firmware": "1.2.1.49", "firmware_kind": "official"}));
+        assert!(matches!(device_state(Some(&official)), ("Connecté", State::Ok)));
+        let golden = goxlr(json!({"id": "goxlr-mini", "status": "ready", "simulated": false, "firmware": "1.0.0.21", "firmware_kind": "golden"}));
+        assert!(matches!(device_state(Some(&golden)), ("Firmware de secours (Golden)", State::Warn)));
+        let lab = goxlr(json!({"id": "goxlr-mini", "status": "disconnected", "simulated": false, "firmware": null, "firmware_kind": "lab"}));
+        assert!(matches!(device_state(Some(&lab)), ("Firmware Rustudio en essai", State::Info)));
+        let audio = goxlr(json!({"id": "goxlr-mini", "status": "audio", "simulated": false, "firmware": null, "firmware_kind": "audio"}));
+        assert!(matches!(device_state(Some(&audio)), ("Connectée · Firmware Rustudio", State::Info)));
+        // moteur d'une version précédente : pas de sorte de firmware, état habituel
+        let older = goxlr(json!({"id": "goxlr-mini", "status": "ready", "simulated": false, "firmware": "1.2.1.49"}));
+        assert!(matches!(device_state(Some(&older)), ("Connecté", State::Ok)));
     }
 }

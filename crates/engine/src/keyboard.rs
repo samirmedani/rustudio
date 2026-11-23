@@ -49,6 +49,7 @@ impl KeyboardHub {
         ModuleRuntime {
             id: ID, status, connected: s.connected, simulated: self.shared.simulated,
             firmware: if s.connected { s.settings.as_ref().and_then(|x| x.firmware.clone()) } else { None },
+            firmware_kind: None,
             error: s.error.clone(),
         }
     }

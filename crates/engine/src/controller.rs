@@ -318,10 +318,12 @@ impl Inner {
             "none" => "Windows ne voit aucune GoXLR sur l’USB : si elle est allumée, son câble ne fait peut-être que charger, ou le port n’est pas relié au PC",
             "failed" => "Un appareil USB n’arrive pas à se présenter à Windows (câble ou port abîmé ?) : c’est peut-être la GoXLR",
             "full" => "Une GoXLR complète est branchée : Rustudio ne pilote pour l’instant que la Mini",
+            "mini-lab" => "La GoXLR Mini tourne sur le firmware de laboratoire Rustudio : le pilote GoXLR ne la voit pas",
+            "mini-audio" => "La GoXLR Mini est connectée en USB Audio avec le firmware Rustudio",
             _ => "Windows voit la GoXLR sur l’USB",
         };
         match seen.as_deref() {
-            Some(k @ ("none" | "failed" | "full")) => log(note(k)),
+            Some(k @ ("none" | "failed" | "full" | "mini-lab" | "mini-audio")) => log(note(k)),
             Some("mini") if matches!(before.as_deref(), Some("none") | Some("failed")) => log(note("mini")),
             _ => {}
         }
@@ -773,15 +775,19 @@ impl Ctl {
                             self.lost(&mut dev, &msg);
                             let delay = {
                                 let mut g = self.lock();
-                                let changed = g.present != Some(!absent);
-                                g.present = Some(!absent);
-                                g.last_error = Some(msg.clone());
+                                let audio_only = g.usb.as_deref() == Some("mini-audio");
+                                let present = !absent || audio_only;
+                                let changed = g.present != Some(present);
+                                g.present = Some(present);
+                                g.last_error = (!audio_only).then(|| msg.clone());
                                 if changed {
                                     g.version += 1;
                                 }
                                 if absent {
                                     drop(g);
-                                    log("GoXLR absente (éteinte ou débranchée) : nouvel essai toutes les 2 s");
+                                    if !audio_only {
+                                        log("GoXLR absente (éteinte ou débranchée) : nouvel essai toutes les 2 s");
+                                    }
                                     *self.absent_retry.lock().unwrap()
                                 } else {
                                     g.fail_streak += 1;

@@ -18,6 +18,12 @@ Le module Rustudio prend en charge la **TC-Helicon GoXLR Mini** via le pilote of
 | **Éclairage et scènes** | Couleurs, animations et configurations rappelables manuellement ou à l’ouverture d’une application. |
 | **Casque** | Égaliseur à dix bandes, corrections AutoEq et styles d’écoute. |
 
+## Firmware
+
+La carte de la Mini, dans **Mes appareils**, affiche la version de son firmware. Si la Mini démarre sur son firmware de secours (Golden), parce que son firmware officiel ne s’est pas lancé, son état passe en orange et ses pages te demandent de réinstaller le firmware officiel.
+
+Si la Mini utilise le firmware expérimental Rustudio avec USB Audio, sa carte affiche **Connectée · Firmware Rustudio**. Ouvre **Son Windows** depuis la carte pour retrouver son micro et sa sortie audio. Les commandes du mixeur restent indisponibles avec ce firmware.
+
 ## Passer de l’ancien logiciel GoXLR Mini à Rustudio
 
 Si tu utilisais GoXLR Mini 4.x, [l’installateur Rustudio](https://github.com/samirmedani/rustudio/releases/latest/download/Rustudio-Setup.exe) peut le remplacer et reprendre tes réglages. Le bouton **Mettre à jour** de l’ancien logiciel reste utilisable : son [pont de migration](https://github.com/samirmedani/goxlr-mini/releases/tag/v5.0.0) est conservé sur le dépôt archivé.

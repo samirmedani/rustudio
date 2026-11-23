@@ -43,6 +43,8 @@ pub struct ModuleDescriptor {
 #[serde(rename_all = "lowercase")]
 pub enum ModuleStatus {
     Ready,
+    /// Audio USB disponible, commandes du mixeur indisponibles.
+    Audio,
     Disconnected,
     /// Récepteur ou câble présent, appareil endormi : il revient seul dès qu'on l'utilise.
     Asleep,
@@ -59,7 +61,23 @@ pub struct ModuleRuntime {
     pub connected: bool,
     pub simulated: bool,
     pub firmware: Option<String>,
+    /// Sorte de firmware, quand le module sait la reconnaître ; absente sinon.
+    pub firmware_kind: Option<FirmwareKind>,
     pub error: Option<String>,
+}
+
+/// Firmware qui tourne sur l'appareil.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FirmwareKind {
+    /// Firmware du fabricant.
+    Official,
+    /// Firmware de secours de la GoXLR : il démarre quand le firmware principal ne se lance plus (retour arrière).
+    Golden,
+    /// Firmware de laboratoire Rustudio, en essai.
+    Lab,
+    /// Firmware Rustudio avec micro et sortie USB Audio.
+    Audio,
 }
 
 pub const GOXLR_MINI: ModuleDescriptor = ModuleDescriptor {

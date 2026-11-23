@@ -24,7 +24,8 @@ impl MouseHub {
         let s = self.shared.state.lock().unwrap();
         let status = if s.connected { ModuleStatus::Ready } else if s.asleep { ModuleStatus::Asleep } else if s.present { ModuleStatus::Error } else { ModuleStatus::Disconnected };
         ModuleRuntime { id: "attack-shark-r5-ultra", status, connected: s.connected,
-            simulated: self.shared.simulated, firmware: if s.connected { s.settings.as_ref().map(|x| x.firmware.clone()) } else { None }, error: s.error.clone() }
+            simulated: self.shared.simulated, firmware: if s.connected { s.settings.as_ref().map(|x| x.firmware.clone()) } else { None },
+            firmware_kind: None, error: s.error.clone() }
     }
     pub fn state(&self) -> Value {
         let s = self.shared.state.lock().unwrap();

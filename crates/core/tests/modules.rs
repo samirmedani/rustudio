@@ -1,4 +1,4 @@
-use rustudio_core::modules::{self, ModuleOrigin, ModuleStatus};
+use rustudio_core::modules::{self, FirmwareKind, ModuleOrigin, ModuleStatus};
 use std::collections::HashSet;
 
 #[test]
@@ -53,5 +53,8 @@ fn statuts_serialises_selon_le_contrat_accueil() {
         (ModuleStatus::Starting, "starting"), (ModuleStatus::Error, "error"), (ModuleStatus::Blocked, "blocked"),
     ] {
         assert_eq!(serde_json::to_value(status).unwrap(), expected);
+    }
+    for (kind, expected) in [(FirmwareKind::Official, "official"), (FirmwareKind::Golden, "golden"), (FirmwareKind::Lab, "lab")] {
+        assert_eq!(serde_json::to_value(kind).unwrap(), expected);
     }
 }

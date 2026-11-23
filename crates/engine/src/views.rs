@@ -17,6 +17,9 @@ impl Ctl {
         if g.connected {
             return if self.heartbeat_age() > Duration::from_secs(5) { "blocked" } else { "ok" };
         }
+        if g.usb.as_deref() == Some("mini-audio") {
+            return "audio";
+        }
         match g.present {
             Some(false) => "absent",
             None if g.connects == 0 => "starting",
@@ -32,10 +35,7 @@ impl Ctl {
     pub fn live_snapshot(&self, want_level: bool) -> Value {
         let brief = self.updater.brief();
         let v = self.version();
-        let (firmware, reply) = {
-            let info = self.dev_info.lock().unwrap();
-            (info.firmware.clone(), (info.stats.reply_ms, info.stats.reply_avg_ms))
-        };
+        let info = self.dev_info.lock().unwrap().clone();
         let mut g = self.lock();
         if want_level {
             g.level_until = Some(Instant::now() + Duration::from_secs(3));
@@ -43,13 +43,14 @@ impl Ctl {
         let s = &g.state;
         let listening = g.listen_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0);
         // temps de réponse des commandes USB, chronométré par le fil USB lui-même : lu ici sans toucher à l'appareil
-        let usb_reply = (g.connected && reply.1 > 0.0)
-            .then(|| json!({"last_ms": (reply.0 * 10.0).round() / 10.0, "avg_ms": (reply.1 * 10.0).round() / 10.0}));
+        let reply = &info.stats;
+        let usb_reply = (g.connected && reply.reply_avg_ms > 0.0)
+            .then(|| json!({"last_ms": (reply.reply_ms * 10.0).round() / 10.0, "avg_ms": (reply.reply_avg_ms * 10.0).round() / 10.0}));
         json!({"v": v, "boot": self.boot_id, "connected": g.connected, "live": live_json(&g.live),
                "job": g.job.clone().map(Value::Object), "mic": {"muted": s.muted("Mic"), "partial": s.partial_of("Mic")},
                "health": self.health_status(&g), "sim": self.simulated(), "osd": s.prefs.osd, "scene": s.scene,
-               "modules": {"devices": self.module_devices_locked(&g, firmware)},
-               "app_version": VERSION, "update": brief, "usb": g.usb, "listening": listening,
+               "modules": {"devices": self.module_devices_locked(&g, &info)},
+               "app_version": VERSION, "supervised": self.cfg.supervised, "update": brief, "usb": g.usb, "listening": listening,
                "sound_test": g.sound_test_until.is_some(), "usb_reply": usb_reply,
                "ab": g.ab_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0)})
     }
@@ -62,6 +63,7 @@ impl Ctl {
             "status": self.health_status(&g), "version": VERSION, "pid": std::process::id(), "simulated": self.simulated(),
             "supervised": self.cfg.supervised, "engine_restarts": self.cfg.engine_restarts,
             "connected": g.connected, "present": g.present, "serial": info.serial, "firmware": info.firmware,
+            "firmware_kind": crate::modules::goxlr_firmware_kind(&g, &info),
             "engine_uptime_s": (now_epoch() - self.started).round(),
             "device_uptime_s": g.connected_since.map(|t| (now_epoch() - t).round()),
             "loop_age_ms": self.heartbeat_age().as_millis() as u64,
@@ -94,7 +96,7 @@ impl Ctl {
             "job": g.job.clone().map(Value::Object),
             "blink": g.blink.iter().filter(|(_, v)| **v).map(|(k, v)| (k.clone(), json!(v))).collect::<Map<_, _>>(),
             "auto": {"active": auto_active, "note": g.auto_note},
-            "modules": {"installed": rustudio_core::modules::installed(), "devices": self.module_devices_locked(&g, info.firmware.clone())},
+            "modules": {"installed": rustudio_core::modules::installed(), "devices": self.module_devices_locked(&g, &info)},
             "meta": meta(&g.state, mix2),
         })
     }

@@ -56,6 +56,7 @@ pub struct Mixer {
     pub(crate) profile_request: Option<u64>,
     pub(crate) confirm: Option<Confirm>,
     pub(crate) menu_open: bool,
+    pub(crate) performance_open: bool,
     pub(crate) select_open: Option<SharedString>,
     /// Place libre au-dessus et au-dessous de chaque liste déroulante, relevée à l'affichage précédent.
     pub(crate) select_room: Rc<RefCell<HashMap<&'static str, (f32, f32)>>>,
@@ -172,6 +173,7 @@ impl Mixer {
             profile_request: None,
             confirm: None,
             menu_open: false,
+            performance_open: false,
             select_open: None,
             select_room: Rc::default(),
             sender,
@@ -300,6 +302,7 @@ impl Mixer {
         self.confirm = None;
         ui::reset_hover();
         self.menu_open = false;
+        self.performance_open = false;
         self.select_open = None;
         self.picker = None;
         cx.notify();
