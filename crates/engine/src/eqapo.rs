@@ -16,6 +16,11 @@ pub const EQAPO_POST: &str = "{EC1CC9CE-FAED-4822-828A-82A81A6F018F}";
 #[allow(dead_code)]
 const RENDER_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render";
 #[allow(dead_code)]
+const CAPTURE_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture";
+/// format du moteur audio d'une entrée (WAVEFORMATEX après 8 octets d'en-tête) : nombre de voies à l'octet 10
+#[allow(dead_code)]
+const FORMAT_PROP: &str = "{f19f064d-082c-4e27-bc73-6882a1bb8e4c},0";
+#[allow(dead_code)]
 const FX: &str = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},";
 #[allow(dead_code)]
 const FX_SLOTS: [u32; 5] = [1, 2, 5, 6, 7]; // LFX, GFX, SFX, MFX, EFX
@@ -38,17 +43,35 @@ pub struct Endpoint {
     pub installed: bool,
 }
 
+/// Entrée micro de Windows : identifiant, nom affiché, nombre de voies, Equalizer APO branché ou non.
+#[derive(Clone, Debug)]
+pub struct Capture {
+    pub guid: String,
+    pub name: String,
+    pub channels: u16,
+    pub installed: bool,
+    /// micro de la GoXLR (« Chat Mic » du pilote officiel, micro du firmware Rustudio)
+    pub goxlr: bool,
+}
+
 struct Inner {
     sim_endpoints: IndexMap<String, bool>,
     sim_apo: bool,
     setup: Option<serde_json::Map<String, Value>>,
     written: Option<String>,
     last_auto: Option<Instant>,
+    /// dernière sortie par défaut sur laquelle on a tenté de brancher Equalizer APO
+    tried_default: Option<String>,
+    written_mic: Option<String>,
+    sim_capture: bool,
+    sim_plugin: bool,
 }
 
 pub struct EqApo {
     pub sim: bool,
     dir: PathBuf,
+    /// dossier du module RNNoise (données de Rustudio)
+    plugin_dir: PathBuf,
     inner: Mutex<Inner>,
     changes: AtomicU64,
 }
@@ -67,12 +90,17 @@ impl EqApo {
         EqApo {
             sim,
             dir: if sim { cfg.data_dir.join("eqapo-sim") } else { eqapo_dir() },
+            plugin_dir: cfg.data_dir.join("rnnoise"),
             inner: Mutex::new(Inner {
                 sim_endpoints: HP_CHANNELS.iter().map(|c| (c.to_string(), false)).collect(),
                 sim_apo: false,
                 setup: None,
                 written: None,
                 last_auto: None,
+                tried_default: None,
+                written_mic: None,
+                sim_capture: false,
+                sim_plugin: false,
             }),
             changes: AtomicU64::new(0),
         }
@@ -107,11 +135,24 @@ impl EqApo {
         drop(g);
         self.bump();
     }
+    /// Opération en cours ou dernière opération (installation, branchement…).
+    pub fn setup_value(&self) -> Option<Value> {
+        self.lock().setup.clone().map(Value::Object)
+    }
     pub fn reset_written(&self) {
         self.lock().written = None;
     }
     pub fn auto_due(&self) -> bool {
         self.lock().last_auto.map(|t| t.elapsed().as_secs() > 600).unwrap_or(true)
+    }
+    /// Vrai la première fois pour cette sortie (pas de redémarrage du son en boucle si le branchement échoue).
+    pub fn try_default(&self, channel: &str) -> bool {
+        let mut g = self.lock();
+        if g.tried_default.as_deref() == Some(channel) {
+            return false;
+        }
+        g.tried_default = Some(channel.to_owned());
+        true
     }
     pub fn mark_auto(&self) {
         self.lock().last_auto = Some(Instant::now());
@@ -182,16 +223,24 @@ impl EqApo {
         // fichier temporaire oublie par GoXLR Mini (inerte, mais trompeur)
         let _ = std::fs::remove_file(cfg_dir.join("goxlr-mini.txt.tmp"));
         let cur = std::fs::read(&cfg).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string()).unwrap_or_default();
-        if cur.contains(&format!("Include: {CONFIG_FILE}")) {
+        let mic = rustudio_core::micns::CONFIG_FILE;
+        if cur.contains(&format!("Include: {CONFIG_FILE}")) && cur.contains(&format!("Include: {mic}")) {
             return;
         }
-        let mut lines = vec!["# Gere par Rustudio (page Casque de l'appli).".to_string()];
-        if !cur.trim().is_empty() {
+        let mut lines = vec!["# Gere par Rustudio (pages Casque et Micro de l'appli).".to_string()];
+        if cur.contains(&format!("Include: {CONFIG_FILE}")) {
+            // déjà à Rustudio : on garde ses lignes et on ajoute le fichier du micro
+            lines = cur.lines().filter(|l| !l.starts_with("# Gere par Rustudio")).map(String::from).collect();
+            lines.insert(0, "# Gere par Rustudio (pages Casque et Micro de l'appli).".into());
+        } else if !cur.trim().is_empty() {
             let backup = format!("config.rustudio-backup-{}.txt", chrono::Local::now().format("%Y%m%d-%H%M%S"));
             let _ = std::fs::write(cfg_dir.join(&backup), &cur);
             lines.push(format!("# Configuration precedente : {backup}"));
         }
-        lines.push(format!("Include: {CONFIG_FILE}"));
+        if !lines.iter().any(|l| l.trim() == format!("Include: {CONFIG_FILE}")) {
+            lines.push(format!("Include: {CONFIG_FILE}"));
+        }
+        lines.push(format!("Include: {mic}"));
         let _ = std::fs::write(&cfg, lines.join("\n") + "\n");
         log("Equalizer APO : configuration reprise par Rustudio");
     }
@@ -212,6 +261,118 @@ impl EqApo {
         self.lock().written = Some(text.into());
         self.bump();
         true
+    }
+
+    /// Écrit rustudio-micro.txt (suppression du bruit du micro) s'il a changé.
+    pub fn write_mic(&self, text: &str) -> bool {
+        if self.lock().written_mic.as_deref() == Some(text) {
+            return false;
+        }
+        let cfg_dir = self.dir.join("config");
+        if !cfg_dir.is_dir() {
+            return false;
+        }
+        let name = rustudio_core::micns::CONFIG_FILE;
+        let (path, tmp) = (cfg_dir.join(name), cfg_dir.join(format!("{name}.tmp")));
+        if std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+            return false;
+        }
+        self.lock().written_mic = Some(text.into());
+        self.bump();
+        true
+    }
+
+    pub fn plugin_dir(&self) -> &std::path::Path {
+        &self.plugin_dir
+    }
+
+    /// Le module RNNoise est-il en place ?
+    pub fn plugin_installed(&self) -> bool {
+        if self.sim {
+            return self.lock().sim_plugin;
+        }
+        self.plugin_dir.join(rustudio_core::micns::PLUGIN_MONO).is_file() && self.plugin_dir.join(rustudio_core::micns::PLUGIN_STEREO).is_file()
+    }
+
+    /// Télécharge le module RNNoise (release GitHub, taille et SHA-256 vérifiées) et en garde les deux DLL VST.
+    pub fn install_plugin(&self, step: &dyn Fn(&str)) -> Result<(), String> {
+        use rustudio_core::micns::{PLUGIN_MONO, PLUGIN_SHA256, PLUGIN_SIZE, PLUGIN_STEREO, PLUGIN_URL};
+        if self.sim {
+            self.lock().sim_plugin = true;
+            return Ok(());
+        }
+        if self.plugin_installed() {
+            return Ok(());
+        }
+        step("Téléchargement de la suppression du bruit (RNNoise)…");
+        let agent = crate::net::agent(std::time::Duration::from_secs(60), 10, &crate::net::ua());
+        let resp = agent.get(PLUGIN_URL).call().map_err(|e| format!("Téléchargement impossible : {e}"))?;
+        let mut reader = resp.into_reader();
+        let data = crate::updater::read_limited(&mut reader, PLUGIN_SIZE + 1).ok_or("Téléchargement trop gros : installation refusée.")?;
+        if data.len() as u64 != PLUGIN_SIZE || crate::updater::sha256_hex(&data) != PLUGIN_SHA256 {
+            return Err("Le module téléchargé n’est pas celui attendu : installation refusée.".into());
+        }
+        step("Installation du module…");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|_| "Archive du module illisible.".to_string())?;
+        std::fs::create_dir_all(&self.plugin_dir).map_err(|e| e.to_string())?;
+        for name in [PLUGIN_MONO, PLUGIN_STEREO] {
+            let mut f = zip.by_name(&format!("win-rnnoise/vst/{name}")).map_err(|_| format!("{name} absent de l’archive."))?;
+            let mut bytes = vec![];
+            std::io::Read::read_to_end(&mut f, &mut bytes).map_err(|e| e.to_string())?;
+            let tmp = self.plugin_dir.join(format!("{name}.tmp"));
+            std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, self.plugin_dir.join(name))).map_err(|e| e.to_string())?;
+        }
+        log("Suppression du bruit : module RNNoise 1.22 installé");
+        Ok(())
+    }
+
+    /// Entrées micro de Windows actives.
+    pub fn captures(&self) -> Vec<Capture> {
+        if self.sim {
+            let installed = self.lock().sim_capture;
+            return vec![Capture { guid: "{00000000-0000-0000-0000-00000000c0de}".into(), name: "Chat Mic (simulé)".into(), channels: 1, installed, goxlr: true }];
+        }
+        #[cfg(windows)]
+        {
+            win::captures()
+        }
+        #[cfg(not(windows))]
+        vec![]
+    }
+
+    /// Branche Equalizer APO sur une entrée micro (sa clé d'effets appartient au service audio : on en prend
+    /// d'abord la propriété, comme le Device Selector d'Equalizer APO).
+    pub fn install_capture(&self, guid: &str) -> Result<(), String> {
+        if self.sim {
+            self.lock().sim_capture = true;
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            win::own_capture_key(guid)?;
+            win::install_capture(guid).map_err(|e| format!("Branchement sur le micro impossible : {e}"))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = guid;
+            Ok(())
+        }
+    }
+
+    pub fn uninstall_capture(&self, guid: &str) -> Result<(), String> {
+        if self.sim {
+            self.lock().sim_capture = false;
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            win::uninstall_capture(guid).map_err(|e| e.to_string())
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = guid;
+            Ok(())
+        }
     }
 
     pub fn download_and_install(&self, step: &dyn Fn(&str)) -> Result<(), String> {
@@ -260,6 +421,29 @@ impl EqApo {
         })();
         let _ = std::fs::remove_dir_all(&work);
         r
+    }
+
+    /// Désinstalle Equalizer APO de Windows (son désinstalleur, sans fenêtre), puis vérifie qu'il est parti.
+    pub fn uninstall_software(&self) -> Result<(), String> {
+        if self.sim {
+            self.lock().sim_apo = false;
+            return Ok(());
+        }
+        let un = self.dir.join("Uninstall.exe");
+        if !un.exists() {
+            return Err("Désinstalleur d'Equalizer APO introuvable : retire-le depuis les Paramètres de Windows.".into());
+        }
+        crate::win::hidden(&un.to_string_lossy()).arg("/S").spawn().map_err(|e| e.to_string())?;
+        // le désinstalleur se copie ailleurs et rend la main tout de suite : on attend que le composant disparaisse
+        let t0 = Instant::now();
+        while self.installed() {
+            if t0.elapsed().as_secs() > 120 {
+                return Err("La désinstallation d'Equalizer APO ne se termine pas.".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        self.lock().written = None;
+        Ok(())
     }
 
     pub fn status(&self, live: bool) -> Value {
@@ -334,7 +518,72 @@ mod win {
     /// Branche Equalizer APO sur une voie (mode SFX/EFX, ou LFX/GFX si le pilote n'a que ceux-la).
     /// Les valeurs d'origine sont gardees dans Child APOs pour pouvoir les remettre.
     pub fn install_endpoint(guid: &str) -> std::io::Result<()> {
-        let fx = hklm().open_subkey_with_flags(format!(r"{RENDER_KEY}\{guid}\FxProperties"), KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY)?;
+        install_on(RENDER_KEY, guid)
+    }
+
+    pub fn install_capture(guid: &str) -> std::io::Result<()> {
+        install_on(CAPTURE_KEY, guid)
+    }
+
+    pub fn uninstall_capture(guid: &str) -> std::io::Result<()> {
+        uninstall_on(CAPTURE_KEY, guid)
+    }
+
+    /// Entrées micro actives, avec leur nombre de voies (format du moteur audio) et l'état d'Equalizer APO.
+    pub fn captures() -> Vec<Capture> {
+        let mut out = vec![];
+        let Ok(root) = hklm().open_subkey_with_flags(CAPTURE_KEY, KEY_READ | KEY_WOW64_64KEY) else { return out };
+        for guid in root.enum_keys().flatten() {
+            let Ok(k) = root.open_subkey_with_flags(&guid, KEY_READ | KEY_WOW64_64KEY) else { continue };
+            if k.get_value::<u32, _>("DeviceState").unwrap_or(0) != 1 {
+                continue;
+            }
+            let Ok(p) = root.open_subkey_with_flags(format!(r"{guid}\Properties"), KEY_READ | KEY_WOW64_64KEY) else { continue };
+            let name = p.get_value::<String, _>(NAME_PROP).unwrap_or_default();
+            let dev = p.get_value::<String, _>(DEVICE_PROP).unwrap_or_default();
+            let channels = p.get_raw_value(FORMAT_PROP).ok().filter(|v| v.bytes.len() >= 12).map(|v| u16::from_le_bytes([v.bytes[10], v.bytes[11]])).unwrap_or(1);
+            let mut installed = false;
+            if let Ok(fx) = root.open_subkey_with_flags(format!(r"{guid}\FxProperties"), KEY_READ | KEY_WOW64_64KEY) {
+                installed = FX_SLOTS.iter().any(|s| fx.get_value::<String, _>(format!("{FX}{s}")).is_ok_and(|v| [EQAPO_PRE, EQAPO_POST].contains(&v.to_uppercase().as_str())));
+            }
+            let goxlr = dev.eq_ignore_ascii_case(rustudio_core::hpeq::RUSTUDIO_DEVICE) || (dev.to_lowercase().contains("goxlr") && name.to_lowercase().contains("chat mic"));
+            let label = if dev.is_empty() { name } else if name.is_empty() { dev } else { format!("{name} ({dev})") };
+            out.push(Capture { guid, name: label, channels, installed, goxlr });
+        }
+        out.sort_by_key(|c| (!c.goxlr, c.name.to_lowercase()));
+        out
+    }
+
+    /// La clé des effets d'une entrée appartient au service audio : propriété aux Administrateurs et droit
+    /// d'écriture, pour cette seule clé (ce que fait le Device Selector d'Equalizer APO).
+    pub fn own_capture_key(guid: &str) -> Result<(), String> {
+        if !rustudio_core::micns::is_guid(guid) {
+            return Err("Entrée micro inconnue.".into());
+        }
+        let sub = format!(r"{CAPTURE_KEY}\{guid}\FxProperties");
+        let script = format!(
+            r#"$ErrorActionPreference='Stop'
+Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class RsPriv{{[DllImport("ntdll.dll")]public static extern int RtlAdjustPrivilege(int p,bool e,bool t,out bool w);}}'
+$w=$false; [RsPriv]::RtlAdjustPrivilege(9,$true,$false,[ref]$w) | Out-Null
+$sub={sub}
+$admins=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+$k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub,[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::TakeOwnership)
+$acl=$k.GetAccessControl([System.Security.AccessControl.AccessControlSections]::None); $acl.SetOwner($admins); $k.SetAccessControl($acl); $k.Close()
+$k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub,[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,[System.Security.AccessControl.RegistryRights]::ChangePermissions)
+$acl=$k.GetAccessControl(); $acl.AddAccessRule((New-Object System.Security.AccessControl.RegistryAccessRule($admins,'FullControl','ContainerInherit','None','Allow'))); $k.SetAccessControl($acl); $k.Close()
+'ok'"#,
+            sub = crate::win::ps_quote(&sub)
+        );
+        let out = crate::win::powershell(&script);
+        if out.trim().ends_with("ok") {
+            Ok(())
+        } else {
+            Err("Windows refuse l’accès aux réglages de ce micro.".into())
+        }
+    }
+
+    fn install_on(root_key: &str, guid: &str) -> std::io::Result<()> {
+        let fx = hklm().open_subkey_with_flags(format!(r"{root_key}\{guid}\FxProperties"), KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY)?;
         let get = |name: &str| fx.get_value::<String, _>(name).ok();
         let orig: IndexMap<u32, Option<String>> = FX_SLOTS.iter().map(|s| (*s, get(&format!("{FX}{s}")))).collect();
         if orig.values().flatten().any(|v| v.to_uppercase() == EQAPO_PRE || v.to_uppercase() == EQAPO_POST) {
@@ -387,11 +636,15 @@ mod win {
 
     /// Remet les effets d'origine de la voie (ceux gardes a l'installation).
     pub fn uninstall_endpoint(guid: &str) -> std::io::Result<()> {
+        uninstall_on(RENDER_KEY, guid)
+    }
+
+    fn uninstall_on(root_key: &str, guid: &str) -> std::io::Result<()> {
         let Ok(ch) = hklm().open_subkey_with_flags(format!(r"{CHILD_APOS}\{guid}"), KEY_READ | KEY_WOW64_64KEY) else { return Ok(()) };
         let orig: Vec<(u32, String)> =
             FX_SLOTS.iter().map(|s| (*s, ch.get_value::<String, _>(format!("{FX}{s}")).unwrap_or_else(|_| "!VALUE".into()))).collect();
         drop(ch);
-        let fx = hklm().open_subkey_with_flags(format!(r"{RENDER_KEY}\{guid}\FxProperties"), KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY)?;
+        let fx = hklm().open_subkey_with_flags(format!(r"{root_key}\{guid}\FxProperties"), KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY)?;
         for (s, v) in orig {
             if v.starts_with('!') {
                 let _ = fx.delete_value(format!("{FX}{s}"));

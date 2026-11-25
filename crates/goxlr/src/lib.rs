@@ -56,6 +56,20 @@ pub struct FirmwareCounters {
     /// Tour de boucle le plus long depuis la lecture précédente, en microsecondes.
     pub max_loop_us: u32,
     pub slow_loops: u32,
+    /// Sortie casque démarrée (horloge verrouillée) et échantillons joués depuis son départ.
+    pub running: bool,
+    pub output_frames: u32,
+    /// Paquets refusés faute de place dans une file pleine.
+    pub overruns: u32,
+    /// Blocs audio servis en retard, et le plus grand écart, en ticks de 5,12 µs.
+    pub late_blocks: u32,
+    pub max_gap: u32,
+    /// Réduction la plus forte de la chaîne de la voix depuis le relevé précédent (dB) : gate, compresseur,
+    /// de-esser, limiteur.
+    pub voice_reduction: [f64; 4],
+    /// Surplus coupés d'un coup, et sorties (un bit chacune, Système = 1) qui ont dû jeter des échantillons.
+    pub jumps: u32,
+    pub drop_streams: u32,
 }
 
 impl FirmwareCounters {
@@ -74,6 +88,14 @@ impl FirmwareCounters {
             // ticks de 5,12 µs
             max_loop_us: (u64::from(h(12)) * 512 / 100) as u32,
             slow_loops: h(13),
+            running: h(1) != 0,
+            output_frames: h(2),
+            overruns: h(4),
+            late_blocks: h(7),
+            max_gap: h(6),
+            jumps: h(19),
+            drop_streams: h(20),
+            voice_reduction: [21, 22, 23, 24].map(|i| h(i) as i32 as f64 / 256.0),
         }
     }
 }
@@ -534,7 +556,7 @@ impl GoXlr {
         }
         let words = |bytes: Vec<u8>| bytes.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect::<Vec<_>>();
         let audio = words(self.req_in(REQ_FIRMWARE_AUDIO, 24)?);
-        let headphones = words(self.req_in(REQ_FIRMWARE_HEADPHONES, 76)?);
+        let headphones = words(self.req_in(REQ_FIRMWARE_HEADPHONES, 100)?);
         Ok(FirmwareCounters::from_words(&audio, &headphones))
     }
 
@@ -552,6 +574,14 @@ impl GoXlr {
             body.extend_from_slice(v);
         }
         self.command(0x80B << 12, &body).map(|_| ())
+    }
+    /// Chaîne de traitement de la voix (`micdsp`), seulement sous le firmware Rustudio : le firmware officiel
+    /// garde ses propres traitements, réglés par `set_effects` et `set_mic_params`.
+    pub fn set_mic_chain(&mut self, chain: &[u8]) -> Res<()> {
+        if !self.info.lock().unwrap().rustudio {
+            return Ok(());
+        }
+        self.command(0x820 << 12, chain).map(|_| ())
     }
     pub fn set_effects(&mut self, pairs: &[(u32, i32)]) -> Res<()> {
         let mut body = Vec::with_capacity(pairs.len() * 8);

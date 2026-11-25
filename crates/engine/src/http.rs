@@ -8,12 +8,12 @@ use std::io::Read;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Request, Response, Server};
 
-pub const ACTIONS: [&str; 42] = [
+pub const ACTIONS: [&str; 48] = [
     "volume", "mute", "fader", "route", "colour", "mic", "raw", "profile", "dsp", "mic-preset", "scene", "scene-save",
     "scene-delete", "theme", "lighting", "detect-mic", "auto-gain", "voice-setup", "mic-listen", "job-cancel", "settings",
     "auto-scenes", "reconnect", "restart-engine", "fx", "hp-eq", "hp-eq-save", "hp-eq-delete", "hp-eq-setup",
     "hp-eq-remove", "update-check", "update-install", "update-cancel", "update-ack", "update-remind", "library-refresh",
-    "echo-check", "sound-test", "mic-model", "voice-print", "mic-ab", "voice-forget",
+    "echo-check", "sound-test", "mic-model", "voice-print", "mic-ab", "voice-forget", "hp-default", "hp-eq-uninstall", "mic-ns", "mic-ns-setup", "mic-ns-remove", "mic-default",
 ];
 
 /// Page d'accueil de l'API : l'interface est l'appli Rustudio, la bulle OBS reste servie sous /overlay.

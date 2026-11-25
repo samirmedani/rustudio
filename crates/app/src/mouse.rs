@@ -440,7 +440,19 @@ impl Mixer {
         let sub = |text: String| if stale { "Dernière valeur lue".to_owned() } else { text };
         let stage = s.stages.get(s.active_stage.saturating_sub(1));
         let sens = stage.map(|d| if d.x == d.y { d.x.to_string() } else { format!("{} / {}", d.x, d.y) }).unwrap_or_else(|| "—".into());
-        let battery = if s.charging { "En charge" } else if s.battery <= 20 { "Batterie faible" } else if s.wired { "Alimentée en USB" } else { "Sur batterie" };
+        // La R5 n'annonce que « en charge ou non » : câble branché et batterie pleine, elle répond « pas en charge »
+        // (elle recharge par paliers, vers 93-95 %). « Sur batterie » serait donc faux une fois chargée.
+        let battery = if s.charging {
+            "En charge"
+        } else if s.battery >= 95 {
+            "Chargée"
+        } else if s.battery <= 20 {
+            "Batterie faible"
+        } else if s.wired {
+            "Alimentée en USB"
+        } else {
+            "Pas en charge"
+        };
         content = content.child(
             div()
                 .flex()
@@ -495,9 +507,7 @@ impl Mixer {
                     .px(px(6.))
                     .py(px(3.))
                     .rounded(px(12.))
-                    .border_1()
-                    .border_color(if on { alpha(ui::ACCENT, 0.2) } else { alpha(ui::ACCENT, 0.) })
-                    .when(on, |d| d.bg(alpha(ui::ACCENT, 0.065)))
+                    .when(on, |d| d.bg(alpha(ui::ACCENT, 0.08)))
                     .child(div().w(px(26.)).flex().justify_center().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(if on { ui::ACCENT } else { ui::TEXT2 })).child((i + 1).to_string()))
                     .child(self.dpi_input(s, i, false, self.mouse_focus[i * 2].is_focused(window), cx))
                     .child(self.dpi_input(s, i, true, self.mouse_focus[i * 2 + 1].is_focused(window), cx)),

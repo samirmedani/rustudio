@@ -176,7 +176,7 @@ fn etat_par_module_contient_seulement_les_donnees_de_son_adaptateur() {
     let (code, state) = request(&ctl, "/api/modules/goxlr-mini/state", None, false, None);
     assert_eq!(code, 200);
     let keys: std::collections::HashSet<_> = state.as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(keys, ["module", "device", "state", "meta", "live", "v"].into_iter().collect());
+    assert_eq!(keys, ["module", "device", "state", "meta", "live", "v", "hp_eq", "ab", "mic_ns", "listening"].into_iter().collect());
     assert_eq!(state["module"], ctl.modules_snapshot()["installed"][0]);
     assert_eq!(state["device"], ctl.modules_snapshot()["devices"][0]);
     assert_eq!(state["state"], before);

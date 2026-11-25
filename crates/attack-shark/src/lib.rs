@@ -68,6 +68,16 @@ impl<T: Transport> Mouse<T> {
     fn value(&mut self, target: u8, command: u8, profile: u8) -> Result<u8> {
         self.query(target, command, &[profile])?.get(1).copied().ok_or("Valeur HID absente".into())
     }
+    /// Câble USB (true) ou récepteur 2,4 GHz (false) de la liaison ouverte.
+    pub fn wired(&self) -> bool {
+        self.transport.wired()
+    }
+    /// Batterie (%) et charge en cours, en une seule requête : assez léger pour un suivi en direct.
+    pub fn battery(&mut self) -> Result<(u8, bool)> {
+        let battery = self.query(0, 0x83, &[0, 0])?;
+        if battery.len() < 2 || battery[0] > 1 || battery[1] > 100 { return Err("Batterie illisible (souris en veille ?)".into()); }
+        Ok((battery[1], battery[0] == 1))
+    }
     pub fn read(&mut self) -> Result<Settings> {
         let fw = self.query(0, 0x81, &[0; 16])?;
         if fw.len() < 4 { return Err("Version de firmware absente".into()); }
@@ -216,6 +226,14 @@ impl Hid {
         Err("R5 Ultra absente : branche son récepteur 2,4 GHz ou son câble USB".into())
     }
 }
+/// Le câble USB de la souris est-il branché ? Une énumération HID, sans rien ouvrir ; None si elle échoue.
+#[cfg(windows)]
+pub fn cable_present() -> Option<bool> {
+    let api = hidapi::HidApi::new().ok()?;
+    let present = api.device_list().any(|d| d.vendor_id() == VID && d.product_id() == WIRED && d.usage_page() == 0xffff);
+    Some(present)
+}
+
 #[cfg(windows)]
 impl Transport for Hid {
     fn wired(&self) -> bool { self.wired }

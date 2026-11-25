@@ -1,4 +1,6 @@
 //! Touches de la fenêtre en usages HID ; capture limitée au fil graphique, sans hook global.
+// Utilisés sous Windows (capture clavier, libellés) et dans les tests ; ailleurs, rien ne les appelle.
+#[cfg_attr(not(windows), allow(dead_code))]
 const SCANS: &[(u32, u16)] = &[
     (1, 41),
     (2, 30),
@@ -106,6 +108,7 @@ const SCANS: &[(u32, u16)] = &[
     (0xe05d, 101),
 ];
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn physical(scan: u32, vkey: u32) -> Option<u16> {
     match vkey {
         0x13 => Some(72), // Pause : séquence E1, distincte du verrou numérique.

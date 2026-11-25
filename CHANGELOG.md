@@ -1,5 +1,28 @@
 # Nouveautés
 
+## 6.6.0 — 25 novembre 2026
+
+Rustudio 6.6.0 épure toute l’interface, refait l’assistant micro de A à Z avec suppression du bruit par IA, ajoute le réglage d’intensité des styles casque et stabilise le son du firmware Rustudio.
+
+**Nouveau**
+- **Suppression du bruit du micro par IA** : RNNoise (le module d’OBS) se branche sur l’entrée de n’importe quel micro Windows via Equalizer APO, avec intensité et maintien des fins de mots réglables. La page Micro indique sur quel micro elle est active et permet de la retirer.
+- **Assistant « Régler mon micro » de A à Z** : choisis ton modèle de micro, suis la mesure guidée seconde par seconde (silence, trois phrases, phrase forte), puis ajuste le gain, le noise gate et les sons proposés à l’oreille sur ta propre prise.
+- **Intensité des styles du casque** : un seul style Basses et une jauge d’intensité de 0 à 200 % retenue pour chaque style, qui s’entend pendant le glissement (avec flèche pour revenir à 100 %).
+- **Carte Equalizer APO complète** : vois si Equalizer APO est installé et sur quelles sorties il agit, branche-le, débranche-le ou désinstalle-le depuis la page Casque.
+- **Panneau de performances visuel** : clique sur la barre d’état pour voir les jauges CPU, mémoire et moteur avec 60 secondes d’historique.
+- **Traitement de la voix dans le firmware Rustudio** : coupe-bas, noise gate, égaliseur 6 bandes, compresseur, de-esser et limiteur tournent directement dans la GoXLR Mini, avec les mêmes réglages que sur le firmware officiel.
+
+**Amélioré**
+- **Interface épurée** : fin des cadres superflus et des pilules, barre latérale repliable sur l’appareil ouvert, page Micro en trois onglets avec graphique de voix pleine largeur, Diagnostic avec verdict et points à corriger en tête, et fenêtres de confirmation plus claires.
+- **Fenêtre rangée près de l’horloge** : la croix range Rustudio dans la barre des tâches au lieu de le fermer, et la fenêtre retrouve toujours sa position et son écran à la réouverture.
+- **Batterie de la souris en direct** : la R5 Ultra met à jour sa charge toutes les 2 secondes, détecte le branchement du câble et affiche « Chargée » une fois pleine.
+- **Firmware Rustudio sans crépitement** : rattrapage continu de la dérive d’horloge sans saut d’échantillon, fondu propre en fin de flux et compteurs Diagnostic agrégés sur les cinq sorties.
+
+**Corrigé**
+- **Retour micro toujours maîtrisé** : « M’écouter en direct » fonctionne par bail de 20 secondes renouvelé par l’appli ; si elle se ferme ou plante, le retour se coupe seul. Tant que tu t’entends, un bandeau et un bouton « Couper le retour » restent visibles sur toutes les pages et dans le menu près de l’horloge.
+- **Égaliseur casque sur la sortie par défaut** : les styles suivent automatiquement ta sortie Windows par défaut et ne visent jamais le micro qui porte le même nom.
+- **Voyants de la GoXLR sous firmware Rustudio** : les couleurs s’affichent dans le bon ordre rouge-vert-bleu.
+
 ## 6.5.0 — 23 novembre 2026
 
 Rustudio 6.5.0 envoie chaque appli sur sa voie, revoit la page Casque et le thème sombre, et pilote complètement la GoXLR Mini qui utilise le firmware Rustudio expérimental.

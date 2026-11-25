@@ -59,6 +59,14 @@ impl Ctl {
         let module = modules::find(id).ok_or_else(|| unknown_module(id))?;
         match module.id {
             "goxlr-mini" => {
+                // état d'Equalizer APO (registre de Windows) lu avant de prendre le verrou du moteur
+                let (hp_live, hp_default) = {
+                    let g = self.lock();
+                    (g.hp_live, g.hp_default.clone())
+                };
+                let mut hp = self.eqapo.status(hp_live);
+                hp["default"] = json!(hp_default);
+                let ns = self.ns_status();
                 let info = self.dev_info.lock().unwrap().clone();
                 let v = self.version();
                 let g = self.lock();
@@ -66,7 +74,8 @@ impl Ctl {
                 Ok(json!({"module": module, "device": self.module_devices_locked(&g, &info)[0],
                     "state": g.state.to_value(), "meta": crate::views::meta(&g.state, g.connected && g.mix2),
                     "live": {"fader_positions": live.fader_positions, "mic_db": live.mic_db,
-                        "pressed": live.pressed, "encoders": live.encoders}, "v": v}))
+                        "pressed": live.pressed, "encoders": live.encoders}, "v": v, "ab": g.ab_until.is_some(), "listening": g.listen_until.is_some(),
+                    "hp_eq": hp, "mic_ns": ns}))
             }
             "attack-shark-r5-ultra" => {
                 let data = self.mouse.state();

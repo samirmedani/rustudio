@@ -90,19 +90,21 @@ impl Mixer {
         if !self.win.confirm {
             return None;
         }
-        Some(
-                ui::card()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(14.))
-                    .child(ui::chip(Icon::Alert, ui::ORANGE, 34.))
-                    .child(div().flex_1().min_w(px(0.)).text_size(px(13.5)).child("Windows utilisera Chat Mic comme micro. Les sorties déjà sur la GoXLR seront conservées ; les autres passeront sur System, ou Chat pour les appels. Les choix propres à Discord et OBS ne changent pas."))
-                    .child(ui::pill("windows-fix-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
-                        this.win.cancel();
-                        cx.notify();
-                    })))
-                    .child(ui::pill("windows-fix-ok", None, "Confirmer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.fix_audio(cx)))),
-            )
+        let cancel = ui::pill("windows-fix-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+            this.win.cancel();
+            cx.notify();
+        }));
+        let confirm = ui::pill("windows-fix-ok", None, "Corriger", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.fix_audio(cx)));
+        Some(ui::dialog(
+            Icon::Alert,
+            ui::ORANGE,
+            "Corriger le son de Windows ?",
+            vec![
+                "Windows utilisera Chat Mic comme micro. Les sorties déjà sur la GoXLR sont gardées ; les autres passent sur System, ou Chat pour les appels.".into(),
+                "Les choix propres à Discord et OBS ne changent pas.".into(),
+            ],
+            vec![cancel.into_any_element(), confirm.into_any_element()],
+        ))
     }
 
     pub fn win_audio(&self, window: &gpui::Window, cx: &mut Context<Self>) -> Div {

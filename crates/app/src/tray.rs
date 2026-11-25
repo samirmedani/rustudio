@@ -70,6 +70,8 @@ fn status(live: Option<&Value>) -> (&'static str, String) {
         format!("Rustudio · {count} appareil{s} connecté{s}", s = if count > 1 { "s" } else { "" })
     } else if health != "ok" {
         "Rustudio · GoXLR Mini · connexion à vérifier".into()
+    } else if l["listening"].as_f64().unwrap_or(0.) > 0. {
+        "Rustudio · GoXLR Mini · tu t’entends dans le casque".into()
     } else if mic == "on" {
         "Rustudio · GoXLR Mini · micro actif".into()
     } else {
@@ -106,8 +108,19 @@ fn build_menu(st: Option<&Value>, live_mode: bool) -> Result<Menu, String> {
         }
         let reconnect = MenuItem::with_id("reconnect", "Reconnecter GoXLR Mini", true, None);
         let diag = MenuItem::with_id("diag", "Diagnostic GoXLR Mini…", true, None);
-        let items: [&dyn IsMenuItem; 7] = [&mixer, &mic, &scenes, &PredefinedMenuItem::separator(), &reconnect, &diag, &PredefinedMenuItem::separator()];
-        goxlr.append_items(&items[..6]).map_err(e)?;
+        let mut items: Vec<&dyn IsMenuItem> = vec![&mixer, &mic];
+        // retour de ta voix dans le casque en cours : on sait le couper depuis le menu
+        let listening = st.is_some_and(|s| s["listening"] == true);
+        let monitor_stop = MenuItem::with_id("monitor-stop", "Couper le retour casque", true, None);
+        if listening {
+            items.push(&monitor_stop);
+        }
+        let sep = PredefinedMenuItem::separator();
+        items.push(&scenes);
+        items.push(&sep);
+        items.push(&reconnect);
+        items.push(&diag);
+        goxlr.append_items(&items).map_err(e)?;
         menu.append_items(&[&PredefinedMenuItem::separator(), &goxlr]).map_err(e)?;
     }
     menu.append(&PredefinedMenuItem::separator()).map_err(e)?;
@@ -160,6 +173,10 @@ fn on_menu(id: &str, client: &Client, live_mode: bool, cx: &mut App, open: &dyn 
         "goxlr-open" => open(cx, Some(Page::Mixer)),
         "diag" => open(cx, Some(Page::Go(Section::Diagnostic))),
         "reconnect" => post("reconnect", json!({})),
+        "monitor-stop" => {
+            post("mic-listen", json!({"seconds": 0}));
+            post("volume", json!({"channel": "MicMonitor", "value": 0}));
+        }
         "mic" => {
             let client = client.clone();
             cx.background_executor().spawn(async move {
@@ -283,12 +300,13 @@ pub fn start(
             if with_state {
                 let s = state.as_ref();
                 let mk = format!(
-                    "{}|{}|{}|{}|{}|{}",
+                    "{}|{}|{}|{}|{}|{}|{}",
                     s.map(|s| s["connected"].to_string()).unwrap_or_default(),
                     s.map(|s| s["state"]["mutes"]["Mic"].to_string()).unwrap_or_default(),
                     s.map(|s| s["state"]["partial"]["Mic"].to_string()).unwrap_or_default(),
                     s.map(|s| s["state"]["scene"].to_string()).unwrap_or_default(),
                     s.and_then(|s| s["state"]["user_scenes"].as_object()).map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
+                    s.map(|s| s["listening"].to_string()).unwrap_or_default(),
                     session::startup_enabled(),
                 );
                 if mk != menu_key

@@ -235,6 +235,28 @@ fn compteurs_firmware_sans_reconnexion() {
 }
 
 #[test]
+fn chaine_de_la_voix_sous_firmware_rustudio() {
+    // firmware officiel : rien de nouveau n'est envoyé, ses traitements restent les siens
+    let b = Bench::new();
+    b.act("mic-preset", json!({"name": "studio"}));
+    b.settle();
+    assert!(b.sim.lock().dev.mic_chain.is_none());
+    // firmware Rustudio : la chaîne suit le préréglage, puis redevient neutre en « Naturel »
+    let b = Bench::with_fw([1, 2, 99, 1]);
+    b.act("mic-preset", json!({"name": "studio"}));
+    b.settle();
+    let sent = b.sim.lock().dev.mic_chain.clone().expect("chaîne envoyée");
+    let chain = rustudio_core::micdsp::Params::decode(&sent).expect("réglage valide");
+    assert_eq!(chain, b.ctl.lock().mic_chain());
+    assert!(chain.flags & rustudio_core::micdsp::FLAG_COMP != 0 && chain.flags & rustudio_core::micdsp::FLAG_GATE != 0);
+    b.act("mic-preset", json!({"name": "brut"}));
+    b.settle();
+    let sent = b.sim.lock().dev.mic_chain.clone().unwrap();
+    assert!(!rustudio_core::micdsp::Params::decode(&sent).unwrap().active());
+    assert!(b.sim.lock().dev.errors.is_empty(), "{:?}", b.sim.lock().dev.errors);
+}
+
+#[test]
 fn api_repond_pendant_un_blocage_usb() {
     let b = Bench::new();
     b.sim.hang(1.5);
@@ -537,6 +559,19 @@ fn m_ecouter_puis_retour() {
     assert_eq!(b.ctl.lock().state.volume("MicMonitor"), 0, "l'etat enregistre n'a pas bouge");
 }
 
+#[test]
+fn ecoute_en_direct_plafonnee_a_30_secondes() {
+    // un client qui demanderait un retour « infini » n'obtient qu'un bail court : si l'appli disparaît,
+    // le retour s'arrête tout seul
+    let b = Bench::new();
+    b.act("mic-listen", json!({"seconds": 900, "level": 120}));
+    let left = b.ctl.live_snapshot(false)["listening"].as_f64().unwrap();
+    assert!(left > 29.0 && left <= 30.0, "bail plafonné à 30 s, reçu {left}");
+    b.act("mic-listen", json!({"seconds": 0}));
+    assert_eq!(b.ctl.live_snapshot(false)["listening"], json!(0.0));
+    assert!(!b.ctl.lock().listening());
+}
+
 // ---------- analyses micro ----------
 #[test]
 fn gain_auto() {
@@ -606,7 +641,7 @@ fn regler_ma_voix_micro_statique() {
     assert!(b.sim.lock().dev.phantom, "48 V allume pour le micro statique");
     assert_eq!(*b.sim.lock().dev.gains.get("condenser").unwrap(), st.mic.gain_db);
     let peak = cal["voice_peak_db"].as_f64().unwrap();
-    assert!((-14.5..=-9.5).contains(&peak), "{cal}");
+    assert!((-20.5..=-15.5).contains(&peak), "{cal}");
     let gate = st.dsp.gate.threshold as f64;
     assert!(cal["noise_peak_db"].as_f64().unwrap() + 3.0 <= gate && gate <= cal["voice_low_db"].as_f64().unwrap(), "{gate} {cal}");
     assert!((st.dsp.comp.threshold as f64) < peak);
@@ -655,7 +690,7 @@ fn regler_ma_voix_qui_sature() {
     b.settle();
     let res = voice_setup(&b, json!({"detect": false, "voice_seconds": 2.0, "silence_seconds": 1.0}), 40.0);
     let peak = res["cal"]["voice_peak_db"].as_f64().unwrap();
-    assert!((-14.5..=-9.5).contains(&peak), "{res}");
+    assert!((-20.5..=-15.5).contains(&peak), "{res}");
     assert!(res["gain_db"].as_i64().unwrap() < 35);
 }
 
@@ -759,6 +794,116 @@ fn egaliseur_installation_simulee_puis_live() {
     assert!(wait_for(5.0, || !c.eqapo.setup_running()));
     assert_eq!(c.snapshot()["hp_eq"]["endpoints"]["Game"], json!(false));
     assert!(!cfg("rustudio.txt").contains("Filter"));
+}
+
+#[test]
+fn egaliseur_suit_la_sortie_windows_par_defaut() {
+    let b = Bench::new();
+    let c = &b.ctl;
+    let cfg = || std::fs::read_to_string(b.tmp.join("eqapo-sim/config/rustudio.txt")).unwrap_or_default();
+    b.act("hp-eq", json!({"headphone": "Sennheiser HD 560S", "style": "basses"}));
+    b.act("hp-eq-setup", json!({}));
+    assert!(wait_for(5.0, || !c.eqapo.setup_running()));
+    assert_eq!(c.snapshot()["hp_eq"]["endpoints"]["Sample"], json!(false), "Sample n'est pas cochée par défaut");
+    assert!(!cfg().contains("{SIM-SAMPLE}"));
+    // Windows envoie le son sur Sample : l'égaliseur s'y branche, sans toucher aux voies choisies
+    b.act("hp-default", json!({"channel": "Sample"}));
+    let st = c.snapshot()["hp_eq"].clone();
+    assert_eq!(st["default"], json!("Sample"));
+    assert_eq!(st["endpoints"]["Sample"], json!(true), "{st}");
+    // sortie visée par son identifiant Windows, jamais par son nom
+    assert!(cfg().contains("{SIM-SAMPLE}") && !cfg().contains("Rustudio Sample") && cfg().contains("Filter"));
+    assert!(!c.lock().state.hp_eq.channels.contains(&"Sample".to_string()));
+    b.act("hp-default", json!({"channel": "Inconnue"}));
+    assert_eq!(c.snapshot()["hp_eq"]["default"], Value::Null);
+    assert!(!cfg().contains("{SIM-SAMPLE}"));
+}
+
+#[test]
+fn egaliseur_desinstalle_de_windows() {
+    let b = Bench::new();
+    let c = &b.ctl;
+    b.act("hp-eq-setup", json!({}));
+    assert!(wait_for(5.0, || !c.eqapo.setup_running()));
+    assert_eq!(c.snapshot()["hp_eq"]["apo"], json!(true));
+    b.act("hp-eq-uninstall", json!({}));
+    assert!(wait_for(5.0, || !c.eqapo.setup_running()));
+    let st = c.snapshot()["hp_eq"].clone();
+    assert!(st["setup"]["error"].is_null(), "{st}");
+    assert_eq!(st["apo"], json!(false), "{st}");
+    assert_eq!(st["endpoints"]["Game"], json!(false));
+    assert_eq!(st["setup"]["kind"], json!("uninstall"));
+    assert!(!c.lock().state.hp_eq.enabled);
+}
+
+#[test]
+fn egaliseur_intensite_du_style() {
+    let b = Bench::new();
+    let c = &b.ctl;
+    let basses = rustudio_core::hpeq::style("basses").unwrap().bands;
+    b.act("hp-eq", json!({"style": "basses"}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 100);
+    assert_eq!(c.lock().state.hp_eq.bands, basses.to_vec());
+    b.act("hp-eq", json!({"intensity": 200}));
+    assert_eq!(c.lock().state.hp_eq.bands, basses.iter().map(|x| x * 2).collect::<Vec<_>>());
+    b.act("hp-eq", json!({"intensity": 0}));
+    assert!(c.lock().state.hp_eq.bands.iter().all(|x| *x == 0), "0 % : son neutre");
+    b.act("hp-eq", json!({"intensity": 999}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 200, "borné à 200 %");
+    // un autre style repart de 100 %, une bande touchée à la main aussi
+    b.act("hp-eq", json!({"style": "jeu"}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 100);
+    b.act("hp-eq", json!({"intensity": 150}));
+    b.act("hp-eq", json!({"bands": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 100);
+    assert_eq!(c.lock().state.hp_eq.style, None);
+    // chaque style garde son intensité
+    b.act("hp-eq", json!({"style": "basses"}));
+    b.act("hp-eq", json!({"intensity": 137}));
+    b.act("hp-eq", json!({"style": "film"}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 100);
+    b.act("hp-eq", json!({"intensity": 64}));
+    b.act("hp-eq", json!({"style": "basses"}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 137, "Basses retrouve son intensité");
+    b.act("hp-eq", json!({"style": "film"}));
+    assert_eq!(c.lock().state.hp_eq.intensity, 64);
+    // gains exacts envoyés à Equalizer APO, au pour cent près
+    b.act("hp-eq", json!({"style": "basses", "intensity": 137}));
+    let gains = rustudio_core::hpeq::band_gains(&c.lock().state.hp_eq);
+    assert!((gains[1] - 6.9).abs() < 1e-9, "{gains:?}"); // 5 dB × 1,37 = 6,85 → 6,9
+    let saved = rustudio_core::state::normalize_state(&c.lock().state.to_value()).hp_eq;
+    assert_eq!(saved.intensities.get("film"), Some(&64), "retenu après redémarrage");
+    // ancien « Basses ++ » : Basses à 150 %
+    let st = rustudio_core::hpeq::normalize_hp_eq(&json!({"style": "basses_plus"}), None);
+    assert_eq!((st.style.as_deref(), st.intensity), (Some("basses"), 150));
+    assert_eq!(st.bands, rustudio_core::hpeq::scale_bands(&basses, 150));
+    assert!(rustudio_core::hpeq::style("basses_plus").is_none());
+}
+
+#[test]
+fn suppression_du_bruit_du_micro() {
+    let b = Bench::new();
+    let c = &b.ctl;
+    let cfg = || std::fs::read_to_string(b.tmp.join("eqapo-sim/config/rustudio-micro.txt")).unwrap_or_default();
+    let st = c.ns_status();
+    assert_eq!((st["plugin"].clone(), st["ready"].clone()), (json!(false), json!(false)));
+    b.act("mic-ns-setup", json!({}));
+    assert!(wait_for(5.0, || !c.eqapo.setup_running()));
+    let st = c.ns_status();
+    assert!(st["setup"]["error"].is_null(), "{st}");
+    assert_eq!(st["ready"], json!(true), "{st}");
+    assert!(c.lock().state.mic_ns.enabled);
+    let text = cfg();
+    assert!(text.contains("Device: {00000000-0000-0000-0000-00000000C0DE}") && text.contains("rnnoise_mono.dll") && text.contains("\"VAD Threshold (%)\" 90"), "{text}");
+    // l'intensité suit, et le casque ne vise jamais le micro par son nom
+    b.act("mic-ns", json!({"strength": 95, "grace_ms": 300}));
+    assert!(cfg().contains("\"VAD Threshold (%)\" 95 \"VAD Grace Period (ms)\" 300"));
+    b.act("mic-ns", json!({"enabled": false}));
+    assert!(!cfg().contains("VSTPlugin"));
+    b.act("mic-ns-remove", json!({}));
+    assert!(wait_for(5.0, || !c.eqapo.setup_running()));
+    assert_eq!(c.ns_status()["ready"], json!(false));
+    assert!(rustudio_core::state::normalize_state(&c.lock().state.to_value()).mic_ns.strength == 95, "retenu après redémarrage");
 }
 
 #[test]

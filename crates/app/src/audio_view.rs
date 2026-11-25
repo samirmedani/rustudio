@@ -297,7 +297,7 @@ impl Mixer {
         } else {
             "En direct"
         };
-        let mut card=ui::card().w_full().min_w(px(0.)).gap(px(10.)).child(div().flex().flex_wrap().items_center().gap(px(10.)).child(ui::title("Le son en direct",17.)).child(ui::badge(status,if frame.error.is_some(){ui::ORANGE}else{ui::ACCENT})).child(div().flex_1()).child(ui::pill("audio-spectrum-pause",Some(if self.win.paused{Icon::Play}else{Icon::Stop}),if self.win.paused{"Reprendre"}else{"Pause"},Tone::Plain).on_click(cx.listener(|this,_,_,cx|{this.win.paused=!this.win.paused;this.win.sync_monitor();cx.notify();}))))
+        let mut card=ui::card().w_full().min_w(px(0.)).gap(px(10.)).child(div().flex().flex_wrap().items_center().gap(px(10.)).child(ui::title("Le son en direct",17.)).child(ui::badge(status,if frame.error.is_some(){ui::ORANGE}else{ui::ACCENT})).child(div().flex_1()).child(ui::pill("audio-spectrum-pause",Some(if self.win.paused{Icon::Play}else{Icon::Stop}),if self.win.paused{"Reprendre"}else{"Pause"},Tone::Plain).on_click(cx.listener(|this,_,_,cx|{this.win.paused = !this.win.paused; this.win.sync_monitor(); cx.notify();}))))
             .child(select).child(ui::hint("Graves à gauche, aigus à droite. Plus une barre monte, plus cette fréquence est présente."))
             .child(plot(frame.bands.clone(),120.,enabled))
             .child(frequency_axis())

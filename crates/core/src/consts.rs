@@ -79,7 +79,11 @@ pub const ANIMATIONS: [(&str, u8); 6] =
     [("none", 5), ("retro-rainbow", 0), ("rainbow-dark", 1), ("rainbow-bright", 2), ("simple", 3), ("ripple", 4)];
 pub const WATERFALL: [(&str, u8); 3] = [("down", 0), ("up", 1), ("off", 2)];
 pub const RECOMMENDED_GAIN: [(&str, i32); 3] = [("dynamic", 50), ("condenser", 30), ("jack", 25)];
-pub const VOICE_TARGET_DB: f64 = -12.0;
+/// Crêtes fréquentes de ta voix normale, en dBFS : assez bas pour garder une vraie marge (cris, rires) et ne pas
+/// remonter la pièce, la respiration et les ventilateurs ; le compresseur rend ensuite la voix pleine.
+pub const VOICE_TARGET_DB: f64 = -18.0;
+/// La phrase criée ne doit pas dépasser ce niveau.
+pub const LOUD_MAX_DB: f64 = -6.0;
 pub const CLIP_DB: f64 = -1.5;
 pub const USB_MINI: &str = "USB\\VID_1220&PID_8FE4\\";
 pub const USB_FULL: &str = "USB\\VID_1220&PID_8FE0\\";
@@ -195,6 +199,19 @@ pub fn mic_gain_key(t: &str) -> u32 {
         _ => 0x001,
     }
 }
+/// Gain à ne jamais dépasser selon le micro : un statique sensible (RØDE NT1-A, 25 mV/Pa) n'a pas besoin de plus
+/// de 36 dB à 15 cm ; au-delà, on n'entend plus que la pièce. Un dynamique peu sensible (SM7B) peut monter haut.
+pub fn gain_ceiling(kind: &str, sensitivity_mv_pa: Option<f64>) -> i32 {
+    match kind {
+        "condenser" => if sensitivity_mv_pa.unwrap_or(15.0) >= 15.0 { 36 } else { 42 },
+        "jack" => 30,
+        _ => match sensitivity_mv_pa {
+            Some(s) if s < 2.0 => 66,
+            _ => 60,
+        },
+    }
+}
+
 pub fn recommended_gain(t: &str) -> i32 {
     RECOMMENDED_GAIN.iter().find(|(k, _)| *k == t).map(|(_, v)| *v).unwrap_or(30)
 }

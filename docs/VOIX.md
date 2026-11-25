@@ -4,20 +4,20 @@ Rustudio règle ta voix pour **ton** micro et **ta** pièce : il écoute trente 
 puis calcule chaque préréglage pour toi. Tout reste sur ton PC. Cette page explique ce qui est mesuré, comment les
 réglages sont calculés, et ce que Rustudio sait de l’égaliseur de la GoXLR Mini.
 
-## Créer ton empreinte
+## Régler ton micro et créer ton empreinte
 
-Page **Micro** › **Créer mon empreinte**. Trois étapes, guidées à l’écran :
+Page **Micro** › **Régler mon micro**. L’assistant te guide de A à Z (choix du modèle de micro, mesure seconde par seconde, réglage à l’oreille et choix du son) :
 
 | Étape | Durée | Ce que tu fais | Ce que Rustudio mesure |
 | --- | --- | --- | --- |
 | Silence | 5 s | Rien, casque et PC comme d’habitude | Le bruit de ta pièce : ventilation, PC, ronflement électrique |
-| Lecture | 16 s | Tu lis un texte riche en « s », « ch », « p » et « b » | Ta voix : hauteur, timbre, sifflantes, souffle des « p », écho de la pièce, niveaux |
+| Lecture | 16 s | Tu lis trois phrases riches en « s », « ch », « p » et « b » | Ta voix : hauteur, timbre, sifflantes, souffle des « p », écho de la pièce, niveaux |
 | Plus fort | 5 s | Une phrase plus forte, comme quand tu t’emportes | Ta marge avant saturation |
 
-Pendant ces trente secondes, les traitements du micro sont contournés, « Chat Mic » ne porte que ta voix et le volume
+Pendant la mesure, les traitements du micro sont contournés, « Chat Mic » ne porte que ta voix et le volume
 du micro est au maximum : la mesure porte sur ton micro brut. Si ta voix sature pendant la lecture, le gain baisse de
-10 dB et tu relis. À la fin, le gain est calé pour que tes crêtes arrivent vers −12 dB, et que ta phrase forte reste
-au moins 3 dB sous la saturation. Tout revient ensuite comme avant.
+10 dB et tu relis. À la fin, le gain vise −18 dB sur ta voix (avec un plafond adapté à chaque modèle de micro), pour
+garder de la marge sur ta phrase forte sans saturer. Tout revient ensuite comme avant.
 
 L’appli Windows enregistre l’entrée « Chat Mic » et l’envoie au moteur local (`127.0.0.1`). Le moteur l’analyse en
 mémoire puis l’oublie : **l’enregistrement n’est jamais écrit sur le disque ni envoyé**. Seule l’analyse est gardée
@@ -79,8 +79,10 @@ plus rien ne s’améliore. Une bande qui n’apporte presque rien reste à plat
 - **Compresseur** : ratio selon ta dynamique, seuil sous ton niveau moyen, compensation limitée pour que ta phrase
   forte ne sature pas.
 
-Chaque réglage est expliqué à l’écran, et « Écouter et comparer » bascule en direct (60 s au plus) entre ta voix
-traitée et ta voix brute.
+Chaque réglage est expliqué à l’écran. « M’écouter en direct » fonctionne par bail de 20 secondes renouvelé tant que
+l’appli est ouverte (si elle se ferme, le retour se coupe seul), et tu peux réécouter ta prise avant/après avec chaque
+préréglage. La page **Micro** propose aussi la **suppression du bruit par IA (RNNoise)** via Equalizer APO, réglable
+en intensité et en maintien des fins de mots, sur n’importe quel micro Windows.
 
 ## L’égaliseur réel de la GoXLR Mini
 

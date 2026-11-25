@@ -80,8 +80,12 @@ impl Ctl {
         let update = self.update_snapshot();
         let info = self.dev_info.lock().unwrap().clone();
         let v = self.version();
-        let hp_live = self.lock().hp_live;
-        let hp = self.eqapo.status(hp_live);
+        let (hp_live, hp_default) = {
+            let g = self.lock();
+            (g.hp_live, g.hp_default.clone())
+        };
+        let mut hp = self.eqapo.status(hp_live);
+        hp["default"] = json!(hp_default);
         let g = self.lock();
         let mix2 = g.connected && g.mix2;
         let auto_active = match &g.auto_active {

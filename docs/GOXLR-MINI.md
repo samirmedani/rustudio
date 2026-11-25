@@ -22,7 +22,7 @@ Le module Rustudio prend en charge la **TC-Helicon GoXLR Mini** via le pilote of
 
 La carte de la Mini, dans **Mes appareils**, affiche la version de son firmware. Si la Mini démarre sur son firmware de secours (Golden), parce que son firmware officiel ne s’est pas lancé, son état passe en orange et ses pages te demandent de réinstaller le firmware officiel.
 
-Si la Mini utilise le firmware expérimental Rustudio avec USB Audio, sa carte affiche **Connectée · Firmware Rustudio**. Rustudio y lit les faders et les boutons, règle les voyants, les volumes, les coupures et le gain du micro. Windows voit cinq sorties, « Rustudio Mini Audio » (Système), « Rustudio Game », « Rustudio Chat », « Rustudio Music » et « Rustudio Sample », chacune réglée par sa voie du mixeur. Le retour micro fonctionne quand tu l’actives. Les effets, le sampler et les prises Line In et Console ne sont pas pris en charge.
+Si la Mini utilise le firmware expérimental Rustudio avec USB Audio, sa carte affiche **Connectée · Firmware Rustudio**. Rustudio y lit les faders et les boutons, règle les voyants, les volumes, les coupures, le gain du micro et toute la chaîne de traitement de la voix (coupe-bas, noise gate, égaliseur 6 bandes, compresseur, de-esser, limiteur). Windows voit cinq sorties, « Rustudio Mini Audio » (Système), « Rustudio Game », « Rustudio Chat », « Rustudio Music » et « Rustudio Sample », chacune réglée par sa voie du mixeur. Le retour micro fonctionne quand tu l’actives. Les effets vocaux, le sampler et les prises Line In et Console ne sont pas pris en charge.
 
 ## Passer de l’ancien logiciel GoXLR Mini à Rustudio
 
@@ -33,7 +33,7 @@ Si tu utilisais GoXLR Mini 4.x, [l’installateur Rustudio](https://github.com/s
 La page [Son Windows](SON-WINDOWS.md) explique chaque entrée et sortie, propose les choix courants
 pour Windows, Discord et OBS, et affiche les niveaux et le spectre de la source choisie en direct.
 
-Dans **Micro → Créer mon empreinte**, suis les étapes de mesure pour caler ton gain et calculer des préréglages. Tu peux ensuite comparer la voix brute et traitée. [Détails du réglage de la voix](VOIX.md).
+Dans **Micro → Régler mon micro**, suis l’assistant pour caler ton gain, calculer des préréglages sur mesure et activer si besoin la suppression du bruit par IA. Tu peux ensuite réécouter ta prise et comparer la voix brute et traitée. [Détails du réglage de la voix](VOIX.md).
 
 Dans Discord, choisis **Chat Mic** comme entrée et **Chat** comme sortie. **Anti-écho** aide à contrôler le routage et à mesurer un éventuel retour. Pour OBS, utilise le **Stream Mix** (appelé « Broadcast Stream Mix » sur les anciens pilotes) et choisis ce qui part en direct dans **Routage**. La source navigateur `http://127.0.0.1:14565/overlay` affiche l’état du micro.
 

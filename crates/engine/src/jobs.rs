@@ -328,7 +328,8 @@ fn voice_setup(ctl: &Ctl, p: &Value) -> JR<Value> {
         return Err("Je ne t’ai pas assez entendu. Parle plus près du micro (10 à 15 cm) et recommence.".to_string().into());
     }
     let peak = pct(&heard, 0.95);
-    let new_gain = clamp_f(gain as f64 + VOICE_TARGET_DB - peak, 0, 72);
+    let sens = ctl.lock().state.mic.model.as_deref().and_then(rustudio_core::mics::model).filter(|m| m.kind == mtype).and_then(|m| m.sensitivity_mv_pa);
+    let new_gain = clamp_f(gain as f64 + VOICE_TARGET_DB - peak, 0, gain_ceiling(&mtype, sens));
     let shift = (new_gain - gain) as f64;
     // 2. le silence, au gain final : la piece, le PC, et ce que le micro entend du casque
     update(ctl, &[("phase", json!("silence")), ("step", json!("J’écoute ta pièce…"))]);
@@ -497,8 +498,11 @@ fn voice_print(ctl: &Ctl, p: &Value) -> JR<Value> {
         }
         (g.state.mic.kind.clone(), g.state.mic.model.clone(), g.state.mic.gain_db)
     };
+    let sens = model.as_deref().and_then(rustudio_core::mics::model).and_then(|m| m.sensitivity_mv_pa);
+    let ceiling = gain_ceiling(&mtype, sens);
     let sim = SimVoice::new(ctl, &mtype);
-    let mut gain = old_gain;
+    // jamais de mesure à un gain absurde : on part au plus du plafond de ce micro
+    let mut gain = old_gain.min(ceiling);
     let mut timeline: Vec<(Phase, f64, f64, i32)> = vec![];
     // 1. préparation : traitements neutres, ta voix seule vers Chat Mic, volume du micro au maximum
     set_phase(ctl, "prepare", 1.2, "Je prépare l’enregistrement…");
@@ -566,9 +570,9 @@ fn voice_print(ctl: &Ctl, p: &Value) -> JR<Value> {
     }
     let peak = pct(&heard, 0.95);
     let loud_peak = loud.last().copied().filter(|l| *l > peak);
-    let mut new_gain = clamp_f(gain as f64 + VOICE_TARGET_DB - peak, 0, 72);
+    let mut new_gain = clamp_f(gain as f64 + VOICE_TARGET_DB - peak, 0, ceiling);
     if let Some(lp) = loud_peak {
-        new_gain = new_gain.min((gain as f64 + CLIP_DB - 3.0 - lp).floor().max(0.0) as i32);
+        new_gain = new_gain.min((gain as f64 + LOUD_MAX_DB - lp).floor().max(0.0) as i32);
     }
     let shift = (new_gain - gain) as f64;
     let noise_shift = (new_gain - noise_gain) as f64;
@@ -595,7 +599,7 @@ fn voice_print(ctl: &Ctl, p: &Value) -> JR<Value> {
         notes.push(json!({"lvl": "warn", "t": format!("Ta voix saturait : gain baissé de {old_gain} à {gain} dB pendant l’enregistrement.")}));
     }
     if new_gain != gain {
-        notes.push(json!({"lvl": "ok", "t": format!("Gain réglé à {new_gain} dB : tes crêtes arrivent vers \u{2212}12 dB, sans saturer quand tu cries.")}));
+        notes.push(json!({"lvl": "ok", "t": format!("Gain réglé à {new_gain} dB : ta voix arrive vers \u{2212}18 dB, avec de la marge quand tu cries.")}));
     }
     logf!(
         "Empreinte vocale : micro {mtype}, gain {old_gain} → {new_gain} dB, bruit {:.1} dB, voix {:.1} dB (crêtes {:.1}, fort {:?})",

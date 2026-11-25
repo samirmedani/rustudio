@@ -7,6 +7,8 @@ pub struct Usage {
     pub cpu_percent: Option<f64>,
     /// Mémoire physique actuellement résidente (working set), en octets.
     pub resident_bytes: Option<u64>,
+    /// Mémoire physique du PC, en octets.
+    pub total_bytes: Option<u64>,
 }
 
 pub struct Sampler {
@@ -33,6 +35,7 @@ impl Sampler {
         Usage {
             cpu_percent,
             resident_bytes,
+            total_bytes: total_memory(),
         }
     }
 
@@ -81,6 +84,18 @@ fn current_process() -> (Option<u64>, Option<u64>) {
             .map(|_| memory.WorkingSetSize as u64);
         (cpu, ram)
     }
+}
+
+#[cfg(windows)]
+fn total_memory() -> Option<u64> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    unsafe { GlobalMemoryStatusEx(&mut status) }.ok().map(|_| status.ullTotalPhys)
+}
+
+#[cfg(not(windows))]
+fn total_memory() -> Option<u64> {
+    None
 }
 
 #[cfg(not(windows))]

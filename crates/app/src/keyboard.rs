@@ -221,9 +221,8 @@ impl Mixer {
             .p(px(12.))
             .rounded(px(16.))
             .cursor(gpui::CursorStyle::PointingHand)
-            .bg(if selected { alpha(ui::ACCENT, 0.07) } else { ui::lerp(alpha(ui::PAPER, 0.7), rgb(ui::PAPER), t) })
-            .border_1()
-            .border_color(if selected { alpha(ui::ACCENT, 0.9) } else { ui::lerp(alpha(ui::INK, 0.08), alpha(ui::ACCENT, 0.3), t) })
+            // sans cadre : fond discret au survol, teinte bleue quand l'effet est choisi
+            .bg(if selected { alpha(ui::ACCENT, 0.1) } else { ui::lerp(alpha(ui::INK, 0.), alpha(ui::INK, 0.045), t) })
             .child(preview(id, colour, reverse, self.started.elapsed().as_secs_f32()))
             .child(div().w_full().text_center().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).child(e.name))
             .child(div().text_size(px(11.)).text_color(rgb(if e.reactive { ui::ORANGE_TEXT } else { ui::TEXT3 })).child(effect_kind(id)))

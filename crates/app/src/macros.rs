@@ -526,12 +526,7 @@ impl Mixer {
         for (i, item) in m.saved.iter().enumerate() {
             let selected = m.selected_saved == Some(i);
             saved = saved.child(
-                ui::pill(
-                    SharedString::from(format!("macro-local-{i}")),
-                    Some(Icon::Keyboard),
-                    item.name.clone(),
-                    if selected { Tone::Primary } else { Tone::Plain },
-                )
+                ui::choice(SharedString::from(format!("macro-local-{i}")), Some(Icon::Keyboard), item.name.clone(), selected)
                 .when(idle, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
                         let data = this.macros.saved[i].clone();
@@ -1080,43 +1075,6 @@ impl Mixer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn import_export_strict_and_no_overwrite() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("macro.json");
-        let m = Macro {
-            name: "Copier".into(),
-            mode: Mode::Once,
-            events: vec![
-                Event {
-                    key: 6,
-                    down: true,
-                    delay_ms: 0,
-                },
-                Event {
-                    key: 6,
-                    down: false,
-                    delay_ms: 50,
-                },
-            ],
-        };
-        write_json(&path, &File::new(m.clone()), false).unwrap();
-        assert_eq!(File::read(&path).unwrap(), m);
-        assert!(write_json(&path, &File::new(m), false).is_err());
-        fs::write(
-            &path,
-            r#"{"format":2,"module":"cooler-master-mk770","data":{}}"#,
-        )
-        .unwrap();
-        assert!(File::read(&path).is_err());
-        fs::write(&path, vec![b' '; 32769]).unwrap();
-        assert!(File::read(&path).is_err());
-    }
-}
-
 /// Parcours complet à travers l'API du moteur de démonstration, jamais sur le vrai clavier.
 pub fn verify(client: &crate::backend::Client) -> Result<(), String> {
     if client.is_live() {
@@ -1197,4 +1155,41 @@ pub fn verify(client: &crate::backend::Client) -> Result<(), String> {
         "OK : macros natives, trois répétitions, affectations, relecture, refus et retrait via l’API."
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn import_export_strict_and_no_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("macro.json");
+        let m = Macro {
+            name: "Copier".into(),
+            mode: Mode::Once,
+            events: vec![
+                Event {
+                    key: 6,
+                    down: true,
+                    delay_ms: 0,
+                },
+                Event {
+                    key: 6,
+                    down: false,
+                    delay_ms: 50,
+                },
+            ],
+        };
+        write_json(&path, &File::new(m.clone()), false).unwrap();
+        assert_eq!(File::read(&path).unwrap(), m);
+        assert!(write_json(&path, &File::new(m), false).is_err());
+        fs::write(
+            &path,
+            r#"{"format":2,"module":"cooler-master-mk770","data":{}}"#,
+        )
+        .unwrap();
+        assert!(File::read(&path).is_err());
+        fs::write(&path, vec![b' '; 32769]).unwrap();
+        assert!(File::read(&path).is_err());
+    }
 }

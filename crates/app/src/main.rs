@@ -32,6 +32,9 @@ mod tray_panel;
 mod ui;
 #[cfg(any(windows, unix))]
 mod update_sheet;
+mod live;
+mod window_place;
+mod mic_wizard;
 #[cfg(any(windows, unix))]
 mod voice;
 #[cfg(any(windows, unix))]
@@ -140,6 +143,7 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
             "--self-test" => self_test = true,
+            "--dev-live" => live::enable(),
             // ouvre le panneau de l'icône dès le démarrage (captures et bancs de test)
             "--panel" => {}
             _ => return Err(format!("Option inconnue : {arg}")),
@@ -246,6 +250,9 @@ fn run() -> Result<(), String> {
                 let b = d.bounds();
                 bounds.origin = gpui::point(b.origin.x + b.size.width - px(24.), b.origin.y + b.size.height - px(24.));
             }
+            // place de la dernière ouverture (écran compris), sauf dimensions imposées pour un aperçu
+            let fixed = std::env::var_os("RUSTUDIO_WINDOW_WIDTH").is_some() || std::env::var_os("RUSTUDIO_PREVIEW").is_some();
+            let saved = if fixed { None } else { window_place::restore(cx) };
             let result = cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
@@ -254,7 +261,8 @@ fn run() -> Result<(), String> {
                         appears_transparent: true,
                         ..Default::default()
                     }),
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_bounds: Some(saved.as_ref().map(|(b, _)| *b).unwrap_or(WindowBounds::Windowed(bounds))),
+                    display_id: saved.as_ref().map(|(_, d)| *d),
                     window_min_size: Some(size(px(960.), px(660.))),
                     focus: visible,
                     show: visible,
@@ -266,6 +274,8 @@ fn run() -> Result<(), String> {
                     cx.new(|cx| {
                         // Windows passe du clair au sombre : la fenêtre se redessine aussitôt
                         cx.observe_window_appearance(_window, |_, _, cx| cx.notify()).detach();
+                        // chaque déplacement ou redimensionnement est retenu pour la prochaine ouverture
+                        cx.observe_window_bounds(_window, |_, window, _| window_place::save(window.window_bounds())).detach();
                         let mut mixer = mixer::Mixer::new(
                             client,
                             profiles::Store::new(dir),

@@ -94,6 +94,11 @@ pub struct Inner {
     pub force_reconnect: bool,
     pub usb: Option<String>,
     pub hp_live: bool,
+    /// Voie GoXLR où Windows envoie le son par défaut (lue par l'appli, dans la session de l'utilisateur) :
+    /// l'égaliseur du casque la couvre toujours, sinon un style ne changerait rien à ce qu'on entend.
+    pub hp_default: Option<String>,
+    /// entrée micro par défaut de Windows (identifiant), signalée par l'appli
+    pub mic_default: Option<String>,
     pub errors: VecDeque<(f64, String)>,
     pub connects: u64,
     pub reconnects: u64,
@@ -116,6 +121,7 @@ pub enum Op {
     Routing(&'static str, indexmap::IndexMap<String, bool>),
     MicGain(String, i32),
     MicParams(Vec<(u32, [u8; 4])>),
+    MicChain(Vec<u8>),
     FaderDisplay(usize, bool, bool),
     Animation(u8, i32, i32, u8),
     ColourMap(Vec<u8>),
@@ -133,6 +139,7 @@ fn exec(dev: &mut GoXlr, op: Op) -> Result<(), DevError> {
         Op::Routing(i, r) => dev.set_routing(i, &r),
         Op::MicGain(t, g) => dev.set_mic_gain(&t, g),
         Op::MicParams(p) => dev.set_mic_params(&p),
+        Op::MicChain(c) => dev.set_mic_chain(&c),
         Op::FaderDisplay(f, g, m) => dev.set_fader_display(f, g, m),
         Op::Animation(a, m1, m2, w) => dev.set_animation(a, m1, m2, w),
         Op::ColourMap(d) => dev.set_colour_map(&d),
@@ -213,6 +220,12 @@ impl Inner {
         self.mark(&[Key::Dsp], true);
     }
 
+    /// Chaîne de la voix du firmware Rustudio : les mêmes traitements que ceux envoyés au firmware officiel.
+    pub fn mic_chain(&self) -> rustudio_core::micdsp::Params {
+        let fx = if self.dsp_bypassed() { dsp::Fx::default() } else { self.state.fx };
+        rustudio_core::micchain::design(&dsp::effective_dsp(&self.state.dsp, &fx))
+    }
+
     pub fn dsp_lists(&self) -> (Vec<(u32, [u8; 4])>, Vec<(u32, i32)>) {
         let s = &self.state;
         let fx = if self.dsp_bypassed() { dsp::Fx::default() } else { s.fx };
@@ -287,6 +300,7 @@ impl Inner {
         if has(Key::Dsp) {
             let (params, effects) = self.dsp_lists();
             ops.push(Op::MicParams(params));
+            ops.push(Op::MicChain(self.mic_chain().encode().to_vec()));
             ops.push(Op::Effects(effects));
         }
         if has(Key::Lighting) {
@@ -412,7 +426,7 @@ impl Ctl {
             want: 0, done: 0, save_dirty: first_run, prev_mask: 0, prev_pos: None, pos_history: [[0; 2]; 4],
             faders_seen: false, btn: HashMap::new(), bleep: false, blink: HashMap::new(), gain_override: None,
             listen_until: None, sound_test_until: None, ab_until: None, voice_capture: false, voice_take: None,
-            listen_level: 0, force_reconnect: false, usb: None, hp_live: false,
+            listen_level: 0, force_reconnect: false, usb: None, hp_live: false, hp_default: None, mic_default: None,
             errors: VecDeque::new(), connects: 0, reconnects: 0, fail_streak: 0, auto_active: AutoActive::Off,
             auto_note: None, auto_seen: false, mix2: false, submixes: false, wake: wake.clone(),
         };
@@ -617,7 +631,12 @@ impl Ctl {
             dev.firmware_counters().map(|c| {
                 json!({"streaming": c.streaming, "packets": c.packets, "missed": c.missed, "underruns": c.underruns,
                        "drops": c.drops, "repeats": c.repeats, "queue_min": c.queue_min, "queue_max": c.queue_max,
-                       "max_loop_us": c.max_loop_us, "slow_loops": c.slow_loops})
+                       "max_loop_us": c.max_loop_us, "slow_loops": c.slow_loops,
+                       "running": c.running, "output_frames": c.output_frames, "overruns": c.overruns,
+                       "late_blocks": c.late_blocks, "max_gap": c.max_gap, "jumps": c.jumps,
+                       "drop_streams": c.drop_streams,
+                       "voice": {"gate": c.voice_reduction[0], "comp": c.voice_reduction[1],
+                                 "deesser": c.voice_reduction[2], "limiter": c.voice_reduction[3]}})
             })
         };
         self.call(Box::new(read), Duration::from_secs(2))
@@ -900,7 +919,11 @@ impl Ctl {
                 )?;
                 return Ok(json!({ "ok": true, "response_hex": r }));
             }
-            "hp-eq-setup" | "hp-eq-remove" => return self.hp_start(action == "hp-eq-setup"),
+            "hp-eq-setup" => return self.hp_start(crate::watch::HpSetup::Install),
+            "hp-eq-remove" => return self.hp_start(crate::watch::HpSetup::Remove),
+            "hp-eq-uninstall" => return self.hp_start(crate::watch::HpSetup::Uninstall),
+            "mic-ns-setup" => return self.ns_start(true),
+            "mic-ns-remove" => return self.ns_start(false),
             "reconnect" => {
                 self.lock().force_reconnect = true;
                 self.wake.set();
@@ -935,7 +958,10 @@ impl Ctl {
             r
         };
         self.mixer_changed.notify_all();
-        if action.starts_with("hp-eq") {
+        if action.starts_with("mic-ns") || action == "mic-default" {
+            self.ns_apply();
+        }
+        if action.starts_with("hp-") {
             self.hp_apply();
         }
         Ok(r)

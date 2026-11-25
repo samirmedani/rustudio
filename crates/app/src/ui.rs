@@ -451,24 +451,17 @@ pub fn sidebar_logo(size: f32) -> impl IntoElement {
     )
 }
 
-/// Carte en verre : fond blanc translucide, filet, ombre douce.
+/// Bloc de réglages, sans cadre : un filet fin au-dessus, le contenu posé sur le fond.
 pub fn card() -> Div {
     div()
         .flex()
         .flex_col()
         .gap(px(14.))
-        .p(px(20.))
-        .rounded(px(22.))
-        .bg(alpha(PAPER, 0.74))
-        .border_1()
-        .border_color(alpha(INK, 0.05))
-        .shadow(soft_shadow())
+        .pt(px(18.))
+        .pb(px(6.))
+        .border_t_1()
+        .border_color(alpha(INK, 0.08))
 }
-/// Ancien nom, gardé pour les vues qui empilent des réglages.
-pub fn panel() -> Div {
-    card()
-}
-
 pub fn card_title(glyph: Option<(Icon, u32)>, title: impl Into<SharedString>, aside: Option<SharedString>) -> Div {
     div()
         .flex()
@@ -504,48 +497,68 @@ pub enum Tone {
     Warn,
 }
 
-/// Bouton en pilule. Le style suit l'usage : action principale, secondaire, état du micro…
+/// Bouton. Action principale : aplat bleu ; les autres sont du texte, avec un fond discret au survol.
 pub fn pill(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<SharedString>, tone: Tone) -> Stateful<Div> {
     let id: ElementId = id.into();
     let key = key_of(&id);
     let t = hover_t(&key);
     let (bg, fg, hover) = match tone {
         Tone::Primary => (rgb(ACCENT), rgb(WHITE), rgb(0x2b8af0)),
-        Tone::Soft => (alpha(ACCENT, 0.1), rgb(ACCENT), alpha(ACCENT, 0.17)),
-        Tone::Danger => (alpha(RED, 0.12), rgb(RED_TEXT), alpha(RED, 0.2)),
-        Tone::Warn => (alpha(ORANGE, 0.14), rgb(ORANGE_TEXT), alpha(ORANGE, 0.22)),
-        Tone::Plain => (alpha(PAPER, 0.86), rgb(TEXT), rgb(PAPER)),
+        Tone::Soft => (alpha(ACCENT, 0.), rgb(ACCENT), alpha(ACCENT, 0.1)),
+        Tone::Danger => (alpha(RED, 0.), rgb(RED_TEXT), alpha(RED, 0.1)),
+        Tone::Warn => (alpha(ORANGE, 0.), rgb(ORANGE_TEXT), alpha(ORANGE, 0.12)),
+        Tone::Plain => (alpha(INK, 0.), rgb(TEXT), alpha(INK, 0.07)),
     };
     let mut base = div();
     // dans une colonne, le bouton garde sa largeur au lieu de s'étirer
     base.style().align_self = Some(gpui::AlignSelf::FlexStart);
     let el = base
         .id(id)
-        .relative()
-        .top(px(-t))
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
         .gap(px(7.))
-        .h(px(34.))
-        .px(px(14.))
-        .rounded_full()
+        .h(px(32.))
+        .px(px(if tone == Tone::Primary { 14. } else { 9. }))
+        .rounded(px(8.))
         .bg(lerp(bg, hover, t))
         .text_color(fg)
         .text_size(px(13.5))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(if tone == Tone::Primary { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
         .cursor(CursorStyle::PointingHand)
-        .when(tone == Tone::Plain, |d| d.border_1().border_color(lerp(alpha(INK, 0.08), alpha(INK, 0.12), t)).shadow(vec![shadow(1. + 2. * t, 2. + 8. * t, 0.04 + 0.05 * t)]))
-        .when(tone == Tone::Primary, |d| d.shadow(vec![BoxShadow { color: alpha(ACCENT, 0.24 + 0.14 * t), offset: point(px(0.), px(5. + 3. * t)), blur_radius: px(14. + 8. * t), spread_radius: px(0.) }]))
-        .when_some(glyph, move |d, i| d.child(icon(i, 16., fg)))
+        .when_some(glyph, move |d, i| d.child(icon(i, 16., if tone == Tone::Plain { rgb(TEXT2) } else { fg })))
         .child(text.into());
     hoverable(el, key)
 }
 
-/// Choix parmi plusieurs valeurs : le choix actif est plein, les autres en verre.
+/// Choix parmi plusieurs valeurs : du texte, le choix actif en bleu et souligné.
 pub fn button(id: String, text: String, selected: bool) -> Stateful<Div> {
-    pill(ElementId::Name(id.into()), None, text, if selected { Tone::Primary } else { Tone::Plain })
+    choice(ElementId::Name(id.into()), None, text, selected)
+}
+
+/// Un choix d'une liste (style, voie, mode) : texte seul, souligné en bleu quand il est actif.
+pub fn choice(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let key = key_of(&id);
+    let t = if selected { 1. } else { hover_t(&key) };
+    let fg = if selected { rgb(ACCENT) } else { lerp(rgb(TEXT2), rgb(TEXT), t) };
+    let el = div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(6.))
+        .h(px(30.))
+        .border_b_2()
+        .border_color(if selected { rgb(ACCENT) } else { alpha(ACCENT, 0.) })
+        .text_color(fg)
+        .text_size(px(13.5))
+        .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+        .cursor(CursorStyle::PointingHand)
+        .when_some(glyph, move |d, i| d.child(icon(i, 15., fg)))
+        .child(text.into());
+    hoverable(el, key)
 }
 
 /// Bouton rond à icône (menu ⋯, couper une voie…).
@@ -619,7 +632,7 @@ pub fn tag(text: impl Into<SharedString>) -> Div {
     div().flex_none().h(px(24.)).px(px(10.)).flex().items_center().rounded_full().bg(alpha(0x767680, 0.12)).text_size(px(12.)).text_color(rgb(0x3a3a3c)).child(text.into())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Ok,
     Info,
@@ -671,6 +684,27 @@ pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
 /// Fenêtre de dialogue centrée, au-dessus d'un voile léger : la page ne bouge pas.
 pub fn modal(content: Div) -> impl IntoElement {
     modal_sized(content, 560.)
+}
+
+/// Fenêtre de confirmation : icône et titre, explication en paragraphes, boutons alignés à droite.
+pub fn dialog(glyph: Icon, colour: u32, title: impl Into<SharedString>, text: Vec<SharedString>, buttons: Vec<AnyElement>) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .p(px(24.))
+        .rounded(px(14.))
+        .whitespace_normal()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(icon(glyph, 20., rgb(colour)))
+                .child(div().flex_1().min_w(px(0.)).text_size(px(17.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT)).child(title.into())),
+        )
+        .children(text.into_iter().map(|p| div().text_size(px(13.5)).line_height(px(20.)).text_color(rgb(TEXT2)).child(p)))
+        .child(div().flex().justify_end().gap(px(8.)).mt(px(8.)).children(buttons))
 }
 
 /// Fenêtre par-dessus la page, de la largeur demandée (fenêtre de mise à jour : 640).
@@ -916,8 +950,8 @@ pub fn section(glyph: Icon, colour: u32, title_text: impl Into<SharedString>, as
         div()
             .flex()
             .items_center()
-            .gap(px(10.))
-            .child(chip(glyph, colour, 28.))
+            .gap(px(9.))
+            .child(icon(glyph, 17., rgb(colour)))
             .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
             .when_some(aside, |d, a| d.child(div().flex_1().flex().justify_end().text_size(px(12.5)).text_color(rgb(TEXT3)).child(a))),
     )
@@ -946,64 +980,63 @@ pub fn list_row(glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>,
 }
 
 /// Contrôle segmenté (choix exclusif court) : un rail gris, le choix actif en blanc.
-pub fn segmented() -> Div {
-    div().flex().flex_wrap().w_full().p(px(3.)).gap(px(3.)).rounded(px(11.)).bg(alpha(0x767680, 0.12))
+/// Onglets d'une page : gros libellés soulignés, un filet sous la rangée. Un seul sujet affiché à la fois.
+pub fn tabs() -> Div {
+    div().flex().flex_wrap().w_full().gap(px(28.))
 }
-pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
-    let id: ElementId = id.into();
-    let key = key_of(&id);
-    let t = if selected { 0. } else { hover_t(&key) };
-    let el = div()
-        .id(id)
-        .flex_auto()
-        .flex()
-        .items_center()
-        .justify_center()
-        .whitespace_nowrap()
-        .h(px(30.))
-        .px(px(10.))
-        .rounded(px(8.))
-        .text_size(px(13.))
-        .font_weight(FontWeight::MEDIUM)
-        .cursor(CursorStyle::PointingHand)
-        // en sombre, l'onglet choisi doit trancher sur le rail : un gris plus clair que les surfaces
-        .when(selected, |d| d.bg(if is_dark() { raw(0x3a3a3f) } else { rgb(PAPER) }).shadow(vec![shadow(1., 3., 0.1)]))
-        .when(!selected, |d| d.bg(lerp(alpha(PAPER, 0.), alpha(PAPER, 0.55), t)).text_color(lerp(rgb(0x3a3a3c), rgb(TEXT), t)))
-        .child(text.into());
-    hoverable(el, key)
+pub fn tab(id: impl Into<ElementId>, glyph: Icon, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
+    choice(id, Some(glyph), text, selected).h(px(40.)).text_size(px(15.)).mb(px(-1.))
 }
 
-/// Tuile de choix (préréglage, style, scène, thème) : se soulève au survol, cadre bleu quand elle est choisie.
+/// Petit titre d'un groupe de réglages dans un bloc (« Noise gate », « Compresseur »…).
+pub fn subhead(text: impl Into<SharedString>) -> Div {
+    div().pt(px(6.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT3)).child(text.into())
+}
+
+/// Fait mesuré, en deux lignes : valeur en gros, libellé dessous (empreinte vocale, diagnostic).
+pub fn fact(value: impl Into<SharedString>, label: impl Into<SharedString>) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT)).child(value.into()))
+        .child(div().text_size(px(12.)).text_color(rgb(TEXT3)).child(label.into()))
+}
+
+pub fn segmented() -> Div {
+    div().flex().flex_wrap().w_full().gap(px(18.)).border_b_1().border_color(alpha(INK, 0.08))
+}
+pub fn seg(id: impl Into<ElementId>, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
+    choice(id, None, text, selected).mb(px(-1.))
+}
+
+/// Tuile de choix (préréglage, style, scène, thème) : sans cadre ; fond discret au survol, titre bleu et coche
+/// quand elle est choisie.
 pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>, desc: Option<SharedString>, selected: bool, badge_text: Option<(SharedString, u32)>) -> Stateful<Div> {
     let id: ElementId = id.into();
     let key = key_of(&id);
     let t = hover_t(&key);
-    // bloc simple (marges au lieu d'une colonne flexbox) : la grille de tuiles se met en page en une seule passe
+    let title_colour = if selected { rgb(ACCENT) } else { rgb(TEXT) };
     let el = div()
         .id(id)
-        .relative()
-        .top(px(-2. * t))
         .flex_1()
         .min_w(px(0.))
-        .p(px(14.))
-        .rounded(px(16.))
+        .px(px(10.))
+        .py(px(10.))
+        .rounded(px(10.))
         .cursor(CursorStyle::PointingHand)
-        .bg(if selected { alpha(ACCENT, 0.06) } else { lerp(alpha(PAPER, 0.7), rgb(PAPER), t) })
-        .border_1()
-        .border_color(if selected { alpha(ACCENT, 0.9) } else { lerp(alpha(INK, 0.08), alpha(ACCENT, 0.3), t) })
-        .shadow(if selected { vec![BoxShadow { color: alpha(ACCENT, 0.14), offset: point(px(0.), px(6.)), blur_radius: px(18.), spread_radius: px(0.) }] } else { lift_shadow(t, 0x111827, 0.6) })
+        .bg(if selected { alpha(ACCENT, 0.07) } else { lerp(alpha(INK, 0.), alpha(INK, 0.045), t) })
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .when_some(glyph, |d, (i, c)| d.child(chip(i, c, 30.)))
-                .child(div().flex_1())
+                .when_some(glyph, |d, (i, c)| d.child(icon(i, 16., rgb(if selected { ACCENT } else { c }))))
+                .child(div().flex_1().min_w(px(0.)).truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(title_colour).child(title_text.into()))
                 .when_some(badge_text, |d, (b, c)| d.child(badge(b, c)))
-                .when(selected, |d| d.child(div().flex().items_center().justify_center().size(px(20.)).rounded_full().bg(rgb(ACCENT)).child(icon(Icon::Check, 12., rgb(WHITE))))),
+                .when(selected, |d| d.child(icon(Icon::Check, 15., rgb(ACCENT)))),
         )
-        .child(div().mt(px(6.)).text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
-        .when_some(desc, |d, s| d.child(div().mt(px(6.)).text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s)));
+        .when_some(desc, |d, s| d.child(div().mt(px(4.)).text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s)));
     hoverable(el, key)
 }
 
@@ -1037,13 +1070,13 @@ pub fn badge(text: impl Into<SharedString>, colour: u32) -> Div {
     let fg = if colour == GREEN { GREEN_TEXT } else if colour == ORANGE { ORANGE_TEXT } else if colour == RED { RED_TEXT } else { colour };
     div()
         .flex_none()
-        .px(px(8.))
-        .py(px(2.))
-        .rounded_full()
-        .bg(alpha(colour, 0.13))
+        .flex()
+        .items_center()
+        .gap(px(5.))
         .text_color(rgb(fg))
         .text_size(px(11.5))
         .font_weight(FontWeight::SEMIBOLD)
+        .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(colour)))
         .child(text.into())
 }
 

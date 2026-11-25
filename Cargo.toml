@@ -4,7 +4,7 @@ members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-
 default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/engine", "crates/windows-desktop"]
 
 [workspace.package]
-version = "6.5.0"
+version = "6.6.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/samirmedani/rustudio"
@@ -18,6 +18,21 @@ rustudio-core = { path = "crates/core" }
 rustudio-goxlr = { path = "crates/goxlr" }
 rustudio-attack-shark = { path = "crates/attack-shark" }
 rustudio-cooler-master = { path = "crates/cooler-master" }
+
+# Développement en direct sur le PC (private/live-pc.mjs) : dépendances optimisées une fois, puis seule l'appli
+# se recompile, sans optimisation et en incrémental : environ 3 s, 5 s jusqu'à la fenêtre relancée.
+[profile.live]
+inherits = "dev"
+opt-level = 0
+debug = false
+incremental = true
+
+[profile.live.package."*"]
+opt-level = 3
+
+# calcul de la voix (aperçu avant/après) : aussi rapide qu'en version stable
+[profile.live.package.rustudio-core]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

@@ -293,6 +293,7 @@ impl Inner {
                 return Ok(json!({ "ok": true, "seconds": secs }));
             }
             "mic-listen" => {
+                // 30 s au plus : l'assistant renouvelle l'écoute tant qu'elle est allumée ; si l'appli disparaît, elle s'arrête seule
                 let secs = num(get(p, "seconds")).unwrap_or(15.0).clamp(0.0, 30.0);
                 self.listen_level = p.get("level").and_then(|v| clamp(v, 0, 255)).unwrap_or(191);
                 self.listen_until = (secs > 0.0).then(|| Instant::now() + Duration::from_secs_f64(secs));
@@ -302,23 +303,57 @@ impl Inner {
             "hp-eq" => {
                 let eq = self.state.hp_eq.clone();
                 let mut upd = p.as_object().cloned().unwrap_or_default();
-                let style = p.get("style").and_then(|v| v.as_str()).map(String::from);
-                if let Some(st) = style.as_deref().and_then(hpeq::style) {
-                    upd.insert("bands".into(), json!(st.bands));
-                } else if let Some(name) = style.as_deref().and_then(|s| s.strip_prefix("custom:")) {
-                    if let Some(b) = eq.custom.get(name) {
-                        upd.insert("bands".into(), json!(b));
-                    }
+                if let (Some(key), false) = (p.get("style").and_then(|v| v.as_str()), has(p, "intensity")) {
+                    // nouveau style : l'intensité qu'on lui avait donnée, sinon 100 %
+                    let kept = eq.intensities.get(key).copied().unwrap_or(hpeq::INTENSITY_DEFAULT);
+                    upd.insert("intensity".into(), json!(kept));
                 } else if has(p, "bands") && !has(p, "style") {
                     upd.insert("style".into(), Value::Null); // bande touchee a la main : reglage perso
+                    upd.insert("intensity".into(), json!(hpeq::INTENSITY_DEFAULT));
                 }
                 self.state.hp_eq = hpeq::normalize_hp_eq(&Value::Object(upd), Some(&eq));
+                // style ou intensité changés : la courbe du style, à l'intensité choisie
+                if has(p, "style") || has(p, "intensity") {
+                    let st = &mut self.state.hp_eq;
+                    if let Some(base) = hpeq::style_bands(st) {
+                        st.bands = hpeq::scale_bands(&base, st.intensity);
+                    }
+                    if let (Some(key), true) = (st.style.clone(), has(p, "intensity")) {
+                        if st.intensity == hpeq::INTENSITY_DEFAULT {
+                            st.intensities.shift_remove(&key);
+                        } else {
+                            st.intensities.insert(key, st.intensity);
+                        }
+                    }
+                }
                 // repère pour comparer un bruit entendu avec le style choisi à ce moment-là
                 if self.state.hp_eq.style != eq.style {
                     if let Some(chosen) = self.state.hp_eq.style.as_deref().and_then(hpeq::style) {
                         crate::logf!("Égaliseur du casque : style {}", chosen.label);
                     }
                 }
+            }
+            "mic-ns" => {
+                self.state.mic_ns = rustudio_core::micns::normalize(p, Some(&self.state.mic_ns));
+            }
+            "mic-default" => {
+                // entrée micro par défaut de Windows, signalée par l'appli : rien à enregistrer
+                let guid = p.get("device").and_then(|v| v.as_str()).filter(|g| rustudio_core::micns::is_guid(g)).map(|g| g.to_lowercase());
+                if guid == self.mic_default {
+                    return Ok(json!({ "ok": true }));
+                }
+                self.mic_default = guid;
+            }
+            "hp-default" => {
+                // sortie Windows par défaut, signalée par l'appli : rien à enregistrer
+                let channel = p.get("channel").and_then(|v| v.as_str()).filter(|c| hpeq::HP_CHANNELS.contains(c)).map(String::from);
+                if channel == self.hp_default {
+                    return Ok(json!({ "ok": true }));
+                }
+                if let Some(c) = &channel {
+                    crate::logf!("Égaliseur du casque : suit la sortie Windows par défaut ({c})");
+                }
+                self.hp_default = channel;
             }
             "hp-eq-save" => {
                 let name: String = p.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().chars().take(40).collect();
@@ -328,11 +363,14 @@ impl Inner {
                 let eq = &mut self.state.hp_eq;
                 eq.custom.insert(name.clone(), eq.bands.clone());
                 eq.style = Some(format!("custom:{name}"));
+                eq.intensity = hpeq::INTENSITY_DEFAULT; // le réglage enregistré est la courbe entendue
+                eq.intensities.shift_remove(&format!("custom:{name}"));
             }
             "hp-eq-delete" => {
                 let name = p.get("name").map(rustudio_core::value::py_str).unwrap_or_default();
                 let eq = &mut self.state.hp_eq;
                 eq.custom.shift_remove(&name);
+                eq.intensities.shift_remove(&format!("custom:{name}"));
                 if eq.style.as_deref() == Some(format!("custom:{name}").as_str()) {
                     eq.style = None;
                 }

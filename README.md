@@ -34,12 +34,12 @@ Rustudio réunit les réglages de tes périphériques dans **Mes appareils**. Br
 Chaque module apporte les contrôles propres à son matériel. Dans **Modules**, tu peux voir ce qui est livré et les appareils dont la prise en charge reste à créer. Les nouveaux modules peuvent être proposés par le mainteneur ou par la communauté.
 
 <p align="center">
-  <img src="docs/captures/devices.jpg" alt="Mes appareils dans Rustudio : deux cartes pour deux périphériques distincts, avec leur état de connexion et leurs réglages" width="900">
-  <br><sub>Démonstration : la GoXLR Mini et la R5 Ultra illustrent les deux modules fournis. Les cartes ne sont pas un inventaire du PC du mainteneur.</sub>
+  <img src="docs/captures/devices.jpg" alt="Mes appareils dans Rustudio : trois cartes pour la GoXLR Mini, la R5 Ultra et le MK770, avec leur état de connexion et leurs réglages" width="900">
+  <br><sub>Démonstration : la GoXLR Mini, la R5 Ultra et le MK770 illustrent les trois modules fournis. Les cartes ne sont pas un inventaire du PC du mainteneur.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/captures/sombre.jpg" alt="Le mixeur de Rustudio en thème sombre : mêmes faders colorés sur un fond anthracite" width="900">
+  <img src="docs/captures/sombre.jpg" alt="Le mixeur de Rustudio en thème sombre : mêmes faders colorés sur un fond presque noir" width="900">
   <br><sub>Clair ou sombre : Rustudio suit le mode de Windows, ou celui que tu choisis dans Réglages.</sub>
 </p>
 

@@ -46,6 +46,8 @@ pub struct FakeDevice {
     pub effects: BTreeMap<u32, i32>,
     pub fader_display: HashMap<u32, Vec<u8>>,
     pub animation: Option<Vec<u8>>,
+    /// Chaîne de la voix reçue (firmware Rustudio seulement).
+    pub mic_chain: Option<Vec<u8>>,
     pub phantom: bool,
     pub monitored_mix: Option<u8>,
     pub channel_mixes: Option<Vec<u8>>,
@@ -82,6 +84,7 @@ impl FakeDevice {
             effects: BTreeMap::new(),
             fader_display: HashMap::new(),
             animation: None,
+            mic_chain: None,
             phantom: false,
             monitored_mix: None,
             channel_mixes: None,
@@ -263,6 +266,7 @@ impl FakeDevice {
                 self.fader_display.insert(sub, body.to_vec());
             }
             0x816 => self.animation = Some(body.to_vec()),
+            0x820 if self.firmware == RUSTUDIO_FIRMWARE => self.mic_chain = Some(body.to_vec()),
             0x818 => self.monitored_mix = Some(b0),
             0x817 => {
                 let want = if self.mix2() { 10 } else { 8 };

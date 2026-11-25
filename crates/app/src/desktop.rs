@@ -13,18 +13,24 @@ use gpui::{
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-pub(crate) use crate::ui::{hint, panel};
+pub(crate) use crate::ui::hint;
 
 /// Hauteur de la barre d'état en bas de la fenêtre.
+/// Secondes d'historique des mesures (panneau de performance).
+pub(crate) const PERF_HISTORY: usize = 60;
 const STATUS_BAR_H: f32 = 42.;
+/// Bande du haut, réservée au déplacement de la fenêtre et à ses trois boutons.
+const TITLE_BAR_H: f32 = 36.;
 /// Barre latérale : largeur et écart avec les bords de la fenêtre.
 const SIDEBAR_W: f32 = 240.;
 const SIDEBAR_MARGIN: f32 = 16.;
 const PAGE_LEFT: f32 = 28.;
 const PAGE_RIGHT: f32 = 36.;
+/// Largeur maximale du contenu : sur un grand écran, la page reste lisible au centre au lieu de s'étirer.
+const PAGE_MAX: f32 = 1240.;
 
 pub(crate) fn page_width(window: &Window) -> f32 {
-    f32::from(window.viewport_size().width) - SIDEBAR_W - SIDEBAR_MARGIN - PAGE_LEFT - PAGE_RIGHT
+    (f32::from(window.viewport_size().width) - SIDEBAR_W - SIDEBAR_MARGIN - PAGE_LEFT - PAGE_RIGHT).min(PAGE_MAX)
 }
 /// Listes déroulantes : hauteur bornée, écart avec le bouton et marge gardée avec les bords de la page.
 const MENU_MAX_H: f32 = 260.;
@@ -99,6 +105,16 @@ impl Page {
             "diagnostic" => Page::Go(Section::Diagnostic),
             _ => return None,
         })
+    }
+    /// Nom de la page pour `--page`, l'inverse de `from_name`.
+    pub fn name(self) -> Option<&'static str> {
+        const NAMES: [&str; 24] = [
+            "devices", "profiles", "modules", "versions", "help", "settings", "audio", "mixer", "mouse",
+            "mouse-sensitivity", "mouse-sensor", "mouse-power", "keyboard", "keyboard-settings", "keyboard-paint",
+            "keyboard-shortcuts", "keyboard-info", "keyboard-macros", "mic", "headphones", "routing", "lighting",
+            "scenes", "diagnostic",
+        ];
+        NAMES.into_iter().find(|n| Self::from_name(n) == Some(self))
     }
     pub(crate) fn space(self) -> Option<Space> {
         match self {
@@ -280,18 +296,15 @@ fn nav_battery(level: u8, charging: bool) -> Div {
 /// État en direct d'un appareil sur sa carte : micro et scène de la GoXLR, batterie de la souris.
 fn glance_row(module: &str, glance: &crate::backend::Glance) -> Option<Div> {
     let item = |glyph: Icon, colour: u32, text: String| {
+        // icône et texte colorés, sans pastille autour
         div()
             .flex()
             .items_center()
-            .gap(px(7.))
-            .px(px(11.))
-            .py(px(6.))
-            .rounded_full()
-            .bg(alpha(colour, 0.1))
+            .gap(px(6.))
             .child(ui::icon(glyph, 14., rgb(colour)))
             .child(div().text_size(px(12.5)).font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(colour)).child(text))
     };
-    let mut row = div().flex().flex_wrap().gap(px(8.));
+    let mut row = div().flex().flex_wrap().gap(px(16.));
     match module {
         "goxlr-mini" => {
             let muted = glance.mic_muted?;
@@ -494,11 +507,9 @@ impl Mixer {
             .w(px(SIDEBAR_W))
             .p(px(12.))
             .pt(px(18.))
-            .rounded(px(24.))
-            .bg(alpha(ui::PAPER, 0.62))
-            .border_1()
-            .border_color(alpha(ui::INK, 0.05))
-            .shadow(ui::soft_shadow())
+            // sans boîte : un simple filet sépare la navigation de la page
+            .border_r_1()
+            .border_color(alpha(ui::INK, 0.07))
             .child(
                 div()
                     .flex()
@@ -531,10 +542,11 @@ impl Mixer {
             for module in &inventory.installed {
                 let space = module_space(&module.id);
                 let open = space.is_some() && space == current;
-                let collapsed = self.collapsed.contains(&module.id);
-                list = list.child(self.device_nav(module, open, collapsed, cx));
-                // Les pages restent accessibles quand on règle un autre appareil, tant qu'on ne les replie pas.
-                if let Some(space) = space.filter(|_| !collapsed) {
+                // Seules les pages de l'appareil ouvert sont dépliées : la barre reste courte et on voit où on est.
+                // La flèche inverse ce choix (replier l'appareil ouvert, déplier un autre pour y aller vite).
+                let shown = open != self.collapsed.contains(&module.id);
+                list = list.child(self.device_nav(module, open, !shown, cx));
+                if let Some(space) = space.filter(|_| shown) {
                     let pages = space_pages(space);
                     if pages.len() > 1 {
                         let mut subpages = div().flex().flex_col().gap(px(2.)).ml(px(28.));
@@ -605,7 +617,14 @@ impl Mixer {
             .border_color(alpha(ui::INK, 0.06))
             .bg(alpha(ui::PAPER, 0.55))
             .text_size(px(12.))
+            .when(crate::live::enabled(), |d| d.child(ui::badge("DEV · en direct", ui::ORANGE).flex_none()))
             .child(ui::caption(sub))
+            .when(self.monitor_on(), |d| {
+                d.child(divider()).child(
+                    ui::pill("status-monitor-stop", Some(ui::Icon::VolumeOff), "Tu t’entends dans le casque · couper", ui::Tone::Danger)
+                        .on_click(cx.listener(|this, _, _, cx| this.cut_monitor(cx))),
+                )
+            })
             .child(divider())
             .child(self.performance(cx))
             .child(div().flex_1())
@@ -614,53 +633,30 @@ impl Mixer {
 
     /// Mesures et détails du moteur, regroupés dans le panneau de performance.
     fn performance(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let ms = self.client.engine_response_time().map(|time| time.as_secs_f64() * 1000.);
-        let measures = [
-            Measure {
-                name: "Processeur",
-                short: "CPU",
-                value: self.usage.cpu_percent.map(|value| format!("{value:.1} %").replace('.', ",")),
-                grade: self.usage.cpu_percent.map(|value| Grade::of(value, [1., 5., 15.])),
-                meaning: [
-                    "Moins de 1 % de ton processeur : ton PC ne le sent pas, même en jeu.",
-                    "Quelques pour cent de ton processeur : ça reste léger.",
-                    "Ton PC le sent un peu, surtout pendant les animations.",
-                    "Inhabituel pour Rustudio : redémarre l’appli si ça dure.",
-                ],
-            },
-            Measure {
-                name: "Mémoire",
-                short: "RAM",
-                value: self.usage.resident_bytes.map(|bytes| format!("{:.0} Mo", bytes as f64 / 1_000_000.)),
-                grade: self.usage.resident_bytes.map(|bytes| Grade::of(bytes as f64 / 1_000_000., [150., 300., 600.])),
-                meaning: [
-                    "Moins de 150 Mo : plus léger que la plupart des applis de bureau.",
-                    "Une consommation normale pour une appli de bureau.",
-                    "Un peu lourd : redémarre l’appli si ça continue de monter.",
-                    "Inhabituel pour Rustudio : redémarre l’appli si ça dure.",
-                ],
-            },
-            Measure {
-                name: "Réponse du moteur",
-                short: "Réponse",
-                value: ms.map(|ms| if ms < 0.1 { "< 0,1 ms".into() } else { format!("{ms:.1} ms").replace('.', ",") }),
-                grade: ms.map(|ms| Grade::of(ms, [2., 10., 50.])),
-                meaning: [
-                    "Tes réglages arrivent au moteur en moins de 2 ms, bien trop vite pour que tu le perçoives.",
-                    "Moins de 10 ms : faders et boutons réagissent sans délai perceptible.",
-                    "Un léger retard peut se sentir quand tu bouges un fader.",
-                    "Le moteur répond lentement : redémarre Rustudio si ça dure.",
-                ],
-            },
+        // moyennes des 5 dernières secondes : des chiffres qui se lisent au lieu de sauter chaque seconde
+        let recent = |i: usize, n: usize| -> Option<f64> {
+            let v: Vec<f64> = self.perf.iter().rev().take(n).map(|s| s[i]).filter(|x| x.is_finite()).collect();
+            (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
+        };
+        let (cpu, ram, ms) = (recent(0, 5), recent(1, 5), recent(2, 5));
+        let total_gb = self.usage.total_bytes.map(|b| b as f64 / 1e9);
+        let grades = [
+            cpu.map(|v| Grade::of(v, [1., 5., 15.])),
+            ram.map(|v| Grade::of(v, [150., 300., 600.])),
+            ms.map(|v| Grade::of(v, [2., 10., 50.])),
         ];
-        let overall = measures.iter().filter_map(|m| m.grade).max();
+        let overall = grades.iter().flatten().max().copied();
         let (summary, colour) = match overall {
             None => ("Mesure en cours", ui::TEXT3),
-            Some(Grade::Excellent) => ("Performances excellentes", ui::GREEN),
-            Some(Grade::Good) => ("Bonnes performances", ui::ACCENT),
-            Some(Grade::Fair) => ("Performances moyennes", ui::ORANGE),
+            Some(Grade::Excellent) => ("Ultra léger", ui::GREEN),
+            Some(Grade::Good) => ("Léger", ui::ACCENT),
+            Some(Grade::Fair) => ("Un peu chargé", ui::ORANGE),
             Some(Grade::High) => ("Consommation élevée", ui::RED),
         };
+        let fr = |v: f64, decimals: usize| format!("{v:.decimals$}").replace('.', ",");
+        let cpu_text = cpu.map(|v| format!("{} %", fr(v, 1)));
+        let ram_text = ram.map(|v| format!("{} Mo", fr(v, 0)));
+        let ms_text = ms.map(|v| if v < 0.1 { "< 0,1 ms".into() } else { format!("{} ms", fr(v, 1)) });
         let key = "perf-summary";
         let t = ui::hover_t(key);
         let open = self.performance_open;
@@ -681,37 +677,78 @@ impl Mixer {
                     .child(div().flex_none().size(px(7.)).rounded_full().bg(rgb(colour)))
                     .child(div().font_weight(FontWeight::SEMIBOLD).text_color(rgb(grade_text(overall))).child(summary)),
             );
-        for m in &measures {
+        for (short, value, grade) in [("CPU", &cpu_text, grades[0]), ("RAM", &ram_text, grades[1]), ("Réponse", &ms_text, grades[2])] {
             strip = strip.child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(5.))
-                    .child(ui::caption(m.short))
-                    .child(div().font_weight(FontWeight::MEDIUM).text_color(rgb(grade_text(m.grade))).child(m.value.clone().unwrap_or_else(|| "—".into()))),
+                    .child(ui::caption(short))
+                    .child(div().font_weight(FontWeight::MEDIUM).text_color(rgb(grade_text(grade))).child(value.clone().unwrap_or_else(|| "—".into()))),
             );
         }
         let panel = open.then(|| {
-            let mut list = div().flex().flex_col().gap(px(12.));
-            for m in &measures {
-                let meaning = m.grade.map(|g| m.meaning[g as usize]).unwrap_or("Mesure en cours…");
-                list = list.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(3.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .child(div().flex_1().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(m.name))
-                                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(m.value.clone().unwrap_or_else(|| "—".into())))
-                                .children(m.grade.map(|g| ui::badge(g.label(), g.colour()))),
-                        )
-                        .child(ui::caption(meaning).line_height(px(17.))),
-                );
-            }
+            // une carte par mesure : le chiffre, une jauge, une phrase, et les 60 dernières secondes
+            let card = |title: &'static str, value: Option<String>, grade: Option<Grade>, fill: Option<f64>, line: Option<String>, series: usize, floor: f64| {
+                let tone = grade.map(Grade::colour).unwrap_or(ui::TEXT3);
+                let history: Vec<f64> = self.perf.iter().map(|s| s[series]).collect();
+                let top = history.iter().copied().filter(|x| x.is_finite()).fold(floor, f64::max);
+                let mut spark = div().flex().items_end().gap(px(1.)).h(px(26.));
+                for i in 0..PERF_HISTORY {
+                    let v = history.len().checked_sub(PERF_HISTORY - i).and_then(|j| history.get(j)).copied().filter(|x| x.is_finite());
+                    let h = v.map(|v| (v / top).clamp(0., 1.) * 24. + 2.).unwrap_or(0.);
+                    spark = spark.child(div().flex_1().h(px(h as f32)).rounded_t(px(1.)).bg(alpha(tone, if i + 1 == PERF_HISTORY { 0.9 } else { 0.35 })));
+                }
+                div()
+                    .p(px(12.))
+                    .rounded(px(12.))
+                    .bg(alpha(ui::INK, 0.035))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_end()
+                            .justify_between()
+                            .child(ui::label(title))
+                            .child(div().text_size(px(22.)).line_height(px(24.)).font_weight(FontWeight::BOLD).text_color(rgb(grade_text(grade))).child(value.unwrap_or_else(|| "—".into()))),
+                    )
+                    .child(
+                        div().h(px(6.)).rounded_full().bg(alpha(ui::INK, 0.08)).child(
+                            div().h_full().rounded_full().bg(rgb(tone)).min_w(px(4.)).w(gpui::relative(fill.unwrap_or(0.).clamp(0., 1.) as f32)),
+                        ),
+                    )
+                    .children(line.map(|l| div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(l)))
+                    .child(spark)
+            };
+            let cpu_card = card(
+                "Processeur",
+                cpu_text.clone(),
+                grades[0],
+                cpu.map(|v| v / 100.),
+                cpu.map(|v| format!("{} % de ton processeur reste libre", fr(100. - v, 1))),
+                0,
+                2.,
+            );
+            let ram_card = card(
+                "Mémoire",
+                ram_text.clone(),
+                grades[1],
+                ram.zip(total_gb).map(|(v, t)| v / 1000. / t),
+                ram.zip(total_gb).map(|(v, t)| format!("{} % de tes {} Go", fr(v / 10. / t, 1), fr(t, 0))),
+                1,
+                50.,
+            );
+            let ms_card = card(
+                "Réponse du moteur",
+                ms_text.clone(),
+                grades[2],
+                ms.map(|v| v / 16.7),
+                ms.map(|v| format!("{}× plus rapide qu’une image à 60 Hz", fr((16.7 / v.max(0.05)).min(999.), 0))),
+                2,
+                2.,
+            );
             let (engine, state, detail) = match &self.inventory {
                 Some(data) => {
                     let mode = match (self.client.is_live(), data.engine_supervised) {
@@ -726,19 +763,19 @@ impl Mixer {
                 None => ("Moteur indisponible", State::Error, String::new()),
             };
             let firmware = match self.device("goxlr-mini").and_then(|d| d.firmware_kind.as_deref()) {
-                Some("official") => Some("Firmware officiel"),
-                Some("golden") => Some("Firmware de secours (Golden)"),
-                Some("lab") => Some("Firmware Rustudio en essai"),
-                Some("audio") => Some("Firmware Rustudio · USB Audio"),
+                Some("official") => Some("firmware officiel"),
+                Some("golden") => Some("firmware de secours"),
+                Some("lab") | Some("audio") => Some("firmware Rustudio"),
                 _ => None,
             };
+            let chip = |text: &'static str| div().px(px(8.)).py(px(3.)).rounded_full().bg(alpha(ui::GREEN, 0.12)).text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::GREEN_TEXT)).child(text);
             deferred(
                 div()
                     .id("performance-panel")
                     .absolute()
                     .bottom(px(38.))
                     .left_0()
-                    .w(px(400.))
+                    .w(px(420.))
                     .p(px(16.))
                     .rounded(px(16.))
                     .bg(rgb(ui::PAPER))
@@ -755,17 +792,34 @@ impl Mixer {
                     }))
                     .flex()
                     .flex_col()
-                    .gap(px(14.))
+                    .gap(px(10.))
                     .child(
-                        div().flex().items_center().justify_between().gap(px(8.))
-                            .child(ui::status(engine, state))
-                            .child(ui::caption(detail)),
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_size(px(16.)).font_weight(FontWeight::BOLD).child("Rustudio sur ton PC"))
+                            .child(ui::badge(summary, colour)),
                     )
-                    .when_some(firmware, |d, firmware| {
-                        d.child(ui::caption(format!("GoXLR Mini · {firmware}")))
-                    })
-                    .child(list)
-                    .child(ui::caption("Mesuré chaque seconde sur ton PC.")),
+                    .child(cpu_card)
+                    .child(ram_card)
+                    .child(ms_card)
+                    .child(div().flex().flex_wrap().gap(px(6.)).child(chip("100 % Rust natif")).child(chip("0 navigateur embarqué")).child(chip("Mesuré par Windows")))
+                    .child(
+                        div()
+                            .pt(px(8.))
+                            .border_t_1()
+                            .border_color(alpha(ui::INK, 0.07))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.))
+                            .child(ui::status(engine, state))
+                            .child(ui::caption(match firmware {
+                                Some(f) => format!("{detail} · {f}"),
+                                None => detail,
+                            })),
+                    ),
             )
         });
         let button = ui::hoverable(
@@ -1023,13 +1077,14 @@ impl Mixer {
                     .child(ui::eyebrow(self.eyebrow()))
                     .child(div().mt(px(4.)).text_size(px(40.)).line_height(px(44.)).font_weight(FontWeight::BOLD).child(self.page.title()))
                     .child(div().mt(px(6.)).text_size(px(15.)).text_color(rgb(ui::TEXT2)).child(self.page.subtitle()))
-                    .when_some(module, |d, m| d.child(credit(m).mt(px(8.)))),
+                    // l'origine n'est rappelée que pour un module communautaire : sur les modules officiels, c'est du bruit
+                    .when_some(module.filter(|m| m.origin == "community"), |d, m| d.child(credit(m).mt(px(8.)))),
             )
             .child(self.header_actions(cx).flex_none().pb(px(4.)))
     }
 
     fn caption_buttons() -> Div {
-        let button = |id: &'static str, glyph: Icon, area: WindowControlArea, close: bool| {
+        let button = |id: &'static str, glyph: Icon, area: Option<WindowControlArea>, close: bool| {
             let t = ui::hover_t(id);
             let hover = if close { rgb(0xe81123) } else { alpha(ui::INK, 0.06) };
             let el = div()
@@ -1038,8 +1093,8 @@ impl Mixer {
                 .items_center()
                 .justify_center()
                 .w(px(46.))
-                .h(px(34.))
-                .window_control_area(area)
+                .h(px(TITLE_BAR_H - 1.))
+                .when_some(area, |d, a| d.window_control_area(a))
                 .occlude()
                 .bg(ui::lerp(alpha(if close { 0xe81123 } else { ui::INK }, 0.), hover, t))
                 .child(gpui::svg().path(glyph.path()).size(px(if close { 15. } else { 13. })).text_color(ui::lerp(alpha(ui::INK, 0.62), if close { rgb(ui::WHITE) } else { alpha(ui::INK, 0.85) }, t)));
@@ -1050,9 +1105,11 @@ impl Mixer {
             .top_0()
             .right_0()
             .flex()
-            .child(button("win-min", Icon::Minus, WindowControlArea::Min, false))
-            .child(button("win-max", Icon::Square, WindowControlArea::Max, false))
-            .child(button("win-close", Icon::Close, WindowControlArea::Close, true))
+            .child(button("win-min", Icon::Minus, Some(WindowControlArea::Min), false))
+            .child(button("win-max", Icon::Square, Some(WindowControlArea::Max), false))
+            // la croix range Rustudio dans la barre des tâches au lieu de le fermer : il continue de piloter tes
+            // appareils (pour quitter vraiment : l'icône près de l'horloge)
+            .child(button("win-close", Icon::Close, None, true).cursor(gpui::CursorStyle::Arrow).on_click(|_, window, _| window.minimize_window()))
     }
 
     /// Fenêtre complète : fond, barre latérale, en-tête et page.
@@ -1109,27 +1166,30 @@ impl Mixer {
                             .left(px(SIDEBAR_MARGIN + SIDEBAR_W))
                             .right_0()
                             // zone de déplacement : elle s'arrête avant les trois boutons, sinon Windows y voit la barre de titre
-                            .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(40.)).window_control_area(WindowControlArea::Drag))
+                            .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(TITLE_BAR_H)).window_control_area(WindowControlArea::Drag))
+                            // barre de titre à part : les boutons de fenêtre ne se mêlent plus au contenu qui défile
+                            .child(div().absolute().top(px(TITLE_BAR_H - 1.)).left_0().right_0().h(px(1.)).bg(alpha(ui::INK, 0.07)))
                             .child(
                                 // en position absolue : la page qui défile se met en page une seule fois, à la taille de la zone,
                                 // au lieu d'être mesurée par chaque niveau de la fenêtre avant d'être placée
                                 div()
                                     .id(ElementId::NamedInteger("page".into(), self.nav_count))
                                     .absolute()
-                                    .top_0()
+                                    .top(px(TITLE_BAR_H))
                                     .left_0()
-                                    .size_full()
+                                    .right_0()
+                                    .bottom_0()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.page_scroll)
                                     .child(
                                         // la molette passe ici avant le défilement de la page : elle glisse au lieu de sauter
                                         div()
-                                            .pt(px(38.))
+                                            .pt(px(14.))
                                             .pb(px(28.))
                                             .pl(px(PAGE_LEFT))
                                             .pr(px(PAGE_RIGHT))
                                             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| this.wheel(event, cx)))
-                                            .child(div().mt(px(-preview_scroll())).child(content)),
+                                            .child(div().mt(px(-preview_scroll())).w_full().max_w(px(PAGE_MAX)).mx_auto().child(content)),
                                     ),
                             ),
                     ),
@@ -1303,24 +1363,19 @@ impl Mixer {
             Confirm::Delete(i) => (i, false),
         };
         let name = self.profiles.iter().find(|(i, _)| *i == index).map(|(_, p)| p.name.clone())?;
-        let message = if apply {
-            format!("Appliquer « {name} » ? Les volumes et les coupures du mixeur changent, y compris celle du micro.")
+        let (title, text) = if apply {
+            (format!("Appliquer « {name} » ?"), vec!["Les volumes et les coupures du mixeur changent, y compris celle du micro.".into()])
         } else {
-            format!("Supprimer le profil « {name} » ?")
+            (format!("Supprimer le profil « {name} » ?"), vec![])
         };
-        Some(
-            ui::card()
-                .flex_row()
-                .items_center()
-                .gap(px(14.))
-                .child(ui::chip(if apply { Icon::Play } else { Icon::Trash }, if apply { ui::ACCENT } else { ui::RED }, 34.))
-                .child(div().flex_1().text_size(px(13.5)).child(message))
-                .child(ui::pill("profile-cancel", None, "Annuler", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
-                    this.confirm = None;
-                    cx.notify();
-                })))
-                .child(ui::pill("profile-confirm", None, if apply { "Appliquer" } else { "Supprimer" }, if apply { Tone::Primary } else { Tone::Danger }).on_click(cx.listener(|this, _, _, cx| this.confirm_profile(cx)))),
-        )
+        let cancel = ui::pill("profile-cancel", None, "Annuler", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+            this.confirm = None;
+            cx.notify();
+        }));
+        let confirm = ui::pill("profile-confirm", None, if apply { "Appliquer" } else { "Supprimer" }, if apply { Tone::Primary } else { Tone::Danger })
+            .on_click(cx.listener(|this, _, _, cx| this.confirm_profile(cx)));
+        let glyph = if apply { (Icon::Play, ui::ACCENT) } else { (Icon::Trash, ui::RED) };
+        Some(ui::dialog(glyph.0, glyph.1, title, text, vec![cancel.into_any_element(), confirm.into_any_element()]))
     }
 
     fn confirm_profile(&mut self, cx: &mut Context<Self>) {
@@ -1437,18 +1492,12 @@ impl Mixer {
             module.summary.clone()
         };
         let detail = device.and_then(|d| d.firmware.clone()).map(|fw| format!("Firmware {fw}"));
-        // même structure et même hauteur pour toutes les cartes : 4 capacités au plus, le reste en « +N »
-        let mut tags = div().flex().flex_none().flex_wrap().items_start().gap(px(6.)).min_h(px(24.));
-        if audio_only {
-            tags = tags.child(ui::tag("Micro")).child(ui::tag("Casque"));
+        // ce que le module règle, en une ligne de texte (pas d'étiquettes)
+        let caps: Vec<String> = if audio_only {
+            vec!["Micro".into(), "Casque".into()]
         } else {
-            for c in module.capabilities.iter().take(3) {
-                tags = tags.child(ui::tag(capability(c).to_owned()));
-            }
-            if module.capabilities.len() > 3 {
-                tags = tags.child(ui::tag(format!("+{}", module.capabilities.len() - 3)));
-            }
-        }
+            module.capabilities.iter().map(|c| capability(c).to_owned()).collect()
+        };
         let glance = self.inventory.as_ref().and_then(|i| glance_row(&module.id, &i.glance));
         let card = ui::card()
             .relative()
@@ -1464,12 +1513,11 @@ impl Mixer {
                     .child(ui::chip(module_icon(&module.id), ui::ACCENT, 40.))
                     .child(div().flex().flex_col().min_w(px(0.)).child(ui::title(module.name.clone(), 17.)).child(hint(module.vendor.clone()))),
             )
-            .child(credit(module))
-            .child(ui::status(status, state))
-            // la ligne « en direct » garde sa place même vide : les cartes restent alignées
-            .child(div().min_h(px(32.)).flex().items_center().children(glance))
+            .when(module.origin == "community", |d| d.child(credit(module)))
+            // état, puis ce qui se passe en direct, sur une même ligne qui garde sa place : les cartes restent alignées
+            .child(div().min_h(px(22.)).flex().flex_wrap().items_center().gap(px(16.)).child(ui::status(status, state)).children(glance))
             .child(hint(summary).text_size(px(12.5)).line_height(px(19.)))
-            .child(tags)
+            .child(ui::caption(caps.join(" · ")).line_height(px(17.)))
             .child(
                 div()
                     .absolute()
@@ -1588,17 +1636,7 @@ fn preview_scroll() -> f32 {
     *OFFSET.get_or_init(|| std::env::var("RUSTUDIO_PREVIEW_SCROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.))
 }
 
-/// Une mesure de la barre d'état, avec sa note et une phrase par note.
-struct Measure {
-    name: &'static str,
-    short: &'static str,
-    value: Option<String>,
-    grade: Option<Grade>,
-    /// Une phrase par note, dans l'ordre de `Grade`.
-    meaning: [&'static str; 4],
-}
-
-/// Note d'une mesure, de la meilleure à la moins bonne : l'ordre sert d'indice dans `Measure::meaning`.
+/// Note d'une mesure, de la meilleure à la moins bonne.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Grade {
     Excellent,
@@ -1618,15 +1656,6 @@ impl Grade {
             Grade::Fair
         } else {
             Grade::High
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Grade::Excellent => "Excellent",
-            Grade::Good => "Bon",
-            Grade::Fair => "Moyen",
-            Grade::High => "Élevé",
         }
     }
 

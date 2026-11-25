@@ -114,6 +114,9 @@ pub struct State {
     pub user_scenes: IndexMap<String, Value>,
     pub hp_eq: HpEq,
     pub voice_print: Option<VoiceRecord>,
+    /// suppression du bruit du micro sur le PC (RNNoise via Equalizer APO)
+    #[serde(default)]
+    pub mic_ns: crate::micns::MicNs,
 }
 
 impl State {
@@ -185,6 +188,7 @@ pub fn default_state() -> State {
         user_scenes: IndexMap::new(),
         hp_eq: hpeq::normalize_hp_eq(&Value::Null, None),
         voice_print: None,
+        mic_ns: crate::micns::MicNs::default(),
     }
 }
 
@@ -432,6 +436,7 @@ pub fn normalize_state(src: &Value) -> State {
         st.dsp = dsp::fit_dsp("naturel", cal.as_ref(), Some(st.mic.gain_db));
     }
     st.hp_eq = hpeq::normalize_hp_eq(get(src, "hp_eq"), None);
+    st.mic_ns = crate::micns::normalize(get(src, "mic_ns"), None);
     if has(src, "bleep_db") {
         if let Some(b) = clamp(get(src, "bleep_db"), -36, 0) {
             st.bleep_db = b;

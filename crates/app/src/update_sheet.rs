@@ -447,10 +447,8 @@ fn release_card(card: &Card, with_lead: bool, with_header: bool) -> Div {
                 .child(ui::caption(card.date.clone().unwrap_or_default())),
         );
     }
-    if with_lead {
-        if let Some(lead) = parsed.lead.as_ref() {
-            col = col.child(ui::hint(lead.clone()));
-        }
+    if let Some(lead) = parsed.lead.as_ref().filter(|_| with_lead) {
+        col = col.child(ui::hint(lead.clone()));
     }
     for section in parsed.sections {
         let (glyph, colour) = section_style(section.kind);

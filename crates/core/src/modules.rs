@@ -103,7 +103,7 @@ pub const GOXLR_MINI: ModuleDescriptor = ModuleDescriptor {
         "volume", "mute", "fader", "route", "colour", "mic", "raw", "profile", "dsp", "mic-preset", "scene",
         "scene-save", "scene-delete", "theme", "lighting", "detect-mic", "auto-gain", "voice-setup", "mic-listen",
         "job-cancel", "settings", "auto-scenes", "reconnect", "fx", "hp-eq", "hp-eq-save", "hp-eq-delete",
-        "hp-eq-setup", "hp-eq-remove", "echo-check", "sound-test", "mic-model", "voice-print", "mic-ab", "voice-forget",
+        "hp-eq-setup", "hp-eq-remove", "echo-check", "sound-test", "mic-model", "voice-print", "mic-ab", "voice-forget", "hp-default", "hp-eq-uninstall", "mic-ns", "mic-ns-setup", "mic-ns-remove", "mic-default",
     ],
 };
 

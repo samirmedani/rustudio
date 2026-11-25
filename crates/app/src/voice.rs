@@ -2,7 +2,7 @@ use crate::{
     backend::Client,
     desktop::hint,
     mixer::Mixer,
-    ui::{self, Icon, alpha},
+    ui::{self, Icon},
 };
 use gpui::{Context, Div, div, prelude::*, px, rgb};
 use serde_json::{Value, json};
@@ -16,10 +16,11 @@ use std::time::{Duration, Instant};
 const MODULE: &str = "/api/modules/goxlr-mini";
 
 fn take(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Value, String> {
+    // assistant : 6 s de silence (ta pièce), 3 phrases de 5 s, 4 s plus fort
     let options = if quick {
         json!({"silence_s":1.5,"reading_s":8,"loud_s":1.5})
     } else {
-        json!({})
+        json!({"silence_s":6,"reading_s":15,"loud_s":4})
     };
     let mode = client.live_state()?;
     if mode["connected"] != true || mode["job"]["running"] == true {
@@ -71,10 +72,19 @@ fn take(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Value, Stri
     outcome
 }
 
-pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Value, String> {
+/// Prise brute de l'empreinte, gardée par l'assistant pour la réécouter : échantillons, fréquence, début (ms epoch).
+pub struct Take {
+    pub samples: Vec<f32>,
+    pub rate: u32,
+    pub t0_ms: u64,
+}
+
+/// Empreinte vocale : le moteur mène les étapes, l'appli enregistre « Chat Mic » puis envoie le son.
+/// Renvoie l'analyse, l'étape de lecture (début, fin en epoch s, gain) et la prise brute.
+pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<(Value, Value, Option<Take>), String> {
     if !client.is_live() {
-        take(client, cancel, quick)?;
-        return client.send_voice(None);
+        let job = take(client, cancel, quick)?;
+        return Ok((client.send_voice(None)?, job["timeline"].clone(), None));
     }
     let stop = AtomicBool::new(false);
     let (tx, rx) = mpsc::sync_channel(1);
@@ -84,8 +94,8 @@ pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Valu
             let (time, rate) = rx
                 .recv_timeout(Duration::from_secs(4))
                 .map_err(|_| "Impossible d’ouvrir l’entrée Chat Mic.")?;
-            take(client, cancel, false)?;
-            Ok::<_, String>((time, rate))
+            let job = take(client, cancel, quick)?;
+            Ok::<_, String>((time, rate, job))
         })();
         stop.store(true, Ordering::Relaxed);
         (
@@ -95,62 +105,12 @@ pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Valu
                 .unwrap_or_else(|_| Err("Capture du micro interrompue.".into())),
         )
     });
-    let (time, rate) = run?;
-    client.send_voice(Some((time, rate, bytes?)))
+    let (time, rate, job) = run?;
+    let bytes = bytes?;
+    let samples: Vec<f32> = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();
+    let result = client.send_voice(Some((time, rate, bytes)))?;
+    Ok((result, job["timeline"].clone(), Some(Take { samples, rate, t0_ms: time })))
 }
-
-impl Mixer {
-    fn run_voice_print(&mut self, cx: &mut Context<Self>) {
-        if !self.go.enabled() || self.go.voice_cancel.is_some() {
-            return;
-        }
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.go.voice_cancel = Some(cancel.clone());
-        self.go.notice = None;
-        self.go.busy = true;
-        let client = self.client.clone();
-        let work = cx
-            .background_executor()
-            .spawn(async move { analyse(&client, &cancel, false) });
-        cx.spawn(async move |this, cx| {
-            let result = work.await;
-            let _ = this.update(cx, |this, cx| {
-                this.go.voice_cancel = None;
-                this.go.busy = false;
-                this.go.notice = Some(match result {
-                    Ok(_) => (true, "Empreinte calculée et enregistrée.".into()),
-                    Err(error) => (false, error),
-                });
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
-    pub fn voice_panel(&self, cx: &mut Context<Self>) -> Div {
-        let mut panel = ui::section(Icon::Wave, 0x5856d6, "Empreinte vocale", None).child(hint(if self.client.is_live() {
-            "30 secondes : un court silence, un texte à lire, puis une phrase plus forte. Le son est analysé sur ton PC puis oublié."
-        } else {
-            "Démonstration : voix de synthèse, sans micro réel."
-        }).text_size(px(12.)));
-        if let Some(cancel) = self.go.voice_cancel.as_ref() {
-            let cancel = cancel.clone();
-            let j = &self.go.job;
-            panel = panel.child(ui::status(j["step"].as_str().unwrap_or("Préparation…").to_owned(), ui::State::Info));
-            if j["phase"] == "reading" {
-                panel = panel.child(div().p(px(14.)).rounded(px(12.)).bg(alpha(ui::ACCENT, 0.06)).text_size(px(15.)).line_height(px(22.)).child("Ce matin, le ciel était clair. Je prends le temps de lire cette phrase. Les sons passent doucement, puis ma voix reprend un rythme naturel."));
-            } else if j["phase"] == "loud" {
-                panel = panel.child(div().p(px(14.)).rounded(px(12.)).bg(alpha(ui::ORANGE, 0.08)).text_size(px(15.)).child("Parle plus fort : « On y va, c’est parti ! »"));
-            }
-            panel = panel.child(ui::pill("voice-print-cancel", Some(Icon::Close), "Annuler la mesure", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, _| cancel.store(true, Ordering::Relaxed))));
-        } else if self.go.enabled() {
-            panel = panel.child(ui::pill("voice-print-start", Some(Icon::Mic), "Créer mon empreinte", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.run_voice_print(cx))));
-        }
-        panel
-    }
-}
-
 
 /// Réécoute (8 s), graphique de voix et test d'écho : complément de la page Micro et du diagnostic.
 #[derive(Default)]
@@ -293,7 +253,7 @@ impl Mixer {
     }
 
     pub fn listen_panel(&self, cx: &mut Context<Self>) -> Div {
-        let mut p = div().flex().flex_col().gap(px(10.)).pt(px(6.)).child(ui::label("M’écouter comme les autres"))
+        let mut p = div().flex().flex_col().gap(px(10.)).child(ui::subhead("Comme les autres t’entendent"))
             .child(hint("Enregistre 8 secondes de « Chat Mic », puis réécoute ta voix telle que la reçoivent Discord et ton stream."));
         if !self.client.is_live() {
             return p.child(hint("Démonstration : aucun micro du PC n’est enregistré."));
@@ -322,31 +282,69 @@ impl Mixer {
     pub fn voice_chart(&self, preset: &str) -> Div {
         let mut p = ui::section(Icon::Activity, ui::ACCENT, "Ta voix et le préréglage", None);
         let Some(info) = self.voice.info.as_ref() else {
-            return p.child(hint(if self.voice.loading { "Lecture…" } else { "Crée ton empreinte pour voir ta voix." }));
+            return p.child(hint(if self.voice.loading { "Lecture…" } else { "Lance « Régler mon micro » pour voir ta voix." }));
         };
         let chart = &info["profiles"][preset]["chart"];
         let (Some(bands), Some(voice), Some(after)) = (chart["bands"].as_array(), chart["voice"].as_array(), chart["after"].as_array()) else {
-            return p.child(hint("Crée ton empreinte vocale pour voir ta voix avant et après le préréglage."));
+            return p.child(hint("Lance « Régler mon micro » : ta voix apparaîtra ici, avant et après le préréglage."));
         };
         let values: Vec<f64> = voice.iter().chain(after.iter()).filter_map(Value::as_f64).collect();
         let (lo, hi) = values.iter().fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
         let span = (hi - lo).max(1.0);
-        let height = |v: Option<f64>| px((((v.unwrap_or(lo) - lo) / span) * 110.0 + 4.0) as f32);
-        let step = (bands.len() / 24).max(1);
-        let mut bars = div().flex().items_end().gap_1().h(px(130.));
+        let height = |v: Option<f64>| gpui::relative((((v.unwrap_or(lo) - lo) / span) * 0.94 + 0.04) as f32);
+        let step = (bands.len() / 32).max(1);
+        // barres sur toute la largeur : gris ta voix, bleu avec le préréglage
+        let mut bars = div().flex().items_end().gap(px(4.)).h(px(130.)).w_full();
         for i in (0..bands.len()).step_by(step) {
-            bars = bars.child(div().flex().items_end().gap(px(1.))
-                .child(div().w(px(5.)).h(height(voice.get(i).and_then(Value::as_f64))).bg(rgb(0xc7c7cc)).rounded_sm())
-                .child(div().w(px(5.)).h(height(after.get(i).and_then(Value::as_f64))).bg(rgb(0x0071e3)).rounded_sm()));
+            bars = bars.child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_end()
+                    .gap(px(1.))
+                    .child(div().flex_1().h(height(voice.get(i).and_then(Value::as_f64))).bg(rgb(0x8e8e93)).rounded_sm())
+                    .child(div().flex_1().h(height(after.get(i).and_then(Value::as_f64))).bg(rgb(0x0071e3)).rounded_sm()),
+            );
         }
         let first = bands.first().and_then(Value::as_f64).unwrap_or(50.);
         let last = bands.last().and_then(Value::as_f64).unwrap_or(16000.);
-        p = p.child(bars).child(hint(format!("{} Hz → {} kHz · gris : ta voix · bleu : avec le préréglage", first.round(), (last / 1000.).round())));
-        for s in info["summary"].as_object().into_iter().flatten().take(6) {
-            if let Some(t) = s.1.as_str() {
-                p = p.child(hint(t.to_owned()));
-            }
+        let legend = |colour: u32, text: &'static str| div().flex().items_center().gap(px(6.)).child(div().size(px(8.)).rounded_full().bg(rgb(colour))).child(ui::caption(text));
+        p = p.child(bars).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(16.))
+                .child(legend(0x8e8e93, "Ta voix"))
+                .child(legend(0x0071e3, "Avec le préréglage"))
+                .child(div().flex_1())
+                .child(ui::caption(format!("{} Hz → {} kHz", first.round(), (last / 1000.).round()))),
+        );
+        // ce que l'empreinte a mesuré, en faits lisibles plutôt qu'en mots isolés
+        let sm = &info["summary"];
+        let mut facts: Vec<(String, &'static str)> = vec![];
+        if let Some(t) = sm["voice_type"].as_str() {
+            let hz = sm["f0_hz"].as_f64().map(|f| format!(" · {} Hz", f.round())).unwrap_or_default();
+            facts.push((format!("{}{hz}", capital(t)), "Ta voix"));
+        }
+        if let Some(t) = sm["sibilance"].as_str() {
+            facts.push((capital(t), "Sifflantes"));
+        }
+        if let Some(t) = sm["room"].as_str() {
+            facts.push((capital(t), "Ta pièce"));
+        }
+        if let Some(d) = sm["snr_db"].as_f64() {
+            facts.push((format!("{} dB", d.round()), "Voix au-dessus du bruit"));
+        }
+        if !facts.is_empty() {
+            p = p.child(div().flex().flex_wrap().gap_x(px(32.)).gap_y(px(12.)).pt(px(6.)).children(facts.into_iter().map(|(v, l)| ui::fact(v, l))));
         }
         p
     }
+}
+
+/// « grave » → « Grave ».
+fn capital(text: &str) -> String {
+    let mut c = text.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }

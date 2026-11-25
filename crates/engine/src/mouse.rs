@@ -45,10 +45,16 @@ impl MouseHub {
             let mut mouse: Option<Mouse<Box<dyn Transport>>> = None;
             loop {
                 let Some(shared) = weak.upgrade() else { break; };
-                let request = match rx.recv_timeout(if mouse.is_some() { Duration::from_secs(10) } else { Duration::from_millis(100) }) {
+                // souris ouverte : batterie et câble suivis toutes les 2 s, pour voir la charge en direct
+                let request = match rx.recv_timeout(if mouse.is_some() { Duration::from_secs(2) } else { Duration::from_millis(100) }) {
                     Ok(req) => Some(req), Err(mpsc::RecvTimeoutError::Timeout) => None, Err(_) => break,
                 };
                 if request.as_ref().is_some_and(|r| r.deadline <= Instant::now()) { continue; }
+                // câble branché ou débranché : la liaison change (récepteur ↔ USB), on rouvre la bonne
+                if request.is_none() && mouse.as_ref().is_some_and(|m| cable_present(shared.simulated).is_some_and(|wired| wired != m.wired())) {
+                    mouse = None;
+                }
+                let fresh = mouse.is_none();
                 let result = (|| -> Result<Settings, String> {
                     if mouse.is_none() {
                         let opened = open(shared.simulated);
@@ -66,6 +72,16 @@ impl MouseHub {
                         if r.action == "setting" {
                             let name = r.body["name"].as_str().ok_or("Nom de réglage absent")?;
                             return m.apply(name, &r.body["value"]);
+                        }
+                    }
+                    if request.is_none() && !fresh {
+                        let cached = shared.state.lock().unwrap().settings.clone();
+                        if let Some(mut s) = cached {
+                            let (battery, charging) = m.battery()?;
+                            s.battery = battery;
+                            s.charging = charging;
+                            s.wired = m.wired();
+                            return Ok(s);
                         }
                     }
                     m.read()
@@ -118,6 +134,12 @@ fn human(e: &str) -> String {
         out.replace_range(a..=a + len, "");
     }
     out
+}
+
+fn cable_present(simulated: bool) -> Option<bool> {
+    if simulated { return None; }
+    #[cfg(windows)] { return rustudio_attack_shark::cable_present(); }
+    #[cfg(not(windows))] { None }
 }
 
 fn open(simulated: bool) -> Result<Box<dyn Transport>, String> {

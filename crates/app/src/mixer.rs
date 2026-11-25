@@ -39,6 +39,8 @@ pub struct Mixer {
     pub(crate) client: Client,
     pub(crate) inventory: Option<backend::Inventory>,
     pub(crate) usage: rustudio_windows_desktop::usage::Usage,
+    /// Une mesure par seconde : processeur (%), mémoire (Mo), réponse du moteur (ms) ; NaN si absente.
+    pub(crate) perf: std::collections::VecDeque<[f64; 3]>,
     pub(crate) page: Page,
     pub(crate) mouse: crate::mouse::MousePage,
     pub(crate) keyboard: crate::keyboard::KeyboardPage,
@@ -83,6 +85,8 @@ pub struct Mixer {
     pub(crate) update_then_open: bool,
     /// fenêtre de mise à jour (notes, installation, « installé »)
     pub(crate) sheet: Option<crate::update_sheet::Sheet>,
+    /// Assistant « Régler mon micro », ouvert par-dessus la page Micro.
+    pub(crate) wizard: Option<crate::mic_wizard::MicWizard>,
     /// l'installation qui vient de finir a déjà rouvert sa fenêtre
     pub(crate) installed_seen: bool,
     /// résultat d'une recherche à la main (« Rustudio est à jour »…)
@@ -128,6 +132,16 @@ impl Mixer {
                 sampler = next;
                 if this.update(cx, |mixer, cx| {
                     mixer.usage = sample;
+                    let ms = mixer.client.engine_response_time().map_or(f64::NAN, |t| t.as_secs_f64() * 1000.);
+                    mixer.perf.push_back([
+                        sample.cpu_percent.unwrap_or(f64::NAN),
+                        sample.resident_bytes.map_or(f64::NAN, |b| b as f64 / 1_000_000.),
+                        ms,
+                    ]);
+                    while mixer.perf.len() > crate::desktop::PERF_HISTORY {
+                        mixer.perf.pop_front();
+                    }
+                    // pas de redessin pour rien : seulement si le panneau ou la barre d'état la montrent
                     cx.notify();
                 }).is_err() {
                     break;
@@ -135,6 +149,27 @@ impl Mixer {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
             }
         }).detach();
+        // Sortie Windows par défaut, signalée au moteur quand elle change : l'égaliseur du casque la couvre
+        // toujours (sinon un style ne change rien à ce qu'on entend). Le moteur, en compte système, ne la voit pas.
+        let follow = client.clone();
+        let _ = std::thread::Builder::new().name("sortie-defaut".into()).spawn(move || {
+            let mut sent: Option<Option<String>> = None;
+            let mut sent_mic: Option<Option<String>> = None;
+            loop {
+                let channel = rustudio_windows_desktop::audio::default_output_channel();
+                if sent.as_ref() != Some(&channel)
+                    && follow.post_module("/api", "hp-default", serde_json::json!({ "channel": channel })).is_ok()
+                {
+                    sent = Some(channel);
+                }
+                // micro par défaut : la suppression du bruit le vise quand il n'y a pas de GoXLR
+                let mic = rustudio_windows_desktop::audio::default_input_guid();
+                if sent_mic.as_ref() != Some(&mic) && follow.post_module("/api", "mic-default", serde_json::json!({ "device": mic })).is_ok() {
+                    sent_mic = Some(mic);
+                }
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        });
         if let Some(duration) = duration {
             let exec = cx.background_executor().clone();
             cx.spawn(async move |this, cx| {
@@ -151,6 +186,7 @@ impl Mixer {
             client,
             inventory: None,
             usage: Default::default(),
+            perf: Default::default(),
             mouse: crate::mouse::MousePage::default(),
             keyboard: crate::keyboard::KeyboardPage::default(),
             macros: crate::macros::Editor::new(store.dir().join("macros"), cx),
@@ -195,6 +231,7 @@ impl Mixer {
             update: None,
             update_then_open: false,
             sheet: None,
+            wizard: None,
             installed_seen: false,
             update_notice: None,
             sheet_preview_done: false,
@@ -267,6 +304,15 @@ impl Mixer {
     }
 
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        // autre appareil : la barre latérale repart de son pli normal (seul l'appareil ouvert est déplié)
+        if page.space() != self.page.space() {
+            self.collapsed.clear();
+        }
+        if page != self.page
+            && let Some(name) = page.name()
+        {
+            crate::live::note_page(name);
+        }
         if page != self.page {
             self.nav_count += 1;
             self.page_scroll.set_offset(gpui::point(px(0.), px(0.)));
@@ -818,7 +864,7 @@ impl Mixer {
 
     fn others(&self, snap: &Snapshot, cx: &mut Context<Self>) -> Div {
         let firmware = self.rustudio_firmware();
-        let free: Vec<&Channel> = snap.channels.iter().filter(|ch| !snap.faders.iter().any(|f| f.channel == ch.id) && !(firmware && firmware_ignores(&ch.id))).collect();
+        let free: Vec<&Channel> = snap.channels.iter().filter(|ch| !(snap.faders.iter().any(|f| f.channel == ch.id) || firmware && firmware_ignores(&ch.id))).collect();
         let groups: [(&str, &str, Icon, &[&str]); 3] = [
             ("Sons de ton PC", "Chaque appli choisit sa sortie GoXLR dans ses réglages audio (ou dans les paramètres de son de Windows).", Icon::Monitor, &["System", "Game", "Chat", "Music", "Sample"]),
             ("Prises de la GoXLR", "Seulement si un appareil est branché derrière la GoXLR.", Icon::Plug, &["LineIn", "Console"]),
@@ -929,9 +975,11 @@ impl Render for Mixer {
             ui::animation_frame_every(window, crate::keyboard::PREVIEW_FRAME);
         }
         let sheet = self.update_sheet_view(cx);
+        let wizard = self.mic_wizard_view(cx);
         let shell = self
             .shell(window, cx)
             .children(toast.map(|(ok, text)| ui::toast(ok, text)))
+            .children(wizard.map(|w| ui::modal_sized(w, 760.)))
             .children(sheet.map(|s| ui::modal_sized(s, 640.)))
             .children(dialog.map(ui::modal));
         ui::keep_animating(window);
@@ -945,6 +993,10 @@ impl Render for Mixer {
                         let next = d.at(ev.position);
                         if (next - d.value).abs() > 1e-9 {
                             d.value = next;
+                            if d.live {
+                                let commit = d.commit.clone();
+                                commit(this, next, cx);
+                            }
                             cx.notify();
                         }
                     } else {
@@ -1036,6 +1088,8 @@ pub(crate) struct ParamDrag {
     step: f64,
     value: f64,
     commit: Rc<dyn Fn(&mut Mixer, f64, &mut Context<Mixer>)>,
+    /// envoie aussi pendant le glissement (on entend le réglage bouger), pas seulement au relâchement
+    live: bool,
 }
 
 impl ParamDrag {
@@ -1069,6 +1123,22 @@ impl Mixer {
         commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        self.param_area_with(key, range, step, vertical, enabled, false, commit, cx)
+    }
+
+    /// Comme param_area ; `live` envoie la valeur pendant le glissement.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn param_area_with(
+        &self,
+        key: &str,
+        range: (f64, f64),
+        step: f64,
+        vertical: bool,
+        enabled: bool,
+        live: bool,
+        commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let rect = Rc::new(Cell::new(None::<Bounds<Pixels>>));
         let layout = rect.clone();
         let key: SharedString = format!("param-{key}").into();
@@ -1084,7 +1154,7 @@ impl Mixer {
                 if !enabled {
                     return;
                 }
-                let mut drag = ParamDrag { key: id.clone(), bounds, vertical, min: range.0, max: range.1, step, value: range.0, commit: commit.clone() };
+                let mut drag = ParamDrag { key: id.clone(), bounds, vertical, min: range.0, max: range.1, step, value: range.0, commit: commit.clone(), live };
                 drag.value = drag.at(event.position);
                 this.param_drag = Some(drag);
                 cx.stop_propagation();
@@ -1112,6 +1182,7 @@ impl Mixer {
         let hover = ui::hover_t(&format!("param-{key}"));
         // bloc simple plutôt qu'une colonne flexbox : la mise en page mesure ses textes une fois au lieu de trois
         div()
+            .w_full()
             .child(
                 div()
                     .flex()

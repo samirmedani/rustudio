@@ -1,6 +1,6 @@
 //! Réglages de l'appli, configuration complète, mises à jour et retours de version.
 use crate::{
-    desktop::{Page, panel},
+    desktop::Page,
     mixer::Mixer,
     ui::{self, Icon, alpha, rgb},
 };
@@ -74,24 +74,16 @@ impl Mixer {
 
     pub(crate) fn confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (message, ..) = self.library.confirm.as_ref()?;
-        Some(
-            panel()
-                .flex_row()
-                .items_center()
-                .gap(px(14.))
-                .border_color(alpha(ui::ORANGE, 0.35))
-                .child(ui::chip(Icon::Alert, ui::ORANGE, 34.))
-                .child(div().flex_1().text_size(px(13.5)).child(message.clone()))
-                .child(ui::pill("lib-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
-                    this.library.confirm = None;
-                    cx.notify();
-                })))
-                .child(ui::pill("lib-confirm", None, "Confirmer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| {
-                    if let Some((_, path, action, body, done)) = this.library.confirm.take() {
-                        this.engine_action(path, action, body, done, cx);
-                    }
-                }))),
-        )
+        let cancel = ui::pill("lib-cancel", None, "Annuler", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+            this.library.confirm = None;
+            cx.notify();
+        }));
+        let confirm = ui::pill("lib-confirm", None, "Confirmer", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| {
+            if let Some((_, path, action, body, done)) = this.library.confirm.take() {
+                this.engine_action(path, action, body, done, cx);
+            }
+        }));
+        Some(ui::dialog(Icon::Alert, ui::ORANGE, message.clone(), vec![], vec![cancel.into_any_element(), confirm.into_any_element()]))
     }
 
     fn export_config(&mut self, cx: &mut Context<Self>) {
@@ -276,7 +268,7 @@ impl Mixer {
             .child(ui::list_row(
                 None,
                 "Exporter ma configuration",
-                Some("Toute la GoXLR Mini dans un fichier, sans l’empreinte vocale.".into()),
+                Some("Toute la GoXLR Mini dans un fichier, sans l’analyse de ta voix.".into()),
                 ui::pill("config-export", Some(Icon::Download), "Exporter", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.export_config(cx))),
                 true,
             ))

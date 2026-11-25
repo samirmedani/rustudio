@@ -48,8 +48,7 @@ const fn hd560s(key: &'static str, label: &'static str, desc: &'static str, band
 /// saturation de la page Casque) : les modes appuyes baissent un peu les mediums plutot que de pousser plus fort.
 pub const HP_STYLES: &[Style] = &[
     any("neutre", "Neutre", "Le son tel quel, ou juste corrigé pour ton casque.", [0; 10]),
-    any("basses", "Basses +", "Des graves pleins et profonds, sans couvrir les voix.", [4, 5, 3, 1, 0, 0, 0, 0, 0, 0]),
-    any("basses_plus", "Basses ++", "Basses à fond, façon club : ça cogne. Les médiums reculent pour leur laisser la place.", [4, 6, 4, 1, -3, -4, -3, 0, 0, -1]),
+    any("basses", "Basses", "Des graves pleins et profonds, sans couvrir les voix. Monte l'intensité pour un son façon club.", [4, 5, 3, 1, 0, 0, 0, 0, 0, 0]),
     any("jeu", "Jeu", "Pas, rechargements et directions plus nets.", [-2, -1, -1, -1, 0, 1, 3, 3, 2, 0]),
     any("voix", "Voix claire", "Discord, podcasts et vidéos : les voix devant.", [-4, -3, -1, 0, 1, 2, 3, 2, 0, -1]),
     any("film", "Film", "Grand et immersif : impacts et ambiance.", [4, 4, 2, 0, -1, -1, 0, 2, 3, 3]),
@@ -64,6 +63,35 @@ pub const HP_STYLES: &[Style] = &[
 ];
 pub fn style(key: &str) -> Option<&'static Style> {
     HP_STYLES.iter().find(|s| s.key == key)
+}
+
+/// Intensité d'un style, en % de sa courbe : 100 par défaut, de 0 (son neutre) à 200 (deux fois plus marqué).
+pub const INTENSITY_DEFAULT: i32 = 100;
+pub const INTENSITY_MAX: i32 = 200;
+
+/// Courbe du style choisi (fourni ou réglage perso), avant l'intensité.
+pub fn style_bands(eq: &HpEq) -> Option<Vec<i32>> {
+    let key = eq.style.as_deref()?;
+    if let Some(st) = style(key) {
+        return Some(st.bands.to_vec());
+    }
+    key.strip_prefix("custom:").and_then(|n| eq.custom.get(n).cloned())
+}
+
+/// Gains réellement appliqués, en dB : la courbe du style à l'intensité exacte (au dixième de dB, pas
+/// arrondie au dB comme les bandes affichées), sinon les bandes réglées à la main.
+pub fn band_gains(eq: &HpEq) -> Vec<f64> {
+    match style_bands(eq) {
+        Some(base) if eq.intensity != INTENSITY_DEFAULT => {
+            base.iter().map(|b| ((*b as f64 * eq.intensity as f64 / 100.) * 10.).round() / 10.).map(|g| g.clamp(-12., 12.)).collect()
+        }
+        _ => eq.bands.iter().map(|b| *b as f64).collect(),
+    }
+}
+
+/// Courbe à l'intensité donnée, arrondie au dB et bornée à ±12 dB comme les bandes réglées à la main.
+pub fn scale_bands(bands: &[i32], intensity: i32) -> Vec<i32> {
+    bands.iter().map(|b| ((*b * intensity) as f64 / 100.).round() as i32).map(|b| b.clamp(-12, 12)).collect()
 }
 
 pub type Filter = (&'static str, f64, f64, f64);
@@ -104,6 +132,16 @@ pub struct HpEq {
     pub custom: IndexMap<String, Vec<i32>>,
     pub channels: Vec<String>,
     pub pause_live: bool,
+    /// intensité du style en % (100 : la courbe telle quelle)
+    #[serde(default = "intensity_default")]
+    pub intensity: i32,
+    /// intensité retenue pour chaque style (absente : 100 %), retrouvée quand on y revient
+    #[serde(default)]
+    pub intensities: IndexMap<String, i32>,
+}
+
+fn intensity_default() -> i32 {
+    INTENSITY_DEFAULT
 }
 
 fn bands_of(v: &Value) -> Vec<i32> {
@@ -122,6 +160,8 @@ pub fn normalize_hp_eq(src: &Value, base: Option<&HpEq>) -> HpEq {
         custom: IndexMap::new(),
         channels: vec!["Game".into(), "Music".into(), "System".into(), "Chat".into()],
         pause_live: true,
+        intensity: INTENSITY_DEFAULT,
+        intensities: IndexMap::new(),
     });
     if !src.is_object() {
         return eq;
@@ -142,7 +182,24 @@ pub fn normalize_hp_eq(src: &Value, base: Option<&HpEq>) -> HpEq {
     if get(src, "bands").is_array() {
         eq.bands = bands_of(get(src, "bands"));
     }
-    if has(src, "style") {
+    if has(src, "intensity") {
+        eq.intensity = clamp(get(src, "intensity"), 0, INTENSITY_MAX).unwrap_or(INTENSITY_DEFAULT);
+    }
+    if let Some(m) = get(src, "intensities").as_object() {
+        eq.intensities = m
+            .iter()
+            .filter_map(|(k, v)| Some((first_chars(k, 60), clamp(v, 0, INTENSITY_MAX)?)))
+            .filter(|(_, v)| *v != INTENSITY_DEFAULT)
+            .collect();
+    }
+    // « Basses ++ » est devenu « Basses » plus intense
+    if get(src, "style").as_str() == Some("basses_plus") {
+        eq.style = Some("basses".into());
+        if !has(src, "intensity") {
+            eq.intensity = 150;
+        }
+        eq.bands = scale_bands(&style("basses").map(|s| s.bands.to_vec()).unwrap_or_default(), eq.intensity);
+    } else if has(src, "style") {
         let st = get(src, "style").as_str();
         eq.style = st
             .filter(|s| style(s).is_some() || s.strip_prefix("custom:").map(|n| eq.custom.contains_key(n)).unwrap_or(false))
@@ -211,9 +268,9 @@ pub fn hp_filters(eq: &HpEq) -> (Vec<(String, f64, f64, f64)>, f64) {
         .and_then(headphone)
         .map(|fs| fs.iter().map(|(k, f, g, q)| (k.to_string(), *f, *g, *q)).collect())
         .unwrap_or_default();
-    for (f, g) in HP_BANDS.iter().zip(eq.bands.iter()) {
-        if *g != 0 {
-            flt.push(("PK".into(), *f as f64, *g as f64, HP_Q));
+    for (f, g) in HP_BANDS.iter().zip(band_gains(eq)) {
+        if g.abs() >= 0.05 {
+            flt.push(("PK".into(), *f as f64, g, HP_Q));
         }
     }
     let peak = if flt.is_empty() {
@@ -235,6 +292,12 @@ fn style_label(eq: &HpEq) -> String {
 
 /// Contenu de rustudio.txt (ASCII seulement : Equalizer APO lit le fichier tel quel).
 pub fn config_text(eq: &HpEq, active: bool, why: &str) -> String {
+    config_text_for(eq, active, why, &IndexMap::new())
+}
+
+/// Comme config_text ; `outputs` donne l'identifiant Windows de chaque voie : la sortie est alors visée par lui
+/// seul, jamais par son nom (le micro du firmware Rustudio porte le même nom que la voie System).
+pub fn config_text_for(eq: &HpEq, active: bool, why: &str, outputs: &IndexMap<String, String>) -> String {
     let mut lines = vec!["# Rustudio : egaliseur du casque. Fichier genere : regle-le dans Rustudio (page Casque).".to_string()];
     if !active {
         lines.push(format!("# Egaliseur coupe{}.", if why.is_empty() { String::new() } else { format!(" ({why})") }));
@@ -248,7 +311,14 @@ pub fn config_text(eq: &HpEq, active: bool, why: &str) -> String {
     ));
     lines.push(format!(
         "Device: {}",
-        eq.channels.iter().flat_map(|c| device_patterns(c)).collect::<Vec<_>>().join("; ")
+        eq.channels
+            .iter()
+            .flat_map(|c| match outputs.get(c) {
+                Some(guid) => vec![guid.to_uppercase()],
+                None => device_patterns(c),
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
     ));
     lines.push(format!("Preamp: {pre:.1} dB"));
     for (i, (kind, f0, g, q)) in flt.iter().enumerate() {

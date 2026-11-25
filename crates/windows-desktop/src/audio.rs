@@ -268,6 +268,32 @@ pub fn active_endpoints(capture: bool) -> Vec<Endpoint> {
     }
 }
 
+/// Voie GoXLR où Windows envoie le son par défaut (Game, Sample…), si la sortie par défaut est la GoXLR.
+pub fn default_output_channel() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let id = win::defaults()[0].clone()?;
+        win::active(false).into_iter().find(|e| e.goxlr && e.id.eq_ignore_ascii_case(&id)).map(|e| e.name)
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Identifiant (« {…} ») de l'entrée micro par défaut de Windows, quelle qu'elle soit.
+pub fn default_input_guid() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let id = win::defaults()[2].clone()?;
+        id.rsplit('.').next().map(|g| g.to_lowercase())
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 pub fn fix() -> i32 {
     #[cfg(windows)]
     {
