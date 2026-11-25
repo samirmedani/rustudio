@@ -23,15 +23,15 @@
 <text x="60.0" y="272.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">400</text>
 <line x1="72" y1="216.0" x2="928" y2="216.0" stroke="#3d444d" stroke-dasharray="3 5"/>
 <text x="60.0" y="220.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">600</text>
-<path d="M72.0,320.8 L78.7,316.1 L89.3,314.0 L134.0,314.0 L173.5,314.0 L218.8,314.0 L260.2,314.0 L301.0,314.0 L340.6,313.8 L369.7,307.8 L375.9,301.0 L381.6,297.9 L421.0,294.8 L445.7,294.5 L485.1,294.5 L526.3,291.9 L538.1,290.1 L550.5,289.3 L559.3,289.1 L581.5,283.3 L623.4,283.3 L666.6,283.1 L704.1,283.1 L747.7,283.1 L798.6,283.1 L832.4,280.0 L844.6,273.7 L852.2,273.5 L876.5,269.8 L885.8,269.6 L910.7,266.7 L922.2,266.2 L928.0,263.1 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
-<path d="M72.0,320.8 L78.7,316.1 L89.3,314.0 L134.0,314.0 L173.5,314.0 L218.8,314.0 L260.2,314.0 L301.0,314.0 L340.6,313.8 L369.7,307.8 L375.9,301.0 L381.6,297.9 L421.0,294.8 L445.7,294.5 L485.1,294.5 L526.3,291.9 L538.1,290.1 L550.5,289.3 L559.3,289.1 L581.5,283.3 L623.4,283.3 L666.6,283.1 L704.1,283.1 L747.7,283.1 L798.6,283.1 L832.4,280.0 L844.6,273.7 L852.2,273.5 L876.5,269.8 L885.8,269.6 L910.7,266.7 L922.2,266.2 L928.0,263.1" fill="none" stroke="#409cff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M72.0,320.8 L78.4,316.1 L88.5,314.0 L131.2,314.0 L168.8,314.0 L212.1,314.0 L251.6,314.0 L290.4,314.0 L328.2,313.8 L356.0,307.8 L361.9,301.0 L367.4,297.9 L405.0,294.8 L428.5,294.5 L466.2,294.5 L505.4,291.9 L516.7,290.1 L528.5,289.3 L536.9,289.1 L558.1,283.3 L598.0,283.3 L639.3,283.1 L675.0,283.1 L716.6,283.1 L765.2,283.1 L797.4,280.0 L809.1,273.7 L816.4,273.5 L839.5,269.8 L848.4,269.6 L872.1,266.7 L883.1,266.2 L888.7,263.1 L928.0,263.1 L928.0,372 L72.0,372 Z" fill="url(#aire)"/>
+<path d="M72.0,320.8 L78.4,316.1 L88.5,314.0 L131.2,314.0 L168.8,314.0 L212.1,314.0 L251.6,314.0 L290.4,314.0 L328.2,313.8 L356.0,307.8 L361.9,301.0 L367.4,297.9 L405.0,294.8 L428.5,294.5 L466.2,294.5 L505.4,291.9 L516.7,290.1 L528.5,289.3 L536.9,289.1 L558.1,283.3 L598.0,283.3 L639.3,283.1 L675.0,283.1 L716.6,283.1 L765.2,283.1 L797.4,280.0 L809.1,273.7 L816.4,273.5 L839.5,269.8 L848.4,269.6 L872.1,266.7 L883.1,266.2 L888.7,263.1 L928.0,263.1" fill="none" stroke="#409cff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="928.0" cy="263.1" r="5" fill="#409cff" stroke="#0d1117" stroke-width="2.5"/>
 <text x="918.0" y="251.1" font-size="13" font-weight="700" fill="#f0f6fc" text-anchor="end" stroke="#0d1117" stroke-width="8" stroke-linejoin="round" paint-order="stroke">419</text>
 <text x="72.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">31 oct.</text>
 <text x="286.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">6 nov.</text>
 <text x="500.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">12 nov.</text>
-<text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">18 nov.</text>
-<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">24 nov.</text>
+<text x="714.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="middle">19 nov.</text>
+<text x="928.0" y="394.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">25 nov.</text>
 <text x="32.0" y="432.0" font-size="15" font-weight="600" fill="#f0f6fc" text-anchor="start">Par version</text>
 <text x="928.0" y="432.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="end">20 dernières versions sur 44</text>
 <line x1="72" y1="572" x2="928" y2="572" stroke="#3d444d"/>
@@ -95,5 +95,5 @@
 <rect x="893.8" y="540.1" width="25.7" height="31.9" rx="4.0" fill="#409cff" fill-opacity="1"/>
 <text x="906.6" y="533.1" font-size="12" font-weight="600" fill="#f0f6fc" text-anchor="middle">5</text>
 <text x="906.6" y="592.0" font-size="11.5" font-weight="600" fill="#f0f6fc" text-anchor="middle">6.5.0</text>
-<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 24 nov. 2026 à 3 h 22 (heure de Paris)</text>
+<text x="32.0" y="620.0" font-size="12" font-weight="400" fill="#9198a1" text-anchor="start">Relevé toutes les heures depuis l'API GitHub · données du 25 nov. 2026 à 6 h 31 (heure de Paris)</text>
 </svg>
