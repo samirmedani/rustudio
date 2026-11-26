@@ -292,4 +292,16 @@ mod tests {
             assert!(y.iter().all(|v| v.abs() <= 1.0), "{}", preset.key);
         }
     }
+
+    #[test]
+    fn profil_radio_fm_skyrock_dense_et_sans_clipping() {
+        let fm = design(&dsp::preset_dsp("antenne"));
+        let doux = design(&dsp::preset_dsp("naturel"));
+        let quiet_voice = sine(220.0, -24.0, 0.5);
+        let loud_voice = sine(220.0, -2.0, 0.5);
+        // Radio FM remonte nettement les passages doux tout en plafonnant les pics sous -1 dBFS.
+        assert!(tail_db(&render(&fm, &quiet_voice), 0.15) > tail_db(&render(&doux, &quiet_voice), 0.15) + 3.0);
+        let peak = render(&fm, &loud_voice).iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(20.0 * (peak as f64).log10() <= CEILING_DB + 0.05, "pic FM trop haut : {peak}");
+    }
 }

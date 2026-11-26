@@ -299,9 +299,11 @@ pub struct Profile {
     pub deess: f64,
 }
 
-pub const PROFILES: [Profile; 6] = [
+pub const PROFILES: [Profile; 7] = [
     Profile { key: "naturel", alpha: 0.45, window: 3.5, warmth: 0.0, mud: 0.0, presence: 0.0, air: 0.0, floor: 0.8,
               comp: (14.0, 4, 2.0, 9, 13, 0.5), gate: (-4.0, Some(15.0), 20), deess: 0.6 },
+    Profile { key: "antenne", alpha: 0.75, window: 1.2, warmth: 4.0, mud: -3.0, presence: 3.5, air: 2.5, floor: 0.80,
+              comp: (5.0, 10, 8.0, 2, 10, 0.9), gate: (0.0, Some(24.0), 18), deess: 1.45 },
     Profile { key: "studio", alpha: 0.55, window: 2.5, warmth: 0.5, mud: -1.0, presence: 1.0, air: 1.0, floor: 0.85,
               comp: (11.0, 6, 3.0, 7, 12, 0.6), gate: (0.0, Some(20.0), 20), deess: 0.9 },
     Profile { key: "radio", alpha: 0.7, window: 1.5, warmth: 2.5, mud: -2.0, presence: 2.5, air: 1.5, floor: 0.85,

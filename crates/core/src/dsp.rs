@@ -116,15 +116,17 @@ pub struct Preset {
     pub dsp: fn() -> Dsp,
 }
 
-pub const MIC_PRESETS: [Preset; 7] = [
+pub const MIC_PRESETS: [Preset; 8] = [
     Preset { key: "brut", label: "Naturel", desc: "Aucun traitement : ta voix telle quelle. Active ensuite ce que tu veux.",
              dsp: || make_dsp([0; 6], (false, -59, 0, 0, 19), [0, 0, 1, 9, 0], 0) },
     Preset { key: "naturel", label: "Léger", desc: "Ta voix juste stabilisée, traitements doux.",
              dsp: || make_dsp([0; 6], default_gate(), default_comp(), 0) },
-    Preset { key: "studio", label: "Studio", desc: "Voix de studio, nette et posée. Faite pour les micros statiques.",
-             dsp: || make_dsp([-3, -2, -2, 0, 2, 1], (true, -45, 96, 0, 20), [-24, 8, 3, 11, 6], 35) },
+    Preset { key: "antenne", label: "Radio FM", desc: "Son dense, chaud et percutant comme à la radio (style Skyrock).",
+             dsp: || make_dsp([4, -3, -2, 0, 4, 3], (true, -48, 80, 0, 18), [-26, 10, 2, 10, 9], 45) },
     Preset { key: "radio", label: "Broadcast", desc: "Voix pleine et présente, comme à l’antenne.",
              dsp: || make_dsp([3, -2, -2, 0, 3, 2], (true, -48, 70, 0, 19), [-22, 9, 1, 9, 6], 30) },
+    Preset { key: "studio", label: "Studio", desc: "Voix de studio, nette et posée. Faite pour les micros statiques.",
+             dsp: || make_dsp([-3, -2, -2, 0, 2, 1], (true, -45, 96, 0, 20), [-24, 8, 3, 11, 6], 35) },
     Preset { key: "stream", label: "Stream", desc: "Claire et régulière, idéale en live.",
              dsp: || make_dsp([1, -1, -1, 1, 2, 2], (true, -45, 80, 0, 19), [-18, 8, 1, 9, 4], 20) },
     Preset { key: "podcast", label: "Podcast", desc: "Chaleureuse et posée pour les longues discussions.",
@@ -161,6 +163,7 @@ pub struct Fit {
 }
 pub fn preset_fit(name: &str) -> Option<Fit> {
     Some(match name {
+        "antenne" => Fit { gate: 0.0, att: None, comp: -5.0, makeup: 0.9 },
         "studio" => Fit { gate: 0.0, att: None, comp: 0.0, makeup: 0.7 },
         "radio" => Fit { gate: 0.0, att: None, comp: -3.0, makeup: 0.8 },
         "stream" => Fit { gate: 0.0, att: None, comp: -1.0, makeup: 0.7 },

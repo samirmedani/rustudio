@@ -979,7 +979,7 @@ impl Render for Mixer {
         let shell = self
             .shell(window, cx)
             .children(toast.map(|(ok, text)| ui::toast(ok, text)))
-            .children(wizard.map(|w| ui::modal_sized(w, 760.)))
+            .children(wizard.map(|w| ui::modal_sized(w, 820.)))
             .children(sheet.map(|s| ui::modal_sized(s, 640.)))
             .children(dialog.map(ui::modal));
         ui::keep_animating(window);

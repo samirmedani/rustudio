@@ -1,5 +1,17 @@
 # Nouveautés
 
+## 6.7.0 (26 novembre 2026)
+
+Rustudio 6.7.0 ajoute un parcours guidé pas à pas en 8 étapes pour régler ton micro de A à Z et introduit le profil Radio FM pour obtenir un vrai son d’antenne (style Skyrock).
+
+**Nouveau**
+- **Onboarding micro pas à pas en 8 étapes** : laisse-toi guider du placement du micro jusqu’au comparateur final Avant / Après, avec des explications simples sans jargon à chaque écran (micro et placement, mesure de 25 secondes, bilan vocal et gain, anti-bruit IA et noise gate, égaliseur en 4 curseurs humains, effet Radio FM, comparateur et conseils Discord / OBS).
+- **Profil Radio FM (style Skyrock)** : un nouveau préréglage calculé sur ta propre voix qui combine chaleur radio dans les graves, creux anti-carton dans les médiums, présence percutante, compression dense 5,6:1, de-esser renforcé et limiteur anti-saturation.
+
+**Amélioré**
+- **Réécoute Avant / Après à chaque étape** : compare instantanément ta voix brute enregistrée avec tes réglages en cours pendant que tu ajustes l’anti-bruit, le timbre et la compression radio.
+- **Navigation libre entre les étapes** : clique sur n’importe quelle étape de la barre supérieure ou conserve ta dernière mesure vocale pour affiner un réglage sans tout recommencer.
+
 ## 6.6.1 (26 novembre 2026)
 
 Rustudio 6.6.1 passe l’audio du firmware Rustudio en 24 bits / 48 kHz de bout en bout, supprime le souffle sur les silences et élimine les crépitements.
