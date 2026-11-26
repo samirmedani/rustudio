@@ -10,6 +10,14 @@ pub const VOICE: &str = "Chat";
 /// Nom Windows de la Mini sous firmware Rustudio : une sortie et un micro.
 pub const RUSTUDIO_DEVICE: &str = "Rustudio Mini Audio";
 
+/// Vrai si le peripherique Windows est une sortie audio exposee par le firmware Rustudio.
+pub fn is_rustudio_output(device: &str) -> bool {
+    device.eq_ignore_ascii_case(RUSTUDIO_DEVICE)
+        || device
+            .strip_prefix("Rustudio ")
+            .is_some_and(|c| ["Game", "Chat", "Music", "Sample"].contains(&c))
+}
+
 /// Nom de voie GoXLR d'une entree ou sortie Windows, et si elle appartient a la GoXLR. Firmware Rustudio :
 /// « Rustudio Mini Audio » porte System et le micro (Chat Mic), puis une sortie par voie a son nom.
 pub fn goxlr_channel(device: &str, name: String, capture: bool) -> (String, bool) {
@@ -20,6 +28,52 @@ pub fn goxlr_channel(device: &str, name: String, capture: bool) -> (String, bool
     } else {
         (name, device.to_lowercase().contains("goxlr"))
     }
+}
+
+/// Construit un WAVEFORMATEXTENSIBLE (40 octets) PCM 24 bits / 48 kHz stereo (format natif du firmware Rustudio).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn wav_ext_pcm24_48k() -> [u8; 40] {
+    let mut b = [0u8; 40];
+    b[0..2].copy_from_slice(&0xFFFEu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+    b[2..4].copy_from_slice(&2u16.to_le_bytes()); // nChannels
+    b[4..8].copy_from_slice(&48_000u32.to_le_bytes()); // nSamplesPerSec
+    b[8..12].copy_from_slice(&(48_000u32 * 6).to_le_bytes()); // nAvgBytesPerSec
+    b[12..14].copy_from_slice(&6u16.to_le_bytes()); // nBlockAlign
+    b[14..16].copy_from_slice(&24u16.to_le_bytes()); // wBitsPerSample
+    b[16..18].copy_from_slice(&22u16.to_le_bytes()); // cbSize
+    b[18..20].copy_from_slice(&24u16.to_le_bytes()); // wValidBitsPerSample
+    b[20..24].copy_from_slice(&3u32.to_le_bytes()); // SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT
+    b[24..40].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]); // PCM
+    b
+}
+
+/// Construit un WAVEFORMATEXTENSIBLE (40 octets) float 32 bits / 48 kHz stereo (format de mixage Windows).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn wav_ext_f32_48k() -> [u8; 40] {
+    let mut b = [0u8; 40];
+    b[0..2].copy_from_slice(&0xFFFEu16.to_le_bytes());
+    b[2..4].copy_from_slice(&2u16.to_le_bytes());
+    b[4..8].copy_from_slice(&48_000u32.to_le_bytes());
+    b[8..12].copy_from_slice(&(48_000u32 * 8).to_le_bytes());
+    b[12..14].copy_from_slice(&8u16.to_le_bytes());
+    b[14..16].copy_from_slice(&32u16.to_le_bytes());
+    b[16..18].copy_from_slice(&22u16.to_le_bytes());
+    b[18..20].copy_from_slice(&32u16.to_le_bytes());
+    b[20..24].copy_from_slice(&3u32.to_le_bytes());
+    b[24..40].copy_from_slice(&[3, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]); // IEEE_FLOAT
+    b
+}
+
+/// Verifie qu'un en-tete WAVEFORMATEX (18 octets minimum) correspond a du stereo 24 bits / 48 kHz.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn is_pcm24_48k_header(wf: &[u8]) -> bool {
+    if wf.len() < 16 {
+        return false;
+    }
+    let ch = u16::from_le_bytes([wf[2], wf[3]]);
+    let rate = u32::from_le_bytes([wf[4], wf[5], wf[6], wf[7]]);
+    let bits = u16::from_le_bytes([wf[14], wf[15]]);
+    ch == 2 && rate == 48_000 && bits == 24
 }
 
 #[derive(Clone, Debug)]
@@ -200,10 +254,68 @@ mod win {
         .unwrap_or([None, None, None, None])
     }
 
+    /// Liste les identifiants des sorties actives exposees par le firmware Rustudio.
+    fn active_rustudio_outputs() -> Vec<String> {
+        let mut out = vec![];
+        let hk = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let Ok(root) = hk.open_subkey_with_flags(format!(r"{BASE}\Render"), KEY_READ | KEY_WOW64_64KEY) else { return out };
+        for guid in root.enum_keys().flatten() {
+            let Ok(k) = root.open_subkey_with_flags(&guid, KEY_READ | KEY_WOW64_64KEY) else { continue };
+            if k.get_value::<u32, _>("DeviceState").unwrap_or(0) != 1 {
+                continue;
+            }
+            let Ok(p) = root.open_subkey_with_flags(format!(r"{guid}\Properties"), KEY_READ | KEY_WOW64_64KEY) else { continue };
+            let iface = p.get_value::<String, _>(IFACE).unwrap_or_default();
+            if is_rustudio_output(&iface) {
+                out.push(format!("{{0.0.0.00000000}}.{guid}"));
+            }
+        }
+        out
+    }
+
+    /// Bascule en 24 bits / 48 kHz toute sortie du firmware Rustudio restee en cache 16 bits dans Windows.
+    /// Sans effet si la sortie est deja en 24 bits / 48 kHz.
+    pub fn ensure_rustudio_24bit() -> i32 {
+        let ids = active_rustudio_outputs();
+        if ids.is_empty() {
+            return 0;
+        }
+        com(move || unsafe {
+            let Ok(p) = CoCreateInstance::<_, IPolicyConfig>(&CLSID_POLICY_CONFIG, None, CLSCTX_ALL) else { return 0 };
+            let mut dev_fmt = wav_ext_pcm24_48k();
+            let mut mix_fmt = wav_ext_f32_48k();
+            let mut changed = 0;
+            for id in ids {
+                let w: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
+                let mut cur: *mut core::ffi::c_void = core::ptr::null_mut();
+                let already_24 = if p.GetDeviceFormat(PCWSTR(w.as_ptr()), 0, &mut cur).is_ok() && !cur.is_null() {
+                    let ok = is_pcm24_48k_header(core::slice::from_raw_parts(cur as *const u8, 16));
+                    CoTaskMemFree(Some(cur));
+                    ok
+                } else {
+                    false
+                };
+                if !already_24
+                    && p.SetDeviceFormat(
+                        PCWSTR(w.as_ptr()),
+                        dev_fmt.as_mut_ptr() as *mut core::ffi::c_void,
+                        mix_fmt.as_mut_ptr() as *mut core::ffi::c_void,
+                    )
+                    .is_ok()
+                {
+                    changed += 1;
+                }
+            }
+            changed
+        })
+        .unwrap_or(0)
+    }
+
     /// Corrige seulement ce qui est faux : sortie hors GoXLR -> System (Chat pour les communications),
     /// entree autre que Chat Mic -> Chat Mic. Un choix deja sur la GoXLR (Jeu, Musique...) est garde.
     /// Renvoie le nombre de roles changes, -1 si la GoXLR n'expose pas ses voies.
     pub fn fix() -> i32 {
+        let _ = ensure_rustudio_24bit();
         let (render, capture) = (active(false), active(true));
         let sound = render.iter().find(|x| x.goxlr && x.name == SOUND).cloned();
         let voice = render.iter().find(|x| x.goxlr && x.name == VOICE).cloned().or(sound.clone());
@@ -247,6 +359,7 @@ pub fn inventory() -> Value {
 pub fn status() -> Value {
     #[cfg(windows)]
     {
+        let _ = win::ensure_rustudio_24bit();
         status_from(&win::active(false), &win::active(true), win::defaults())
     }
     #[cfg(not(windows))]
@@ -335,5 +448,17 @@ mod tests {
         let ok = status_from(&render, &capture, [Some("r1".into()), Some("r1".into()), Some("c1".into()), Some("c1".into())]);
         assert_eq!(ok["goxlr"], true);
         assert_eq!(ok["issues"], json!([]));
+    }
+    #[test]
+    fn format_24_bits_48khz_detecte() {
+        let fmt24 = wav_ext_pcm24_48k();
+        assert!(is_pcm24_48k_header(&fmt24));
+        let mut fmt16 = fmt24;
+        fmt16[14..16].copy_from_slice(&16u16.to_le_bytes());
+        assert!(!is_pcm24_48k_header(&fmt16));
+        assert!(!is_pcm24_48k_header(&wav_ext_f32_48k()));
+        assert!(is_rustudio_output("Rustudio Mini Audio"));
+        assert!(is_rustudio_output("Rustudio Sample"));
+        assert!(!is_rustudio_output("TC-Helicon GoXLR Mini"));
     }
 }

@@ -521,21 +521,29 @@ pub(crate) mod win {
     unsafe fn open_mode(dev: &IMMDevice, flags: u32, exclusive: bool) -> Result<(IAudioClient, Fmt), String> {
         let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
         if exclusive {
-            let mut ext = [0u8; 40];
-            ext[0..2].copy_from_slice(&0xFFFEu16.to_le_bytes());
-            ext[2..4].copy_from_slice(&2u16.to_le_bytes());
-            ext[4..8].copy_from_slice(&48_000u32.to_le_bytes());
-            ext[8..12].copy_from_slice(&384_000u32.to_le_bytes());
-            ext[12..14].copy_from_slice(&8u16.to_le_bytes());
-            ext[14..16].copy_from_slice(&32u16.to_le_bytes());
-            ext[16..18].copy_from_slice(&22u16.to_le_bytes());
-            ext[18..20].copy_from_slice(&24u16.to_le_bytes());
-            ext[20..24].copy_from_slice(&3u32.to_le_bytes());
-            ext[24..40].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]);
+            let mut ext32 = [0u8; 40];
+            ext32[0..2].copy_from_slice(&0xFFFEu16.to_le_bytes());
+            ext32[2..4].copy_from_slice(&2u16.to_le_bytes());
+            ext32[4..8].copy_from_slice(&48_000u32.to_le_bytes());
+            ext32[8..12].copy_from_slice(&384_000u32.to_le_bytes());
+            ext32[12..14].copy_from_slice(&8u16.to_le_bytes());
+            ext32[14..16].copy_from_slice(&32u16.to_le_bytes());
+            ext32[16..18].copy_from_slice(&22u16.to_le_bytes());
+            ext32[18..20].copy_from_slice(&24u16.to_le_bytes());
+            ext32[20..24].copy_from_slice(&3u32.to_le_bytes());
+            ext32[24..40].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]);
+            if client
+                .Initialize(windows::Win32::Media::Audio::AUDCLNT_SHAREMODE_EXCLUSIVE, flags, 2_000_000, 0, ext32.as_ptr() as *const WAVEFORMATEX, None)
+                .is_ok()
+            {
+                return Ok((client, Fmt { float: false, rate: 48_000, block: 8, channels: 2, block_bits: 32 }));
+            }
+            // Firmware Rustudio 24 bits : PCM 24 bits compacte (3 octets par echantillon, 48 kHz).
+            let ext24 = crate::audio::wav_ext_pcm24_48k();
             client
-                .Initialize(windows::Win32::Media::Audio::AUDCLNT_SHAREMODE_EXCLUSIVE, flags, 2_000_000, 0, ext.as_ptr() as *const WAVEFORMATEX, None)
+                .Initialize(windows::Win32::Media::Audio::AUDCLNT_SHAREMODE_EXCLUSIVE, flags, 2_000_000, 0, ext24.as_ptr() as *const WAVEFORMATEX, None)
                 .map_err(|e| format!("mode exclusif : {e}"))?;
-            return Ok((client, Fmt { float: false, rate: 48_000, block: 8, channels: 2, block_bits: 32 }));
+            return Ok((client, Fmt { float: false, rate: 48_000, block: 6, channels: 2, block_bits: 24 }));
         }
         let fmt = client.GetMixFormat().map_err(|e| e.to_string())?;
         let wf: WAVEFORMATEX = std::ptr::read_unaligned(fmt);

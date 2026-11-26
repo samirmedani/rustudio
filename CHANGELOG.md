@@ -1,5 +1,16 @@
 # Nouveautés
 
+## 6.6.1 (26 novembre 2026)
+
+Rustudio 6.6.1 passe l’audio du firmware Rustudio en 24 bits / 48 kHz de bout en bout, supprime le souffle sur les silences et élimine les crépitements.
+
+**Amélioré**
+- **Audio 24 bits / 48 kHz sur les cinq sorties** : les sorties Windows du firmware Rustudio passent automatiquement en 24 bits / 48 kHz et la latence cible est divisée par deux (10,7 ms), sans souffle numérique lorsque la musique s’arrête.
+- **Test audio exclusif compatible 24 bits** : le diagnostic des voies reconnaît aussi le format 24 bits compacté du firmware Rustudio.
+
+**Corrigé**
+- **Fin des crépitements et des répétitions en fin de flux** : la boucle USB traite les paquets audio avant le mixage, découpe le traitement en demi-blocs et laisse le rattrapage continu absorber les micro-écarts sans jamais répéter d’échantillon.
+
 ## 6.6.0 — 25 novembre 2026
 
 Rustudio 6.6.0 épure toute l’interface, refait l’assistant micro de A à Z avec suppression du bruit par IA, ajoute le réglage d’intensité des styles casque et stabilise le son du firmware Rustudio.
