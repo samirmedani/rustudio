@@ -51,6 +51,10 @@ pub enum Page {
     KeyboardShortcuts,
     KeyboardInfo,
     KeyboardMacros,
+    Webcam,
+    WebcamImage,
+    WebcamOptics,
+    WebcamInfo,
     WindowsAudio,
     Catalogue,
     Versions,
@@ -73,6 +77,7 @@ pub(crate) enum Space {
     GoXlr,
     Mouse,
     Keyboard,
+    Webcam,
 }
 
 impl Page {
@@ -97,6 +102,10 @@ impl Page {
             "keyboard-shortcuts" => Page::KeyboardShortcuts,
             "keyboard-info" => Page::KeyboardInfo,
             "keyboard-macros" => Page::KeyboardMacros,
+            "webcam" => Page::Webcam,
+            "webcam-image" => Page::WebcamImage,
+            "webcam-optics" => Page::WebcamOptics,
+            "webcam-info" => Page::WebcamInfo,
             "mic" => Page::Go(Section::Microphone),
             "headphones" => Page::Go(Section::Headphones),
             "routing" => Page::Go(Section::Routing),
@@ -108,11 +117,11 @@ impl Page {
     }
     /// Nom de la page pour `--page`, l'inverse de `from_name`.
     pub fn name(self) -> Option<&'static str> {
-        const NAMES: [&str; 24] = [
+        const NAMES: [&str; 28] = [
             "devices", "profiles", "modules", "versions", "help", "settings", "audio", "mixer", "mouse",
             "mouse-sensitivity", "mouse-sensor", "mouse-power", "keyboard", "keyboard-settings", "keyboard-paint",
-            "keyboard-shortcuts", "keyboard-info", "keyboard-macros", "mic", "headphones", "routing", "lighting",
-            "scenes", "diagnostic",
+            "keyboard-shortcuts", "keyboard-info", "keyboard-macros", "webcam", "webcam-image", "webcam-optics",
+            "webcam-info", "mic", "headphones", "routing", "lighting", "scenes", "diagnostic",
         ];
         NAMES.into_iter().find(|n| Self::from_name(n) == Some(self))
     }
@@ -121,11 +130,13 @@ impl Page {
             Page::Mixer | Page::Go(_) => Some(Space::GoXlr),
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => Some(Space::Mouse),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo | Page::KeyboardMacros => Some(Space::Keyboard),
+            Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => Some(Space::Webcam),
             _ => None,
         }
     }
     pub(crate) fn is_mouse(self) -> bool { self.space() == Some(Space::Mouse) }
     pub(crate) fn is_keyboard(self) -> bool { self.space() == Some(Space::Keyboard) }
+    pub(crate) fn is_webcam(self) -> bool { self.space() == Some(Space::Webcam) }
     fn title(self) -> &'static str {
         match self {
             Page::Devices => "Mes appareils",
@@ -146,6 +157,10 @@ impl Page {
             Page::KeyboardShortcuts => "Raccourcis et mode",
             Page::KeyboardInfo => "Ton MK770",
             Page::KeyboardMacros => "Macros",
+            Page::Webcam => "Ma webcam",
+            Page::WebcamImage => "Image et couleur",
+            Page::WebcamOptics => "Optique et cadrage",
+            Page::WebcamInfo => "Ta C920",
             Page::Go(s) => s.label(),
         }
     }
@@ -169,6 +184,10 @@ impl Page {
             Page::KeyboardShortcuts => "Raccourcis Fn et aide pour le mode Windows ou macOS.",
             Page::KeyboardInfo => "Connexion, firmware et caractéristiques du clavier.",
             Page::KeyboardMacros => "Expérimental · Crée tes séquences de touches et enregistre-les dans ton clavier.",
+            Page::Webcam => "Préréglages, maintien anti-réinitialisation et réglages complets de ta C920.",
+            Page::WebcamImage => "Luminosité, contraste, saturation, netteté, balance des blancs et 50 / 60 Hz.",
+            Page::WebcamOptics => "Exposition manuelle, compensation basse lumière, autofocus, zoom et contrôles XU.",
+            Page::WebcamInfo => "Révision USB, formats vidéo, unités XU et réinitialisation d’usine.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",
@@ -204,6 +223,12 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
             (Page::KeyboardShortcuts, Icon::Help, "Raccourcis et mode"),
             (Page::KeyboardInfo, Icon::Keyboard, "Informations"),
         ],
+        Space::Webcam => &[
+            (Page::Webcam, Icon::Camera, "Préréglages et vue"),
+            (Page::WebcamImage, Icon::Sun, "Image et couleur"),
+            (Page::WebcamOptics, Icon::Sliders, "Optique et cadrage"),
+            (Page::WebcamInfo, Icon::Settings, "Fiche C920"),
+        ],
     }
 }
 
@@ -212,6 +237,7 @@ fn module_icon(id: &str) -> Icon {
         "goxlr-mini" => Icon::Sliders,
         "attack-shark-r5-ultra" => Icon::Mouse,
         "cooler-master-mk770" => Icon::Keyboard,
+        "logitech-c920" => Icon::Camera,
         _ => Icon::Grid,
     }
 }
@@ -220,6 +246,7 @@ fn module_page(id: &str) -> Option<Page> {
         "goxlr-mini" => Some(Page::Mixer),
         "attack-shark-r5-ultra" => Some(Page::Mouse),
         "cooler-master-mk770" => Some(Page::Keyboard),
+        "logitech-c920" => Some(Page::Webcam),
         _ => None,
     }
 }
@@ -241,6 +268,11 @@ fn capability(id: &str) -> &str {
         "sensor" => "Capteur",
         "lighting-effects" => "Effets lumineux",
         "per-key" => "Couleur par touche",
+        "image" => "Image",
+        "optics" => "Optique",
+        "presets" => "Préréglages",
+        "lock" => "Maintien",
+        "led" => "LED / XU",
         other => other,
     }
 }
@@ -321,6 +353,9 @@ fn glance_row(module: &str, glance: &crate::backend::Glance) -> Option<Div> {
         }
         "cooler-master-mk770" => {
             row = row.child(item(Icon::Sparkles, ui::ACCENT, glance.keyboard_effect.clone()?));
+        }
+        "logitech-c920" => {
+            row = row.child(item(Icon::Camera, ui::ACCENT, glance.webcam_summary.clone()?));
         }
         _ => return None,
     }
@@ -928,6 +963,7 @@ impl Mixer {
             Some(Space::GoXlr) => format!("GOXLR MINI · {}", suffix("goxlr-mini").to_uppercase()),
             Some(Space::Mouse) => format!("R5 ULTRA · {}", suffix("attack-shark-r5-ultra").to_uppercase()),
             Some(Space::Keyboard) => format!("MK770 · {}", suffix("cooler-master-mk770").to_uppercase()),
+            Some(Space::Webcam) => format!("LOGITECH C920 · {}", suffix("logitech-c920").to_uppercase()),
             None if matches!(self.page, Page::Devices | Page::Profiles) => "TON ESPACE PERSONNEL".into(),
             None if self.page == Page::WindowsAudio => "CE PC".into(),
             None => "RUSTUDIO".into(),
@@ -951,6 +987,7 @@ impl Mixer {
             }
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => acts = acts.child(self.mouse_actions(cx)),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => acts = acts.child(self.keyboard_actions(cx)),
+            Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => acts = acts.child(self.webcam_actions(cx)),
             _ => {}
         }
         if self.page.space() == Some(Space::GoXlr)
@@ -1005,6 +1042,7 @@ impl Mixer {
             Some(Space::GoXlr) => self.module("goxlr-mini"),
             Some(Space::Mouse) => self.module("attack-shark-r5-ultra"),
             Some(Space::Keyboard) => self.module("cooler-master-mk770"),
+            Some(Space::Webcam) => self.module("logitech-c920"),
             None => None,
         };
         let back = self.history.last().copied().map(|previous| {
@@ -1121,6 +1159,7 @@ impl Mixer {
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => self.mouse_view(window, cx).into_any_element(),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(page_width(window), cx).into_any_element(),
             Page::KeyboardMacros => self.macros_view(window, cx).into_any_element(),
+            Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => self.webcam_view(window, cx).into_any_element(),
             Page::WindowsAudio => self.win_audio(window,cx).into_any_element(),
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, window, cx).into_any_element(),
             Page::Go(section) => self.go_controls(section, page_width(window), cx).into_any_element(),

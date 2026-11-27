@@ -44,6 +44,7 @@ pub struct Mixer {
     pub(crate) page: Page,
     pub(crate) mouse: crate::mouse::MousePage,
     pub(crate) keyboard: crate::keyboard::KeyboardPage,
+    pub(crate) webcam: crate::webcam::WebcamPage,
     pub(crate) macros: crate::macros::Editor,
     pub(crate) mouse_focus: Vec<FocusHandle>,
     pub(crate) go: crate::goxlr::GoPage,
@@ -189,6 +190,7 @@ impl Mixer {
             perf: Default::default(),
             mouse: crate::mouse::MousePage::default(),
             keyboard: crate::keyboard::KeyboardPage::default(),
+            webcam: crate::webcam::WebcamPage::default(),
             macros: crate::macros::Editor::new(store.dir().join("macros"), cx),
             mouse_focus: (0..12).map(|_| cx.focus_handle()).collect(),
             go: crate::goxlr::GoPage::default(),
@@ -330,6 +332,7 @@ impl Mixer {
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page.is_mouse());
         self.client.set_keyboard_visible(page.is_keyboard());
+        self.client.set_webcam_visible(page.is_webcam());
         self.client.set_go_visible(matches!(page, Page::Go(_)));
         self.client.set_level_visible(page == Page::Go(crate::goxlr::Section::Microphone));
         self.client.set_latency_visible(page == Page::Go(crate::goxlr::Section::Diagnostic));
@@ -423,6 +426,10 @@ impl Mixer {
             Event::Keyboard(view) => {
                 self.keyboard.receive(view);
                 force_render = self.page.is_keyboard();
+            }
+            Event::Webcam(view) => {
+                self.webcam.receive(view);
+                force_render = self.page.is_webcam();
             }
             Event::Done(seq, result) => {
                 if self.profile_request == Some(seq) {

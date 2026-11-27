@@ -113,6 +113,7 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                         .split('&')
                         .find_map(|q| q.strip_prefix("since="))
                         .and_then(|s| s.parse::<f64>().ok())
+                        .filter(|t| t.is_finite())
                         .unwrap_or_else(|| crate::config::now_epoch() - 86400.0);
                     let mut v = if ctl.simulated() {
                         crate::glitches::unavailable(since, true)
@@ -159,10 +160,17 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                     Err(ApiError { status, msg }) => json_resp(req, &json!({"error": msg}), status),
                 };
             }
-            let mut body = String::new();
-            if req.as_reader().take(4_000_000).read_to_string(&mut body).is_err() {
+            const MAX_JSON_BODY: usize = 4_000_000;
+            let mut raw = Vec::new();
+            if req.as_reader().take(MAX_JSON_BODY as u64 + 1).read_to_end(&mut raw).is_err() {
                 return json_resp(req, &json!({"error": "corps illisible"}), 400);
             }
+            if raw.len() > MAX_JSON_BODY {
+                return json_resp(req, &json!({"error": "corps trop volumineux"}), 413);
+            }
+            let Ok(body) = String::from_utf8(raw) else {
+                return json_resp(req, &json!({"error": "corps illisible"}), 400);
+            };
             let p: Value = if body.trim().is_empty() {
                 json!({})
             } else {

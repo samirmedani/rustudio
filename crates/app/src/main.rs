@@ -18,6 +18,8 @@ mod library;
 mod mixer;
 #[cfg(any(windows, unix))]
 mod mouse;
+#[cfg(any(windows, unix))]
+mod webcam;
 #[cfg(any(windows, unix, test))]
 mod profiles;
 #[cfg(any(windows, unix))]
@@ -187,6 +189,7 @@ fn run() -> Result<(), String> {
         desktop::verify_profiles(&client)?;
         mouse::verify(&client)?;
         keyboard::verify(&client)?;
+        webcam::verify(&client)?;
         macros::verify(&client)?;
         return goxlr::verify(&client);
     }

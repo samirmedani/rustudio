@@ -40,22 +40,53 @@ pub fn windows_label(build: &str, ubr: u32, display: &str) -> String {
     s
 }
 
+fn fold_with_spans(text: &str) -> (String, Vec<(usize, usize)>) {
+    let mut lower = String::with_capacity(text.len());
+    let mut spans = Vec::with_capacity(text.len());
+    for (orig_start, ch) in text.char_indices() {
+        let orig_end = orig_start + ch.len_utf8();
+        for lc in ch.to_lowercase() {
+            lower.push(lc);
+            for _ in 0..lc.len_utf8() {
+                spans.push((orig_start, orig_end));
+            }
+        }
+    }
+    (lower, spans)
+}
+
 fn replace_ci(text: &str, needle: &str, with: &str) -> String {
     if needle.len() < 3 {
         return text.to_string();
     }
-    let (lower, low_needle) = (text.to_lowercase(), needle.to_lowercase());
-    if lower.len() != text.len() {
-        return text.replace(needle, with);
+    let low_needle = needle.to_lowercase();
+    if low_needle.is_empty() {
+        return text.to_string();
     }
-    let mut out = String::new();
-    let mut i = 0;
-    while let Some(j) = lower[i..].find(&low_needle) {
-        out.push_str(&text[i..i + j]);
+    let (lower, spans) = fold_with_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut low_pos = 0usize;
+    let mut orig_pos = 0usize;
+    while let Some(rel) = lower[low_pos..].find(&low_needle) {
+        let m_start = low_pos + rel;
+        let m_end = m_start + low_needle.len();
+        let (orig_start, orig_end) = (spans[m_start].0, spans[m_end - 1].1);
+        if orig_start < orig_pos {
+            low_pos = m_start + 1;
+            while low_pos < lower.len() && !lower.is_char_boundary(low_pos) {
+                low_pos += 1;
+            }
+            continue;
+        }
+        out.push_str(&text[orig_pos..orig_start]);
         out.push_str(with);
-        i += j + needle.len();
+        orig_pos = orig_end;
+        low_pos = m_end;
+        while low_pos < spans.len() && spans[low_pos].0 < orig_end {
+            low_pos += 1;
+        }
     }
-    out.push_str(&text[i..]);
+    out.push_str(&text[orig_pos..]);
     out
 }
 
@@ -67,26 +98,41 @@ fn is_delim(c: char) -> bool {
 /// jusqu'au separateur suivant. spaces : un espace termine le segment (faux pour un nom d'utilisateur, qui peut
 /// en contenir).
 fn mask_after(text: &str, prefix: &str, stop: &[char], spaces: bool) -> String {
-    let lower = text.to_lowercase();
-    if lower.len() != text.len() {
+    let low_prefix = prefix.to_lowercase();
+    if low_prefix.is_empty() {
         return text.to_string();
     }
-    let low_prefix = prefix.to_lowercase();
-    let mut out = String::new();
-    let mut i = 0;
-    while let Some(j) = lower[i..].find(&low_prefix) {
-        let start = i + j + prefix.len();
-        out.push_str(&text[i..start]);
-        let rest = &text[start..];
+    let (lower, spans) = fold_with_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut low_pos = 0usize;
+    let mut orig_pos = 0usize;
+    while let Some(rel) = lower[low_pos..].find(&low_prefix) {
+        let m_start = low_pos + rel;
+        let m_end = m_start + low_prefix.len();
+        let orig_start = spans[m_start].0;
+        let after_prefix = spans[m_end - 1].1;
+        if orig_start < orig_pos {
+            low_pos = m_start + 1;
+            while low_pos < lower.len() && !lower.is_char_boundary(low_pos) {
+                low_pos += 1;
+            }
+            continue;
+        }
+        out.push_str(&text[orig_pos..after_prefix]);
+        let rest = &text[after_prefix..];
         let end = rest
             .find(|c: char| stop.contains(&c) || if spaces { is_delim(c) } else { matches!(c, '"' | '\'' | ',' | ';' | '|' | '\n' | '\r') })
             .unwrap_or(rest.len());
         if end > 0 {
             out.push('…');
         }
-        i = start + end;
+        orig_pos = after_prefix + end;
+        low_pos = m_end;
+        while low_pos < spans.len() && spans[low_pos].0 < orig_pos {
+            low_pos += 1;
+        }
     }
-    out.push_str(&text[i..]);
+    out.push_str(&text[orig_pos..]);
     out
 }
 
@@ -200,7 +246,7 @@ pub fn bug_url(repo: &str, version: &str, windows: &str) -> String {
 /// Ce qui identifie ce PC et ses appareils, a retirer de tout texte du diagnostic.
 fn secrets(ctl: &Ctl) -> Vec<String> {
     let mut v: Vec<String> = vec![];
-    if let Some(s) = ctl.dev_info.lock().unwrap().serial.clone() {
+    if let Some(s) = ctl.dev_info_lock().serial.clone() {
         v.push(s);
     }
     for k in ["COMPUTERNAME", "USERNAME", "USERDOMAIN"] {
@@ -221,7 +267,7 @@ pub fn support(ctl: &Ctl) -> Value {
     let anon = |s: &str| anonymize(s, &secrets);
     let h = ctl.health();
     let windows = if ctl.simulated() { "Démonstration".into() } else { windows_version() };
-    let repo = ctl.updater.ucfg.lock().unwrap().repo.clone();
+    let repo = ctl.updater.ucfg.lock().unwrap_or_else(|e| e.into_inner()).repo.clone();
     let u = ctl.updater.brief();
     let devices: Vec<Value> = ctl.modules_snapshot()["devices"]
         .as_array()
@@ -311,5 +357,17 @@ mod tests {
     fn formulaire_de_bug_prerempli() {
         let u = bug_url("samirmedani/rustudio", "5.6.12", "Windows 11 25H2 (build 26200.7019)");
         assert_eq!(u, "https://github.com/samirmedani/rustudio/issues/new?template=bug.yml&version=5.6.12&windows=Windows%2011%2025H2%20%28build%2026200.7019%29");
+    }
+
+    #[test]
+    fn anonymisation_unicode_longueur_variable() {
+        // İ (2 -> 3 octets en minuscule) et ẞ (3 -> 2 octets) ne doivent jamais desactiver le masquage ni paniquer.
+        let users = "Users";
+        let line = format!(r"İ ẞ Lecture C:\{users}\Alex Martin\cfg.json sur pc-exemple, SÉRIE SNTEST999 ok");
+        let a = anonymize(&line, &["PC-EXEMPLE".into()]);
+        assert!(!a.contains("Alex Martin"), "chemin utilisateur fuite : {a}");
+        assert!(!a.contains("SNTEST999"), "numero de serie fuite : {a}");
+        assert!(!a.to_lowercase().contains("pc-exemple"), "nom de PC fuite : {a}");
+        assert!(a.contains(MASK), "{a}");
     }
 }

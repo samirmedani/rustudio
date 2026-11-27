@@ -64,7 +64,7 @@ fn index_ms(table: &[u32], index: i32) -> f64 {
 pub fn design(d: &Dsp) -> Params {
     let mut p = Params::default();
     for (n, m) in MINI_EQ.iter().enumerate() {
-        let gain = *d.eq.get(m.band).unwrap_or(&0) as f64;
+        let gain = (*d.eq.get(m.band).unwrap_or(&0) as f64).clamp(-9.0, 9.0);
         if gain == 0.0 {
             continue;
         }
@@ -84,12 +84,12 @@ pub fn design(d: &Dsp) -> Params {
         p.gate_hold = (0.080 * CONTROL_HZ) as i32;
     }
     let c = &d.comp;
-    if c.ratio > 0 {
+    if c.ratio > 0 || c.makeup != 0 {
         let ratio = RATIOS[c.ratio.clamp(0, 14) as usize];
         p.flags |= micdsp::FLAG_COMP;
         p.comp_threshold = db256(c.threshold as f64);
         p.comp_slope = ((1.0 - 1.0 / ratio) * 65536.0).round() as i32;
-        p.comp_makeup = db256(c.makeup as f64);
+        p.comp_makeup = db256(c.makeup.clamp(-6, 24) as f64);
         p.comp_attack = smoothing(index_ms(&COMP_ATTACK_MS, c.attack).max(0.5));
         p.comp_release = smoothing(index_ms(&COMP_RELEASE_MS, c.release));
     }
@@ -120,7 +120,8 @@ pub fn render(p: &Params, samples: &[f32]) -> Vec<f32> {
     for chunk in samples.chunks(BLOCK) {
         let mut block = [0i32; BLOCK];
         for (slot, &x) in block.iter_mut().zip(chunk) {
-            *slot = (x.clamp(-1.0, 1.0) as f64 * micdsp::FULL as f64).round() as i32;
+            let safe = if x.is_finite() { x.clamp(-1.0, 1.0) } else { 0.0 };
+            *slot = (safe as f64 * micdsp::FULL as f64).round() as i32;
         }
         chain.process(p, &mut block);
         out.extend(block.iter().take(chunk.len()).map(|&y| (y as f64 / micdsp::FULL as f64) as f32));
@@ -303,5 +304,38 @@ mod tests {
         assert!(tail_db(&render(&fm, &quiet_voice), 0.15) > tail_db(&render(&doux, &quiet_voice), 0.15) + 3.0);
         let peak = render(&fm, &loud_voice).iter().fold(0f32, |m, v| m.max(v.abs()));
         assert!(20.0 * (peak as f64).log10() <= CEILING_DB + 0.05, "pic FM trop haut : {peak}");
+    }
+
+    #[test]
+    fn biquads_extremes_stables_et_echantillons_non_finis_filtres() {
+        let mut d = neutral();
+        d.eq.insert("90".into(), 9);
+        d.eq_freq.insert("90".into(), 30.0);
+        d.eq.insert("250".into(), -9);
+        d.eq_freq.insert("250".into(), 100.0);
+        d.eq.insert("8000".into(), 9);
+        d.eq_freq.insert("8000".into(), 18000.0);
+        d.comp = dsp::Comp { threshold: -40, ratio: 14, attack: 0, release: 0, makeup: 24 };
+        d.deesser = 100;
+        let p = design(&d);
+        let mut x = sine(180.0, -0.5, 0.5);
+        x[10] = f32::NAN;
+        x[11] = f32::INFINITY;
+        x[12] = f32::NEG_INFINITY;
+        let y = render(&p, &x);
+        assert_eq!(y.len(), x.len());
+        assert!(y.iter().all(|v| v.is_finite() && v.abs() <= 1.0));
+        let peak = y.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(20.0 * (peak as f64).log10() <= CEILING_DB + 0.05, "pic non limite : {peak}");
+    }
+
+    #[test]
+    fn compresseur_ratio_un_applique_quand_meme_la_compensation() {
+        let mut d = neutral();
+        d.comp = dsp::Comp { threshold: -20, ratio: 0, attack: 1, release: 9, makeup: 6 };
+        let p = design(&d);
+        assert!(p.flags & micdsp::FLAG_COMP != 0 && p.flags & micdsp::FLAG_LIMIT != 0);
+        let out = tail_db(&render(&p, &sine(500.0, -24.0, 0.4)), 0.1);
+        assert!((out - (-18.0)).abs() < 0.15, "compensation seule attendue a -18 dB, obtenu {out}");
     }
 }

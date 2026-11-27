@@ -16,7 +16,8 @@ impl Mixer {
     pub fn settings_data(client: &crate::backend::Client, page: Page) -> Result<Value, String> {
         if page == Page::Settings {
             let state = client.get("/api/state")?;
-            return Ok(json!({"prefs": state["state"]["prefs"], "startup": session::startup_enabled(), "connected": state["connected"]}));
+            let app_routes = rustudio_windows_desktop::app_routes::enabled(&rustudio_windows_desktop::app_routes::default_pref());
+            return Ok(json!({"prefs": state["state"]["prefs"], "startup": session::startup_enabled(), "app_routes": app_routes, "connected": state["connected"]}));
         }
         if !client.is_live() {
             return Ok(json!({"update": {"current": "Démonstration", "release_build": false, "status": "dev"},
@@ -208,7 +209,7 @@ impl Mixer {
         }
         if self.client.is_live() {
             use rustudio_windows_desktop::app_routes;
-            let routes = app_routes::enabled(&app_routes::default_pref());
+            let routes = data["app_routes"] != false;
             general = general.child(ui::list_row(
                 Some((Icon::Route, ui::ACCENT)),
                 "Chaque appli sur sa voie",

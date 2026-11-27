@@ -1219,3 +1219,96 @@ fn temps_de_reponse_usb_publie() {
     let last = b.ctl.live_snapshot(false)["usb_reply"]["last_ms"].as_f64().unwrap();
     assert!(last >= 19.0, "la fausse GoXLR répond après 20 ms : {last}");
 }
+
+#[test]
+fn raw_refuse_hex_invalide_et_non_ascii_sans_paniquer() {
+    let b = Bench::new();
+    for bad in [
+        json!({"command_id": "0x0", "body_hex": "é"}),
+        json!({"command_id": "0x0", "body_hex": "abc"}),
+        json!({"command_id": "0x0", "body_hex": "zzzz"}),
+        json!({"command_id": "0x0", "body_hex": "00".repeat(9000)}),
+    ] {
+        let e = b.ctl.act("raw", &bad).unwrap_err();
+        assert_eq!(e.status, 400, "{bad}: {e:?}");
+    }
+}
+
+#[test]
+fn actions_ephemeres_ne_sauvent_pas_et_expirent_hors_ligne() {
+    let mut b = Bench::new();
+    let c = b.ctl.clone();
+    c.save_if_dirty();
+    assert!(!c.lock().save_dirty);
+    let v_before = c.version();
+    // mic-default et hp-default identiques (None -> None) ne doivent ni changer version ni salir save_dirty
+    b.act("mic-default", json!({"device": "invalide"}));
+    b.act("hp-default", json!({"channel": "Inconnue"}));
+    assert_eq!(c.version(), v_before);
+    assert!(!c.lock().save_dirty);
+    // actions ephemeres : changent la version live mais ne salissent pas state.json
+    b.act("mic-ab", json!({"bypass": true, "seconds": 10}));
+    b.act("sound-test", json!({"seconds": 10}));
+    b.act("mic-listen", json!({"seconds": 10}));
+    b.act("job-cancel", json!({}));
+    assert!(!c.lock().save_dirty, "les actions ephemeres ne doivent pas reecrire state.json");
+    // expiration propre meme hors ligne (past Instant), boucle arretee pour eviter toute course avec device_loop
+    b.stop_loop();
+    let past = std::time::Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(std::time::Instant::now);
+    {
+        let mut g = c.lock();
+        g.listen_until = Some(past);
+        g.sound_test_until = Some(past);
+        g.ab_until = Some(past);
+        assert!(!g.listening());
+        assert!(!g.sound_testing());
+        assert!(!g.dsp_bypassed());
+    }
+    assert_eq!(c.live_snapshot(false)["sound_test"], json!(false));
+    assert!(c.lock().expire_ephemeral());
+    assert!(c.lock().listen_until.is_none() && c.lock().sound_test_until.is_none() && c.lock().ab_until.is_none());
+}
+
+#[test]
+fn sauvegarde_concurrente_state_json_reste_valide() {
+    let b = Bench::new();
+    let c = b.ctl.clone();
+    let mut threads = vec![];
+    for t in 0..6 {
+        let ctl = c.clone();
+        threads.push(std::thread::spawn(move || {
+            for i in 0..15 {
+                let _ = ctl.act("volume", &json!({"channel": "Music", "value": (t * 20 + i) % 256}));
+                ctl.save_if_dirty();
+            }
+        }));
+    }
+    for h in threads {
+        h.join().unwrap();
+    }
+    c.save_if_dirty();
+    let raw = std::fs::read_to_string(c.cfg.state_path()).unwrap();
+    let parsed: Value = serde_json::from_str(&raw).expect("state.json valide apres ecritures concurrentes");
+    assert!(parsed.get("volumes").is_some());
+    assert!(!std::path::PathBuf::from(format!("{}.tmp", c.cfg.state_path().display())).exists());
+}
+
+#[test]
+fn http_limite_corps_413_et_glitches_nan() {
+    let b = Bench::new();
+    let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+    let port = server.server_addr().to_ip().unwrap().port();
+    let (c, s) = (b.ctl.clone(), server.clone());
+    std::thread::spawn(move || rustudio_engine::http::serve(c, s, 2));
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build();
+    let url = |p: &str| format!("http://127.0.0.1:{port}{p}");
+    let g: Value = agent.get(&url("/api/glitches?since=NaN")).call().unwrap().into_json().unwrap();
+    assert!(g["since"].as_f64().is_some_and(|x| x.is_finite()), "{g}");
+    let huge = " ".repeat(4_000_005);
+    let status = match agent.post(&url("/api/volume")).set("X-Rustudio", "1").send_string(&huge) {
+        Ok(r) => r.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("{e}"),
+    };
+    assert_eq!(status, 413);
+}

@@ -244,7 +244,9 @@ mod capture {
         if code >= 0 && w.0 == PM_REMOVE.0 as usize && l.0 != 0 {
             let msg = unsafe { &*(l.0 as *const MSG) };
             INPUT.with(|input| {
-                let mut input = input.borrow_mut();
+                let Ok(mut input) = input.try_borrow_mut() else {
+                    return;
+                };
                 if msg.hwnd != input.0 {
                     return;
                 }

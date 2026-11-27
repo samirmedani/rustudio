@@ -37,6 +37,7 @@ pub struct WinPage {
     pub(crate) paused: bool,
     pub(crate) guide_hidden: bool,
     active: bool,
+    poll_gen: u64,
 }
 impl WinPage {
     pub fn cancel(&mut self) {
@@ -63,25 +64,50 @@ impl WinPage {
 }
 
 impl Mixer {
-    pub(crate) fn audio_visibility(&mut self,visible:bool,cx:&mut Context<Self>) {
-        self.win.active=visible;
-        if visible&&self.win.monitor.is_none() {
-            self.win.monitor=Some(rustudio_windows_desktop::spectrum::Monitor::new(!self.client.is_live()));
-            let executor=cx.background_executor().clone();
-            cx.spawn(async move|this,cx|{
-                loop {executor.timer(std::time::Duration::from_millis(50)).await;
-                    if this.update(cx,|this,cx|{
-                        if this.page!=crate::desktop::Page::WindowsAudio{return;}
-                        if let Some(m)=&this.win.monitor {
-                            let mut frame=m.frame();
-                            if frame.version!=this.win.frame.version {
-                                if frame.selected!=this.win.selected {frame.ready=false;frame.bands.fill(rustudio_windows_desktop::spectrum::FLOOR);frame.peak_db=rustudio_windows_desktop::spectrum::FLOOR;}
-                                this.win.frame=frame;cx.notify();
-                            }
+    pub(crate) fn audio_visibility(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let was_active = self.win.active;
+        self.win.active = visible;
+        if visible {
+            if self.win.monitor.is_none() {
+                self.win.monitor = Some(rustudio_windows_desktop::spectrum::Monitor::new(!self.client.is_live()));
+            }
+            if !was_active {
+                self.win.poll_gen = self.win.poll_gen.wrapping_add(1);
+                let token = self.win.poll_gen;
+                let executor = cx.background_executor().clone();
+                cx.spawn(async move |this, cx| {
+                    loop {
+                        executor.timer(std::time::Duration::from_millis(50)).await;
+                        let keep = this
+                            .update(cx, |this, cx| {
+                                if !this.win.active || this.win.poll_gen != token {
+                                    return false;
+                                }
+                                if this.page != crate::desktop::Page::WindowsAudio {
+                                    return true;
+                                }
+                                if let Some(m) = &this.win.monitor {
+                                    let mut frame = m.frame();
+                                    if frame.version != this.win.frame.version {
+                                        if frame.selected != this.win.selected {
+                                            frame.ready = false;
+                                            frame.bands.fill(rustudio_windows_desktop::spectrum::FLOOR);
+                                            frame.peak_db = rustudio_windows_desktop::spectrum::FLOOR;
+                                        }
+                                        this.win.frame = frame;
+                                        cx.notify();
+                                    }
+                                }
+                                true
+                            })
+                            .unwrap_or(false);
+                        if !keep {
+                            break;
                         }
-                    }).is_err(){break;}
-                }
-            }).detach();
+                    }
+                })
+                .detach();
+            }
         }
         self.win.sync_monitor();
     }
@@ -166,7 +192,7 @@ impl Mixer {
         self.win.busy = true;
         let work = cx
             .background_executor()
-            .spawn(async move { (audio::fix(), audio::inventory()) });
+            .spawn(async move { (audio::fix(), inventory(true)) });
         cx.spawn(async move |this, cx| {
             let (n, state) = work.await;
             let _ = this.update(cx, |this, cx| {

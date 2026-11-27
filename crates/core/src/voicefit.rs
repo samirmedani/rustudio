@@ -148,6 +148,10 @@ fn fit_cost(target: &[f64], weight: &[f64], sum: &[f64]) -> f64 {
 /// Jamais de remontée sous no_boost_below (Hz) ni avec la bande la plus grave : sous la voix, on ne fait que couper.
 /// Une bande qui n'apporte presque rien (±1 dB) est remise à plat.
 pub fn fit_bands(target: &[f64], weight: &[f64], no_boost_below: f64) -> Vec<(f64, i32)> {
+    fit_bands_range(target, weight, no_boost_below, 0..MINI_EQ.len())
+}
+
+fn fit_bands_range(target: &[f64], weight: &[f64], no_boost_below: f64, range: std::ops::Range<usize>) -> Vec<(f64, i32)> {
     let cs = cands();
     let n = grid().len();
     assert_eq!(target.len(), n);
@@ -165,7 +169,7 @@ pub fn fit_bands(target: &[f64], weight: &[f64], no_boost_below: f64) -> Vec<(f6
     };
     for _ in 0..6 {
         let mut changed = false;
-        for i in 0..cs.len() {
+        for i in range.clone() {
             let (fi, gi) = choice[i];
             add(&mut sum, &cs[i], fi, gi, -1.0);
             let mut best = (f64::MAX, fi, gi);
@@ -201,7 +205,7 @@ pub fn fit_bands(target: &[f64], weight: &[f64], no_boost_below: f64) -> Vec<(f6
     }
     // élagage : une bande à ±1 dB qui ne rapproche presque pas de la cible est remise à plat
     let total: f64 = weight.iter().sum::<f64>().max(1e-9);
-    for i in 0..cs.len() {
+    for i in range {
         let (fi, gi) = choice[i];
         if gi == 9 || (gi as i32 - 9).abs() > 1 {
             continue;
@@ -259,7 +263,7 @@ fn sii_band(f: f64) -> f64 {
 }
 
 /// Ce qu'un bon micro de près ajoute à une voix entendue à 1 m : effet de proximité dans les graves (micro
-/// cardioïde à 10–20 cm) et présence de la bouche dans l'axe. Le micro de casque, plus loin du centre, moins.
+/// cardioïde à 10 à 20 cm) et présence de la bouche dans l'axe. Le micro de casque, plus loin du centre, moins.
 const PROXIMITY: [(f64, f64); 5] = [(125.0, 8.0), (200.0, 5.0), (315.0, 2.0), (500.0, 0.5), (800.0, 0.0)];
 const PRESENCE: [(f64, f64); 8] =
     [(1500.0, 0.0), (2500.0, 2.0), (4000.0, 4.0), (6300.0, 4.0), (8000.0, 3.0), (10000.0, 2.0), (12500.0, 0.0), (16000.0, -2.0)];
@@ -446,7 +450,7 @@ fn plan(p: &Profile, v: &VoicePrint, model: Option<&MicModel>) -> Plan {
     let g = grid();
     let total_db = on_grid(&v.bands, &v.voice_db);
     let noise_db = on_grid(&v.bands, &v.noise_db);
-    // les sifflantes relèvent le spectre moyen vers 4–10 kHz : c'est le travail du de-esser, pas de l'égaliseur ;
+    // les sifflantes relèvent le spectre moyen vers 4 à 10 kHz : c'est le travail du de-esser, pas de l'égaliseur ;
     // l'égaliseur se règle sur la voix sans elles
     let r = v.sibilance.ratio;
     let voice_db: Vec<f64> = match (&v.sibilant_db, (0.0..0.6).contains(&r)) {
@@ -457,7 +461,8 @@ fn plan(p: &Profile, v: &VoicePrint, model: Option<&MicModel>) -> Plan {
                 .zip(&sib)
                 .map(|(t, s)| {
                     let p = 10f64.powf(t / 10.0) - r * 10f64.powf(s / 10.0);
-                    if p > 0.0 { 10.0 * (p / (1.0 - r)).log10() } else { *t - 10.0 }
+                    let floor = (*t - 10.0).max(voice::FLOOR_DB);
+                    if p > 0.0 { (10.0 * (p / (1.0 - r)).log10()).max(floor) } else { floor }
                 })
                 .collect()
         }
@@ -646,7 +651,7 @@ fn deesser_amount(p: &Profile, v: Option<&VoicePrint>, model: Option<&MicModel>,
     let base = match v {
         Some(v) => {
             let x = v.sibilance.excess_db;
-            // dépassement des sifflantes (voice::analyze) : 2–8 dB faibles, 13–16 dB voix courante, 19 dB et plus très marquées
+            // dépassement des sifflantes (voice::analyze) : 2 à 8 dB faibles, 13 à 16 dB voix courante, 19 dB et plus très marquées
             let pts = [(6.0, 5.0), (11.0, 18.0), (16.0, 30.0), (20.0, 42.0), (25.0, 55.0)];
             let mut b = if x <= 6.0 { 5.0 } else if x >= 25.0 { 55.0 } else {
                 let mut y = 5.0;
@@ -684,13 +689,17 @@ pub fn fit_with_print(p: &Profile, v: &VoicePrint, cal: Option<&MicCal>, gain_db
     let eqc = eq_curve(&d, g);
     let hf_boost = g.iter().zip(&eqc).filter(|(f, _)| (4500.0..=10500.0).contains(*f)).map(|(_, x)| *x).fold(0.0, f64::max);
     d.deesser = deesser_amount(p, Some(v), model, hf_boost);
-    // compresseur et noise gate : niveaux de l'entrée (mesure du moteur) au gain actuel
+    // compresseur et noise gate : niveaux de l'entrée (mesure du moteur, sinon empreinte) au gain actuel
     let (cal_noise, cal_low, cal_med, cal_peak, cal_loud) = match cal {
         Some(c) => {
             let s = (gain_db - c.gain_db) as f64;
             (Some(c.noise_peak_db + s), Some(c.voice_low_db + s), Some(c.voice_db + s), Some(c.voice_peak_db + s), c.loud_peak_db.map(|x| x + s))
         }
-        None => (None, None, None, None, None),
+        None => {
+            let s = (gain_db - v.gain_db) as f64;
+            let l = &v.levels;
+            (Some(l.noise_peak_db + s), Some(l.speech_p10_db + s), Some(l.speech_p50_db + s), Some(l.speech_p95_db + s), l.loud_peak_db.map(|x| x + s))
+        }
     };
     let (range_target, max_idx, below, att, rel, mk) = p.comp;
     let range = if v.levels.range_db > 0.0 { v.levels.range_db } else { 15.0 };
@@ -701,6 +710,8 @@ pub fn fit_with_print(p: &Profile, v: &VoicePrint, cal: Option<&MicCal>, gain_db
         comp.threshold = (med - below).round().clamp(-40.0, -6.0) as i32;
         let thr = comp.threshold as f64;
         let mut makeup = (peak - thr).max(0.0) * (1.0 - 1.0 / ratio) * mk;
+        let peak_out = thr + (peak - thr).max(0.0) / ratio;
+        makeup = makeup.min(-3.0 - peak_out);
         if let Some(loud) = cal_loud {
             let out = thr + (loud - thr).max(0.0) / ratio;
             makeup = makeup.min(-3.0 - out);
@@ -763,26 +774,43 @@ pub fn fit_with_print(p: &Profile, v: &VoicePrint, cal: Option<&MicCal>, gain_db
 /// Sans empreinte : préréglage habituel, avec la correction connue du micro (courbe publiée).
 pub fn fit_with_model(name: &str, cal: Option<&MicCal>, gain_db: i32, model: &MicModel) -> Dsp {
     let mut d = dsp::fit_dsp(name, cal, Some(gain_db));
-    if model.response.is_empty() && !model.bright {
-        return d;
-    }
-    let g = grid();
-    let base = eq_curve(&d, g);
-    let resp: Vec<f64> = g.iter().map(|&f| mics::response_db(model, f)).collect();
-    let mid = pmean(g, &resp, 800.0, 2500.0);
-    let target: Vec<f64> = g
-        .iter()
-        .enumerate()
-        .map(|(i, &f)| {
-            let dev = resp[i] - mid;
-            let cut = if f >= 2000.0 { -0.6 * dev.max(0.0) } else { 0.0 };
-            (base[i] + cut).clamp(-9.0, 6.0)
-        })
-        .collect();
-    let weight: Vec<f64> = g.iter().map(|&f| if !(60.0..=16000.0).contains(&f) { 0.3 } else { 1.0 }).collect();
-    for ((b, _, _), (f, gn)) in EQ_BANDS.iter().zip(fit_bands(&target, &weight, 80.0)) {
-        d.eq.insert(b.to_string(), gn);
-        d.eq_freq.insert(b.to_string(), dsp::eq_freq_in_range(b, f));
+    if !model.response.is_empty() {
+        let g = grid();
+        let base = eq_curve(&d, g);
+        let resp: Vec<f64> = g.iter().map(|&f| mics::response_db(model, f)).collect();
+        let mid = pmean(g, &resp, 800.0, 2500.0);
+        // La correction de la courbe publiée vise uniquement les aigus (>= 2 kHz) : on garde les 3 bandes graves
+        // du préréglage intactes (ex. chaleur Radio FM) et on ajuste les 3 bandes hautes sur le résidu.
+        let low_curve: Vec<f64> = g
+            .iter()
+            .map(|&f| {
+                MINI_EQ[..3]
+                    .iter()
+                    .map(|m| {
+                        let gn = *d.eq.get(m.band).unwrap_or(&0) as f64;
+                        let f0 = d.eq_freq.get(m.band).copied().unwrap_or_else(|| eq_default_freq(m.band));
+                        m.db(f0, gn, f)
+                    })
+                    .sum()
+            })
+            .collect();
+        let target: Vec<f64> = g
+            .iter()
+            .enumerate()
+            .map(|(i, &f)| {
+                let dev = resp[i] - mid;
+                let cut = if f >= 2000.0 { -0.6 * dev.max(0.0) } else { 0.0 };
+                (base[i] + cut).clamp(-9.0, 6.0) - low_curve[i]
+            })
+            .collect();
+        let weight: Vec<f64> = g.iter().map(|&f| if f < 800.0 { 0.1 } else if f > 16000.0 { 0.3 } else { 1.0 }).collect();
+        let fitted = fit_bands_range(&target, &weight, 80.0, 3..MINI_EQ.len());
+        for i in 3..MINI_EQ.len() {
+            let b = EQ_BANDS[i].0;
+            let (f, gn) = fitted[i];
+            d.eq.insert(b.to_string(), gn);
+            d.eq_freq.insert(b.to_string(), dsp::eq_freq_in_range(b, f));
+        }
     }
     if model.bright && d.deesser > 0 {
         d.deesser = (d.deesser + 10).min(80);
@@ -837,7 +865,7 @@ pub fn print_notes(v: &VoicePrint, model: Option<&MicModel>, gain_db: i32) -> Ve
     }
     if let Some(m) = model.filter(|m| m.kind == "condenser" && !m.generic) {
         if gain_db >= 45 {
-            n.push(note("tip", format!("Le {} demande {} dB de gain : tu es sans doute loin de lui. À {}–{} cm, ta voix sera plus pleine et la pièce plus discrète.", m.name, gain_db, m.distance_cm[0], m.distance_cm[1])));
+            n.push(note("tip", format!("Le {} demande {} dB de gain : tu es sans doute loin de lui. À {} à {} cm, ta voix sera plus pleine et la pièce plus discrète.", m.name, gain_db, m.distance_cm[0], m.distance_cm[1])));
         }
     }
     n
@@ -887,4 +915,87 @@ pub fn eq_ranges_json() -> Value {
         m.insert(b.into(), json!([lo, hi]));
     }
     Value::Object(m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::voice::{analyze, synth_speech, Phase, Segment};
+
+    fn sample_print() -> VoicePrint {
+        let segs = [
+            Segment { phase: Phase::Silence, start_s: 0.0, end_s: 3.0, gain_db: 30 },
+            Segment { phase: Phase::Reading, start_s: 3.0, end_s: 13.0, gain_db: 30 },
+            Segment { phase: Phase::Loud, start_s: 13.0, end_s: 16.0, gain_db: 30 },
+        ];
+        analyze(&synth_speech(48_000, &segs, 120.0, 9), 48_000, &segs).unwrap()
+    }
+
+    #[test]
+    fn soustraction_sifflantes_sans_gouffre_d_arrondi() {
+        let mut v = sample_print();
+        // Simule une bande 8 kHz ou r * 10^(s/10) frole 10^(t/10) a 0,0001 pres
+        v.sibilance.ratio = 0.2;
+        let idx = v.bands.iter().position(|f| *f >= 8000.0).unwrap();
+        let sib = v.sibilant_db.as_mut().unwrap();
+        v.voice_db[idx] = -40.0;
+        // 10^(-4.0) = 1e-4 ; 0.2 * 10^(-3.30104) = 0.99998e-4
+        sib[idx] = -33.0104;
+        let pl = plan(profile("antenne").unwrap(), &v, None);
+        let diff = (pl.voice_rel[idx] - pl.voice_rel[idx - 1]).abs();
+        assert!(diff < 25.0, "chute artificielle par arrondi : voice_rel[{idx}]={} (voisin {})", pl.voice_rel[idx], pl.voice_rel[idx - 1]);
+    }
+
+    #[test]
+    fn fit_with_print_sans_mic_cal_utilise_niveaux_empreinte() {
+        let v = sample_print();
+        let p = profile("antenne").unwrap();
+        let at_30 = fit_with_print(p, &v, None, 30, None);
+        let at_42 = fit_with_print(p, &v, None, 42, None);
+        assert!(at_42.dsp.gate.threshold > at_30.dsp.gate.threshold, "le seuil du gate doit suivre le gain sans mic_cal");
+        assert!(at_42.dsp.comp.threshold > at_30.dsp.comp.threshold, "le seuil du compresseur doit suivre le gain sans mic_cal");
+    }
+
+    #[test]
+    fn fit_with_print_protege_la_marge_sans_phrase_forte() {
+        let mut v = sample_print();
+        v.levels.loud_peak_db = None;
+        v.levels.speech_p50_db = -8.0;
+        v.levels.speech_p95_db = -2.0;
+        let f = fit_with_print(profile("antenne").unwrap(), &v, None, v.gain_db, None);
+        let r = RATIOS[f.dsp.comp.ratio.clamp(0, 14) as usize];
+        let peak_out = f.dsp.comp.threshold as f64 + (-2.0 - f.dsp.comp.threshold as f64).max(0.0) / r + f.dsp.comp.makeup as f64;
+        assert!(peak_out <= -2.5, "compensation excessive sans loud_peak_db : {peak_out} dBFS");
+    }
+
+    #[test]
+    fn fit_with_model_garde_la_chaleur_radio_fm_sur_nt1a() {
+        let nt1a = mics::model("rode-nt1a").unwrap();
+        let base = dsp::preset_dsp("antenne");
+        let fitted = fit_with_model("antenne", None, 30, nt1a);
+        assert_eq!(fitted.eq["90"], base.eq["90"], "la chaleur 90 Hz de Radio FM reste intacte sur NT1-A");
+        assert_eq!(fitted.eq["250"], base.eq["250"]);
+        assert_eq!(fitted.eq["500"], base.eq["500"]);
+        assert!(fitted.deesser > base.deesser, "de-esser renforce sur micro brillant");
+        let g = grid();
+        let c_base = eq_curve(&base, g);
+        let c_fit = eq_curve(&fitted, g);
+        let hi = |c: &[f64]| {
+            let s: Vec<f64> = g.iter().zip(c).filter(|(f, _)| (9000.0..=13000.0).contains(*f)).map(|(_, x)| *x).collect();
+            s.iter().sum::<f64>() / s.len() as f64
+        };
+        assert!(hi(&c_fit) < hi(&c_base) - 1.0, "aigus NT1-A calmes : {:.1} -> {:.1}", hi(&c_base), hi(&c_fit));
+    }
+
+    #[test]
+    fn profil_radio_fm_forte_dynamique_et_notes_sans_tiret_cadratin() {
+        let mut v = sample_print();
+        v.levels.range_db = 30.0;
+        let nt1a = mics::model("rode-nt1a").unwrap();
+        let f = fit_with_print(profile("antenne").unwrap(), &v, None, 50, Some(nt1a));
+        assert_eq!(f.dsp.comp.ratio, 10, "ratio 5,6:1 attendu sur voix tres dynamique");
+        for n in f.notes.iter().chain(print_notes(&v, Some(nt1a), 50).iter()) {
+            assert!(!n.t.contains('\u{2014}') && !n.t.contains('\u{2013}'), "tiret interdit : {}", n.t);
+        }
+    }
 }

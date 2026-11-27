@@ -221,7 +221,8 @@ impl Ctl {
     pub fn hp_apply(&self) {
         let (eq, live, default) = self.hp_effective();
         // chaque sortie visée par son identifiant : jamais le micro qui porte le même nom
-        let outputs: indexmap::IndexMap<String, String> = self.eqapo.endpoints().into_iter().map(|(c, e)| (c, e.guid)).collect();
+        let eps = self.eqapo.endpoints();
+        let outputs: indexmap::IndexMap<String, String> = eps.iter().map(|(c, e)| (c.clone(), e.guid.clone())).collect();
         let text = if !eq.enabled {
             config_text_for(&eq, false, "desactive dans l'appli", &outputs)
         } else if eq.pause_live && live {
@@ -238,16 +239,17 @@ impl Ctl {
         // nouvelle sortie par défaut sans Equalizer APO : on l'y branche tout de suite, une fois
         if eq.enabled && self.eqapo.installed() && !self.eqapo.setup_running() {
             if let Some(c) = default {
-                if self.eqapo.endpoints().get(&c).is_some_and(|e| !e.installed) && self.eqapo.try_default(&c) {
-                    self.eqapo.mark_auto();
-                    let guid = self.eqapo.endpoints()[&c].guid.clone();
-                    match self.eqapo.install_endpoint(&guid) {
-                        Ok(()) => {
-                            self.eqapo.restart_audio();
-                            logf!("Égaliseur du casque branché sur la sortie Windows par défaut ({c})");
-                            self.eqapo.bump();
+                if let Some(ep) = eps.get(&c).filter(|e| !e.installed) {
+                    if self.eqapo.try_default(&c) {
+                        self.eqapo.mark_auto();
+                        match self.eqapo.install_endpoint(&ep.guid) {
+                            Ok(()) => {
+                                self.eqapo.restart_audio();
+                                logf!("Égaliseur du casque branché sur la sortie Windows par défaut ({c})");
+                                self.eqapo.bump();
+                            }
+                            Err(e) => logf!("Égaliseur du casque : branchement sur {c} impossible ({e})"),
                         }
-                        Err(e) => logf!("Égaliseur du casque : branchement sur {c} impossible ({e})"),
                     }
                 }
             }

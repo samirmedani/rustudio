@@ -36,21 +36,22 @@ const TRANSFER_TIMEOUT_MS: u32 = 2_000;
 
 /// Chemins des interfaces WinUSB du firmware Rustudio presentes.
 pub fn interface_paths() -> Vec<String> {
-    loop {
+    for _ in 0..8 {
         let mut length = 0;
         // SAFETY : parametre de sortie simple, GUID statique, aucun filtre d'instance.
-        let mut status = unsafe {
+        let status = unsafe {
             CM_Get_Device_Interface_List_SizeW(&mut length, &INTERFACE_GUID, null(), CM_GET_DEVICE_INTERFACE_LIST_PRESENT)
         };
-        let mut list = vec![0u16; length as usize];
-        if status == CR_SUCCESS {
-            // SAFETY : list contient les length caracteres annonces.
-            status = unsafe {
-                CM_Get_Device_Interface_ListW(
-                    &INTERFACE_GUID, null(), list.as_mut_ptr(), length, CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
-                )
-            };
+        if status != CR_SUCCESS || length <= 1 {
+            return Vec::new();
         }
+        let mut list = vec![0u16; length as usize];
+        // SAFETY : list contient les length caracteres annonces.
+        let status = unsafe {
+            CM_Get_Device_Interface_ListW(
+                &INTERFACE_GUID, null(), list.as_mut_ptr(), length, CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
+            )
+        };
         match status {
             CR_SUCCESS => {
                 return list
@@ -65,6 +66,7 @@ pub fn interface_paths() -> Vec<String> {
             _ => return Vec::new(),
         }
     }
+    Vec::new()
 }
 
 struct Device {

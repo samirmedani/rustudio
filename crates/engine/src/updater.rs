@@ -15,7 +15,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const UPDATE_ASSET: &str = "Rustudio.zip";
 pub const UPDATE_HASH_ASSET: &str = "Rustudio.sha256";
@@ -166,6 +166,9 @@ pub struct Updater {
     pub current: Mutex<String>,
     /// prochaine tentative de menage de la mise a jour de GoXLR Mini 4.x (infini : rien a faire)
     legacy_next: Mutex<f64>,
+    /// Cache et verrou du test d'ecriture dans le dossier d'installation (evite les courses et le churn disque).
+    installable_cache: Mutex<Option<(Instant, bool, Option<&'static str>)>>,
+    probe_seq: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +214,8 @@ impl Updater {
             force_installable: AtomicBool::new(false),
             current: Mutex::new(VERSION.to_string()),
             legacy_next: Mutex::new(if cfg!(windows) { now_epoch() + 180.0 } else { f64::INFINITY }),
+            installable_cache: Mutex::new(None),
+            probe_seq: AtomicU64::new(0),
         };
         u.load_result();
         u
@@ -225,7 +230,7 @@ impl Updater {
         self.changes.fetch_add(1, Ordering::Relaxed);
     }
     fn current(&self) -> String {
-        self.current.lock().unwrap().clone()
+        self.current.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     /// Version qui tourne (modifiable par les tests).
     pub fn current_version(&self) -> String {
@@ -236,7 +241,7 @@ impl Updater {
         self.bump();
     }
 
-    pub fn installable(&self) -> (bool, Option<&'static str>) {
+    fn installable_checked(&self, use_cache: bool) -> (bool, Option<&'static str>) {
         if self.force_installable.load(Ordering::Relaxed) {
             return (true, None);
         }
@@ -246,16 +251,34 @@ impl Updater {
         if !cfg!(windows) {
             return (false, Some("os"));
         }
-        let probe = self.base_dir.join(".ecriture-test");
-        if std::fs::write(&probe, "ok").and_then(|_| std::fs::remove_file(&probe)).is_err() {
-            return (false, Some("readonly"));
+        let mut cache = self.installable_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if use_cache {
+            if let Some((at, ok, why)) = *cache {
+                if at.elapsed() < Duration::from_secs(30) {
+                    return (ok, why);
+                }
+            }
         }
-        (true, None)
+        let seq = self.probe_seq.fetch_add(1, Ordering::Relaxed);
+        let probe = self.base_dir.join(format!(".ecriture-test-{}-{seq}", std::process::id()));
+        let res = match std::fs::write(&probe, "ok") {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&probe);
+                (true, None)
+            }
+            Err(_) => (false, Some("readonly")),
+        };
+        *cache = Some((Instant::now(), res.0, res.1));
+        res
+    }
+
+    pub fn installable(&self) -> (bool, Option<&'static str>) {
+        self.installable_checked(true)
     }
 
     pub fn snapshot(&self, reminded: Option<Value>) -> Value {
         let (ok, why) = self.installable();
-        let repo = self.ucfg.lock().unwrap().repo.clone();
+        let repo = self.ucfg.lock().unwrap_or_else(|e| e.into_inner()).repo.clone();
         let s = self.st();
         let page = s.latest.as_ref().map(|l| l.url.clone()).unwrap_or_else(|| format!("https://github.com/{repo}/releases/latest"));
         json!({"current": self.current(), "release_build": self.release_build, "status": s.status, "result": s.result,
@@ -457,7 +480,7 @@ impl Updater {
 
     /// Mise a jour vers la derniere version (target None) ou retour a une version precedente publiee (target).
     pub fn start_install(&self, ctl: Arc<Ctl>, target: Option<&str>) -> Result<(), String> {
-        let (ok, why) = self.installable();
+        let (ok, why) = self.installable_checked(false);
         if !ok {
             return Err(match why {
                 Some("dev") => "Version de développement : installe la nouvelle version depuis la page de la release.",
@@ -502,7 +525,14 @@ impl Updater {
             rel
         };
         self.bump();
-        std::thread::Builder::new().name("update".into()).spawn(move || ctl.updater.install(rel)).ok();
+        if let Err(e) = std::thread::Builder::new().name("update".into()).spawn(move || ctl.updater.install(rel)) {
+            self.set(|s| {
+                s.phase = None;
+                s.progress = None;
+                s.target = None;
+            });
+            return Err(format!("Impossible de lancer la mise à jour : {e}"));
+        }
         Ok(())
     }
 
@@ -664,10 +694,11 @@ impl Updater {
 
     /// Ouvre une adresse des releases du projet ; chaque redirection doit rester chez GitHub.
     fn open_checked(&self, url: &str, timeout: u64) -> Result<ureq::Response, UpdateError> {
-        let c = self.ucfg.lock().unwrap().clone();
+        let c = self.ucfg.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if !url.starts_with(&c.prefix) {
             return Err(uerr("source", "Adresse de téléchargement hors des releases du projet : refusée."));
         }
+        let allow_http = c.prefix.starts_with("http://");
         let agent = self.agent(timeout, 0);
         let mut cur = url.to_string();
         for _ in 0..6 {
@@ -681,11 +712,19 @@ impl Updater {
                 Err(e) => return Err(uerr("download", format!("Téléchargement interrompu ({}).", short(&e.to_string())))),
             };
             if (300..400).contains(&resp.status()) {
-                let next = resp.header("Location").unwrap_or("").to_string();
+                let next = resp.header("Location").unwrap_or("").trim().to_string();
                 if next.is_empty() {
                     return Err(uerr("download", "Redirection sans adresse."));
                 }
-                cur = if next.starts_with("http") { next } else { format!("https://{host}{next}") };
+                cur = if next.starts_with("https://") || (allow_http && next.starts_with("http://")) {
+                    next
+                } else if next.starts_with('/') && !next.starts_with("//") {
+                    let (scheme, rest) = cur.split_once("://").unwrap_or(("https", &cur));
+                    let authority = rest.split(['/', '?', '#']).next().unwrap_or(&host);
+                    format!("{scheme}://{authority}{next}")
+                } else {
+                    return Err(uerr("source", "Redirection non autorisée."));
+                };
                 continue;
             }
             return Ok(resp);
@@ -727,9 +766,8 @@ impl Updater {
             Err(_) => return Ok(None),
         };
         let mut r = resp.into_reader();
-        let mut buf = vec![0u8; 4096];
-        let n = r.read(&mut buf).unwrap_or(0);
-        let txt = String::from_utf8_lossy(&buf[..n]);
+        let Some(buf) = read_limited(&mut r, 4096) else { return Ok(None) };
+        let txt = String::from_utf8_lossy(&buf);
         Ok(txt.split_whitespace().next().filter(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())).map(|t| t.to_lowercase()))
     }
 
@@ -838,10 +876,13 @@ fn short(s: &str) -> String {
 pub fn safe_extract(zpath: &Path, dest: &Path, limit: u64) -> Result<(), UpdateError> {
     let f = std::fs::File::open(zpath).map_err(|e| uerr("archive", e.to_string()))?;
     let mut z = zip::ZipArchive::new(f).map_err(|_| uerr("archive", "Archive illisible."))?;
+    if z.len() > 2000 {
+        return Err(uerr("archive", "Archive trop grosse."));
+    }
     std::fs::create_dir_all(dest).map_err(|e| uerr("internal", e.to_string()))?;
     let mut total: u64 = 0;
     for i in 0..z.len() {
-        let mut file = z.by_index(i).map_err(|_| uerr("archive", "Archive illisible."))?;
+        let file = z.by_index(i).map_err(|_| uerr("archive", "Archive illisible."))?;
         let name = file.name().replace('\\', "/");
         let parts: Vec<&str> = name.split('/').collect();
         if name.starts_with('/') || parts[0].contains(':') || parts.contains(&"..") {
@@ -850,8 +891,8 @@ pub fn safe_extract(zpath: &Path, dest: &Path, limit: u64) -> Result<(), UpdateE
         if file.unix_mode().map(|m| m & 0o170000 == 0o120000).unwrap_or(false) {
             return Err(uerr("archive", format!("Lien refusé dans l'archive : {name}")));
         }
-        total += file.size();
-        if total > limit {
+        let remaining = limit.saturating_sub(total);
+        if file.size() > remaining {
             return Err(uerr("archive", "Archive trop grosse."));
         }
         let target = parts.iter().filter(|p| !p.is_empty() && **p != ".").fold(dest.to_path_buf(), |acc, p| acc.join(p));
@@ -863,7 +904,15 @@ pub fn safe_extract(zpath: &Path, dest: &Path, limit: u64) -> Result<(), UpdateE
             std::fs::create_dir_all(parent).map_err(|e| uerr("internal", e.to_string()))?;
         }
         let mut out = std::fs::File::create(&target).map_err(|e| uerr("internal", e.to_string()))?;
-        std::io::copy(&mut file, &mut out).map_err(|_| uerr("archive", "Archive illisible."))?;
+        // Compte les octets reellement decompressees : un en-tete ZIP menteur ne peut pas contourner la limite.
+        let copied = std::io::copy(&mut file.take(remaining.saturating_add(1)), &mut out)
+            .map_err(|_| uerr("archive", "Archive illisible."))?;
+        if copied > remaining {
+            drop(out);
+            let _ = std::fs::remove_file(&target);
+            return Err(uerr("archive", "Archive trop grosse."));
+        }
+        total += copied;
     }
     Ok(())
 }
@@ -893,10 +942,52 @@ pub fn cleanup_legacy_update(work: &Path) -> bool {
 
 #[cfg(test)]
 mod notes_tests {
+    use super::*;
+
     #[test]
     fn notes_des_versions_sautees() {
         let n = super::compose_notes("**Nouveau**\n- b\n", &[("5.1.0".into(), "**Nouveau**\n- a".into()), ("5.0.1".into(), "  ".into())]);
         assert_eq!(n, "**Nouveau**\n- b\n\n#### Aussi dans la 5.1.0\n\n**Nouveau**\n- a");
         assert_eq!(super::compose_notes("x", &[]), "x");
+    }
+
+    #[test]
+    fn read_limited_recolle_les_lectures_courtes() {
+        struct OneByte<'a>(&'a [u8]);
+        impl Read for OneByte<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0.is_empty() || buf.is_empty() {
+                    return Ok(0);
+                }
+                buf[0] = self.0[0];
+                self.0 = &self.0[1..];
+                Ok(1)
+            }
+        }
+        let sha = "a".repeat(64);
+        let mut r = OneByte(sha.as_bytes());
+        assert_eq!(read_limited(&mut r, 4096).as_deref(), Some(sha.as_bytes()));
+        let mut big = OneByte(b"12345");
+        assert!(read_limited(&mut big, 4).is_none());
+    }
+
+    #[test]
+    fn safe_extract_refuse_depassement_reel() {
+        let dir = std::env::temp_dir().join(format!("rustudio-safe-extract-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zpath = dir.join("big.zip");
+        {
+            let f = std::fs::File::create(&zpath).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            zw.start_file("payload.bin", zip::write::SimpleFileOptions::default()).unwrap();
+            zw.write_all(&vec![b'x'; 2048]).unwrap();
+            zw.finish().unwrap();
+        }
+        let dest = dir.join("out");
+        let err = safe_extract(&zpath, &dest, 1024).unwrap_err();
+        assert_eq!(err.code, "archive");
+        assert!(!dest.join("payload.bin").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

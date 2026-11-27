@@ -45,8 +45,13 @@ pub(crate) fn goxlr_firmware_kind(g: &Inner, info: &DevInfo) -> Option<FirmwareK
 }
 
 impl Ctl {
-    pub(crate) fn module_devices_locked(&self, g: &Inner, info: &DevInfo) -> [ModuleRuntime; 3] {
-        [goxlr_runtime(self.health_status(g), g, self.simulated(), info), self.mouse.runtime(), self.keyboard.runtime()]
+    pub(crate) fn module_devices_locked(&self, g: &Inner, info: &DevInfo) -> [ModuleRuntime; 4] {
+        [
+            goxlr_runtime(self.health_status(g), g, self.simulated(), info),
+            self.mouse.runtime(),
+            self.keyboard.runtime(),
+            crate::webcam::runtime(self),
+        ]
     }
 
     pub fn modules_snapshot(&self) -> Value {
@@ -85,6 +90,10 @@ impl Ctl {
                 let data = self.keyboard.state();
                 Ok(json!({"module":module,"device":self.keyboard.runtime(),"state":data["state"],"v":data["v"],"meta":{},"live":{}}))
             }
+            crate::webcam::ID => {
+                let data = crate::webcam::state(self);
+                Ok(json!({"module":module,"device":crate::webcam::runtime(self),"state":data["state"],"v":data["v"],"meta":data["meta"],"live":data["live"]}))
+            }
             _ => Err(unknown_module(id)),
         }
     }
@@ -99,6 +108,7 @@ impl Ctl {
             "goxlr-mini" => self.act(action, p),
             "attack-shark-r5-ultra" => self.mouse.command(action, p).map_err(|msg| ApiError { status: 400, msg }),
             crate::keyboard::ID => self.keyboard.command(action, p).map_err(|msg| ApiError { status: 400, msg }),
+            crate::webcam::ID => crate::webcam::command(self, action, p).map_err(|msg| ApiError { status: 400, msg }),
             _ => Err(unknown_module(id)),
         }
     }

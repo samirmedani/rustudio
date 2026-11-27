@@ -83,7 +83,7 @@ impl Monitor {
         self.configure(vec![], None);
     }
     pub fn frame(&self) -> Frame {
-        self.frame.lock().unwrap().clone()
+        self.frame.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 fn amplitude_db(amplitude: f32) -> f32 {
@@ -96,7 +96,6 @@ fn amplitude_db(amplitude: f32) -> f32 {
 
 /// Tampon borné, FFT de Hann ; puissances moyennées entre canaux, sans annuler une stéréo en opposition de phase.
 struct Analyzer {
-    rate: u32,
     channels: usize,
     ring: Vec<Vec<f64>>,
     at: usize,
@@ -106,6 +105,7 @@ struct Analyzer {
     re: Vec<f64>,
     im: Vec<f64>,
     power: Vec<f64>,
+    band_ranges: Vec<Option<(usize, usize)>>,
 }
 impl Analyzer {
     fn new(rate: u32, channels: usize) -> Self {
@@ -113,8 +113,20 @@ impl Analyzer {
             .map(|i| 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / FFT as f64).cos())
             .collect();
         let gain = window.iter().sum::<f64>();
+        let bin = rate as f64 / FFT as f64;
+        let band_ranges = (0..BANDS)
+            .map(|i| {
+                let low = 20. * 1000f64.powf(i as f64 / BANDS as f64);
+                let high = 20. * 1000f64.powf((i + 1) as f64 / BANDS as f64);
+                if rate == 0 || low >= rate as f64 / 2. {
+                    return None;
+                }
+                let a = (low / bin).round().max(1.) as usize;
+                let b = ((high / bin).round() as usize).max(a).min(FFT / 2);
+                (a <= b).then_some((a, b))
+            })
+            .collect();
         Self {
-            rate,
             channels,
             ring: vec![vec![0.; FFT]; channels],
             at: 0,
@@ -124,6 +136,7 @@ impl Analyzer {
             re: vec![0.; FFT],
             im: vec![0.; FFT],
             power: vec![0.; FFT / 2 + 1],
+            band_ranges,
         }
     }
     fn push(&mut self, samples: &[f32]) {
@@ -152,19 +165,12 @@ impl Analyzer {
                     / (self.gain * self.gain * self.channels as f64);
             }
         }
-        let bin = self.rate as f64 / FFT as f64;
-        (0..BANDS)
-            .map(|i| {
-                let low = 20. * 1000f64.powf(i as f64 / BANDS as f64);
-                let high = 20. * 1000f64.powf((i + 1) as f64 / BANDS as f64);
-                if low >= self.rate as f64 / 2. {
+        self.band_ranges
+            .iter()
+            .map(|range| {
+                let Some((a, b)) = *range else {
                     return FLOOR;
-                }
-                let a = (low / bin).round().max(1.) as usize;
-                let b = ((high / bin).round() as usize).max(a).min(FFT / 2);
-                if a > b {
-                    return FLOOR;
-                }
+                };
                 let p = self.power[a..=b].iter().copied().fold(0., f64::max);
                 if p > 0. {
                     (10. * p.log10()).clamp(FLOOR as f64, 6.) as f32
@@ -177,7 +183,7 @@ impl Analyzer {
 }
 
 fn publish(shared: &Mutex<Frame>, mut next: Frame) {
-    let mut f = shared.lock().unwrap();
+    let mut f = shared.lock().unwrap_or_else(|e| e.into_inner());
     next.version = f.version + 1;
     *f = next;
 }
@@ -190,19 +196,32 @@ fn demo(rx: mpsc::Receiver<Request>, shared: Arc<Mutex<Frame>>) {
     let mut phase = 0f64;
     let mut analyzer = Analyzer::new(48000, 2);
     loop {
-        match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(r) => {
-                request = r;
-                while let Ok(r) = rx.try_recv() {
+        if request.sources.is_empty() {
+            // Hors page Audio : aucun reveil tant qu'une source n'est pas demandee.
+            let Ok(mut r) = rx.recv() else { break };
+            while let Ok(last) = rx.try_recv() {
+                r = last;
+            }
+            request = r;
+            if request.sources.is_empty() {
+                publish(&shared, Frame::default());
+                continue;
+            }
+        } else {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(mut r) => {
+                    while let Ok(last) = rx.try_recv() {
+                        r = last;
+                    }
                     request = r;
                 }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            _ => {}
-        }
-        if request.sources.is_empty() {
-            publish(&shared, Frame::default());
-            continue;
+            if request.sources.is_empty() {
+                publish(&shared, Frame::default());
+                continue;
+            }
         }
         let amp = 0.12 + 0.1 * (start.elapsed().as_secs_f64() * 1.7).sin().abs();
         let mut samples = Vec::with_capacity(4800);
@@ -351,43 +370,54 @@ mod native {
             sources: vec![],
             selected: None,
         };
-        let mut meters: Vec<(String, Option<IAudioMeterInformation>)> = vec![];
+        let mut meters: Vec<(String, Option<IAudioMeterInformation>, Instant)> = vec![];
         let mut capture = None;
         let mut frame = Frame::default();
         let mut retry = Instant::now();
         loop {
-            match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(mut r) => {
-                    while let Ok(last) = rx.try_recv() {
-                        r = last;
-                    }
-                    if r != request {
-                        let changed = r.selected != request.selected;
-                        // Réactiver les indicateurs sur le même fil COM, sans ouvrir de capture pour ces lignes.
-                        meters = r
-                            .sources
-                            .iter()
-                            .map(|s| {
-                                (s.id.clone(), unsafe {
-                                    win::device(&s.id)
-                                        .ok()
-                                        .and_then(|d| d.Activate(CLSCTX_ALL, None).ok())
-                                })
-                            })
-                            .collect();
-                        if changed {
-                            capture = None;
-                            frame = Frame {
-                                selected: r.selected.clone(),
-                                ..Frame::default()
-                            };
-                            retry = Instant::now();
-                        }
-                        request = r;
-                    }
+            let incoming = if request.sources.is_empty() {
+                match rx.recv() {
+                    Ok(r) => Some(r),
+                    Err(_) => break,
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                _ => {}
+            } else {
+                match rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(r) => Some(r),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            };
+            if let Some(mut r) = incoming {
+                while let Ok(last) = rx.try_recv() {
+                    r = last;
+                }
+                if r != request {
+                    let changed = r.selected != request.selected;
+                    let now = Instant::now();
+                    // Réactiver les indicateurs sur le même fil COM, sans ouvrir de capture pour ces lignes.
+                    meters = r
+                        .sources
+                        .iter()
+                        .map(|s| {
+                            let meter = unsafe {
+                                win::device(&s.id)
+                                    .ok()
+                                    .and_then(|d| d.Activate(CLSCTX_ALL, None).ok())
+                            };
+                            let next_try = if meter.is_some() { now } else { now + Duration::from_secs(2) };
+                            (s.id.clone(), meter, next_try)
+                        })
+                        .collect();
+                    if changed {
+                        capture = None;
+                        frame = Frame {
+                            selected: r.selected.clone(),
+                            ..Frame::default()
+                        };
+                        retry = now;
+                    }
+                    request = r;
+                }
             }
             if request.sources.is_empty() {
                 capture = None;
@@ -396,7 +426,8 @@ mod native {
                 publish(&shared, frame.clone());
                 continue;
             }
-            if capture.is_none() && Instant::now() >= retry {
+            let now = Instant::now();
+            if capture.is_none() && now >= retry {
                 if let Some(source) = &request.selected {
                     match unsafe { Capture::open(source) } {
                         Ok(c) => {
@@ -408,21 +439,22 @@ mod native {
                         Err(e) => {
                             frame.ready = false;
                             frame.error = Some(e);
-                            retry = Instant::now() + Duration::from_secs(2);
+                            retry = now + Duration::from_secs(2);
                         }
                     }
                 }
             }
             frame.levels = meters
                 .iter_mut()
-                .map(|(id, m)| {
+                .map(|(id, m, next_try)| {
                     let level = m.as_ref().and_then(|m| unsafe { m.GetPeakValue().ok() });
-                    if level.is_none() {
+                    if level.is_none() && now >= *next_try {
                         *m = unsafe {
                             win::device(id)
                                 .ok()
                                 .and_then(|d| d.Activate(CLSCTX_ALL, None).ok())
                         };
+                        *next_try = now + Duration::from_secs(2);
                     }
                     (id.clone(), level.map(amplitude_db))
                 })
@@ -523,5 +555,28 @@ mod tests {
         };
         m.configure(vec![s.clone()], Some(s.clone()));
         wait(&|f| f.selected.as_ref() == Some(&s));
+    }
+    #[test]
+    fn monitor_au_repos_ne_reveille_pas() {
+        let m = Monitor::new(true);
+        let v0 = m.frame().version;
+        std::thread::sleep(Duration::from_millis(180));
+        assert_eq!(m.frame().version, v0, "aucun reveil tant qu'aucune source n'est demandee");
+        let s = Source { id: "demo-output".into(), output: true };
+        m.configure(vec![s.clone()], Some(s.clone()));
+        let until = Instant::now() + Duration::from_secs(2);
+        while !m.frame().ready {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        m.stop();
+        let until = Instant::now() + Duration::from_secs(2);
+        while m.frame().ready {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let v_idle = m.frame().version;
+        std::thread::sleep(Duration::from_millis(180));
+        assert_eq!(m.frame().version, v_idle, "apres stop(), la version reste figee sans reveil 20 Hz");
     }
 }

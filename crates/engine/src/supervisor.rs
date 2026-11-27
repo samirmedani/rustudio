@@ -26,9 +26,24 @@ pub fn watch_parent() {
     std::process::exit(0);
 }
 
+fn health_with(agent: &ureq::Agent, port: u16) -> Option<Value> {
+    agent.get(&format!("http://127.0.0.1:{port}/api/health")).call().ok()?.into_json::<Value>().ok()
+}
+
 pub fn health(port: u16) -> Option<Value> {
     let agent = crate::net::agent(Duration::from_secs(3), 5, &crate::net::ua());
-    agent.get(&format!("http://127.0.0.1:{port}/api/health")).call().ok()?.into_json::<Value>().ok()
+    health_with(&agent, port)
+}
+
+fn sleep_interruptible(dur: Duration, stop: &AtomicBool) -> bool {
+    let deadline = Instant::now() + dur;
+    while Instant::now() < deadline {
+        if stop.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())));
+    }
+    stop.load(Ordering::SeqCst)
 }
 
 fn spawn_child(cfg: &Config, restarts: u32) -> std::io::Result<Child> {
@@ -50,7 +65,8 @@ fn spawn_child(cfg: &Config, restarts: u32) -> std::io::Result<Child> {
 pub fn supervise(cfg: Config, stop: Arc<AtomicBool>) {
     crate::log::set_file(cfg.log_path());
     crate::log::set_prefix("[superviseur] ");
-    if health(cfg.port).is_some() {
+    let agent = crate::net::agent(Duration::from_secs(3), 5, &crate::net::ua());
+    if health_with(&agent, cfg.port).is_some() {
         logf!("Un moteur répond déjà sur le port {} : rien à faire", cfg.port);
         return;
     }
@@ -61,29 +77,27 @@ pub fn supervise(cfg: Config, stop: Arc<AtomicBool>) {
             Ok(c) => c,
             Err(e) => {
                 logf!("Lancement du moteur impossible : {e}");
-                std::thread::sleep(Duration::from_secs(5));
+                if sleep_interruptible(Duration::from_secs(5), &stop) {
+                    return;
+                }
                 continue;
             }
         };
         let t0 = Instant::now();
         let mut last_ok = Instant::now();
         let mut reason: Option<String> = None;
+        let mut exit_status: Option<std::process::ExitStatus> = None;
         while reason.is_none() {
-            for _ in 0..15 {
-                std::thread::sleep(Duration::from_millis(100));
-                if stop.load(Ordering::SeqCst) {
-                    break;
-                }
-            }
-            if stop.load(Ordering::SeqCst) {
+            if sleep_interruptible(Duration::from_millis(1500), &stop) {
                 reason = Some("arrêt du service".into());
                 break;
             }
             if let Ok(Some(st)) = child.try_wait() {
+                exit_status = Some(st);
                 reason = Some(format!("moteur arrêté (code {})", st.code().unwrap_or(-1)));
                 break;
             }
-            match health(cfg.port) {
+            match health_with(&agent, cfg.port) {
                 Some(h) => {
                     last_ok = Instant::now();
                     let age = h.get("loop_age_ms").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -96,24 +110,30 @@ pub fn supervise(cfg: Config, stop: Arc<AtomicBool>) {
                 None => {}
             }
         }
-        if child.try_wait().ok().flatten().is_none() {
+        if exit_status.is_none() {
+            exit_status = child.try_wait().ok().flatten();
+        }
+        if exit_status.is_none() {
             drop(child.stdin.take()); // l'enfant s'arrete proprement s'il le peut
             let t = Instant::now();
             while t.elapsed() < Duration::from_millis(if stop.load(Ordering::SeqCst) { 3000 } else { 300 }) {
-                if child.try_wait().ok().flatten().is_some() {
+                if let Ok(Some(st)) = child.try_wait() {
+                    exit_status = Some(st);
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            let _ = child.kill(); // TerminateProcess : fonctionne meme si un appel au pilote est bloque
-            let _ = child.wait();
+            if exit_status.is_none() {
+                let _ = child.kill(); // TerminateProcess : fonctionne meme si un appel au pilote est bloque
+                exit_status = child.wait().ok();
+            }
         }
         if stop.load(Ordering::SeqCst) {
             log("Arrêt du moteur (service arrêté)");
             return;
         }
-        let rc = child.try_wait().ok().flatten().and_then(|s| s.code()).unwrap_or(-1);
-        if rc == EXIT_PORT_BUSY && health(cfg.port).is_some() {
+        let rc = exit_status.and_then(|s| s.code()).unwrap_or(-1);
+        if rc == EXIT_PORT_BUSY && health_with(&agent, cfg.port).is_some() {
             log("Un autre moteur occupe le port : arrêt du superviseur");
             return;
         }
@@ -122,10 +142,12 @@ pub fn supervise(cfg: Config, stop: Arc<AtomicBool>) {
             quick_fails = 0;
             0.3
         } else {
-            quick_fails = if t0.elapsed() < Duration::from_secs(60) { quick_fails + 1 } else { 0 };
-            if quick_fails <= 1 { 1.0 } else { 30f64.min(2f64.powi(quick_fails as i32 - 1)) }
+            quick_fails = if t0.elapsed() < Duration::from_secs(60) { quick_fails.saturating_add(1) } else { 0 };
+            if quick_fails <= 1 { 1.0 } else { 30f64.min(2f64.powi(quick_fails.min(6) as i32 - 1)) }
         };
         logf!("Relance du moteur : {}", reason.unwrap_or_default());
-        std::thread::sleep(Duration::from_secs_f64(delay));
+        if sleep_interruptible(Duration::from_secs_f64(delay), &stop) {
+            return;
+        }
     }
 }

@@ -62,12 +62,12 @@ pub fn set_enabled(pref: &Path, on: bool) -> Result<(), String> {
 pub fn start(pref: PathBuf) {
     #[cfg(windows)]
     std::thread::spawn(move || {
-        let mut seen = std::collections::HashSet::new();
+        let mut state = win::RouteState::default();
         let journal = pref.with_extension("log");
         note(&journal, "démarrage de la vérification des sorties par appli");
         loop {
             if enabled(&pref) {
-                for line in win::route_running(&mut seen) {
+                for line in win::route_running(&mut state) {
                     note(&journal, &line);
                 }
             }
@@ -86,7 +86,7 @@ pub fn run_once() -> Vec<String> {
     {
         let mut lines = vec![format!("préférence {} (active : {})", default_pref().display(), enabled(&default_pref()))];
         lines.extend(win::describe());
-        lines.extend(win::route_running(&mut std::collections::HashSet::new()));
+        lines.extend(win::route_running(&mut win::RouteState::default()));
         lines
     }
     #[cfg(not(windows))]
@@ -154,33 +154,43 @@ mod win {
         format!("\\\\?\\SWD#MMDEVAPI#{endpoint}#{{e6327cad-dcec-4949-ae8a-991e976a79d2}}")
     }
 
-    fn running() -> Vec<(u32, String)> {
+    #[derive(Default)]
+    pub struct RouteState {
+        checked: HashSet<u32>,
+        targets: Vec<(String, String)>,
+    }
+
+    fn running_unseen(skip: &HashSet<u32>) -> (HashSet<u32>, Vec<(u32, String)>) {
+        let mut live = HashSet::new();
         let mut out = vec![];
         unsafe {
-            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return out };
+            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return (live, out) };
             let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
             let mut ok = Process32FirstW(snap, &mut entry).is_ok();
             while ok {
                 let pid = entry.th32ProcessID;
-                if let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
-                    let mut buf = [0u16; 1024];
-                    let mut len = buf.len() as u32;
-                    if QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok() {
-                        out.push((pid, String::from_utf16_lossy(&buf[..len as usize])));
+                live.insert(pid);
+                if !skip.contains(&pid) {
+                    if let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                        let mut buf = [0u16; 1024];
+                        let mut len = buf.len() as u32;
+                        if QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok() {
+                            out.push((pid, String::from_utf16_lossy(&buf[..len as usize])));
+                        }
+                        let _ = CloseHandle(h);
                     }
-                    let _ = CloseHandle(h);
                 }
                 ok = Process32NextW(snap, &mut entry).is_ok();
             }
             let _ = CloseHandle(snap);
         }
-        out
+        (live, out)
     }
 
     /// Ce que voit une passe : sorties de la GoXLR et programmes reconnus.
     pub fn describe() -> Vec<String> {
         let mut lines: Vec<String> = crate::audio::active_endpoints(false).into_iter().filter(|e| e.goxlr).map(|e| format!("sortie {} = {}", e.name, e.id)).collect();
-        let all = running();
+        let (_, all) = running_unseen(&HashSet::new());
         lines.push(format!("{} programmes lisibles", all.len()));
         lines.extend(all.into_iter().filter_map(|(pid, path)| channel_for(&path).map(|c| format!("programme {pid} {path} -> {c}"))));
         lines
@@ -188,23 +198,33 @@ mod win {
 
     /// Une passe : chaque programme connu, lancé, sans sortie choisie, part sur la sortie de sa voie. Rend une
     /// ligne de journal par programme traité.
-    pub fn route_running(seen: &mut HashSet<u32>) -> Vec<String> {
+    pub fn route_running(state: &mut RouteState) -> Vec<String> {
         let mut journal = vec![];
         let outputs = crate::audio::active_endpoints(false);
         // un choix qui vise une sortie encore branchée est gardé ; un choix vers un ancien périphérique est remplacé
         let present: Vec<HSTRING> = outputs.iter().map(|e| HSTRING::from(device_path(&e.id))).collect();
-        let targets: Vec<(String, String)> = outputs.into_iter().filter(|e| e.goxlr).map(|e| (e.name, e.id)).collect();
-        let processes = running();
-        seen.retain(|pid| processes.iter().any(|(p, _)| p == pid));
-        let todo: Vec<(u32, String, &str, String)> = processes
-            .into_iter()
-            .filter(|(pid, _)| !seen.contains(pid))
-            .filter_map(|(pid, path)| {
-                let channel = channel_for(&path)?;
-                let endpoint = targets.iter().find(|(name, _)| name == channel)?.1.clone();
-                Some((pid, endpoint, channel, path))
-            })
-            .collect();
+        let mut targets: Vec<(String, String)> = outputs.into_iter().filter(|e| e.goxlr).map(|e| (e.name, e.id)).collect();
+        targets.sort();
+        if targets != state.targets {
+            state.checked.clear();
+            state.targets = targets.clone();
+        }
+        if targets.is_empty() {
+            return journal;
+        }
+        let (live, processes) = running_unseen(&state.checked);
+        state.checked.retain(|pid| live.contains(pid));
+        let mut todo: Vec<(u32, String, &str, String)> = vec![];
+        for (pid, path) in processes {
+            if let Some(channel) = channel_for(&path) {
+                if let Some((_, endpoint)) = targets.iter().find(|(name, _)| name == channel) {
+                    todo.push((pid, endpoint.clone(), channel, path));
+                    continue;
+                }
+            }
+            // Programme deja inspecte (hors liste ou voie absente) : inutile de rouvrir son handle toutes les 10 s.
+            state.checked.insert(pid);
+        }
         if todo.is_empty() {
             return journal;
         }
@@ -217,7 +237,7 @@ mod win {
                     Some(std::mem::transmute::<*mut core::ffi::c_void, HSTRING>(current))
                 };
                 for (pid, endpoint, channel, path) in todo {
-                    seen.insert(pid);
+                    state.checked.insert(pid);
                     let name = path.rsplit('\\').next().unwrap_or(&path).to_owned();
                     // Windows répond par une erreur quand aucun choix n'est mémorisé pour ce programme.
                     // Un choix existant (fait par l'utilisateur, ou par nous) est gardé.

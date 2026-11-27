@@ -80,7 +80,16 @@ fn status(live: Option<&Value>) -> (&'static str, String) {
     (key, text)
 }
 
-fn build_menu(st: Option<&Value>, live_mode: bool) -> Result<Menu, String> {
+fn is_listening(live: Option<&Value>, st: Option<&Value>) -> bool {
+    live.is_some_and(|l| l["listening"].as_f64().unwrap_or(0.) > 0.)
+        || st.is_some_and(|s| {
+            s["listening"] == true
+                || (s["state"]["routing"]["Microphone"]["Headphones"] == true
+                    && s["state"]["volumes"]["MicMonitor"].as_i64().unwrap_or(0) > 0)
+        })
+}
+
+fn build_menu(st: Option<&Value>, live_mode: bool, listening: bool, startup: bool) -> Result<Menu, String> {
     let e = |e: tray_icon::menu::Error| e.to_string();
     let connected = st.is_some_and(|s| s["connected"] == true);
     let muted = st.is_some_and(|s| s["state"]["mutes"]["Mic"] == true || s["state"]["partial"]["Mic"].is_string());
@@ -110,7 +119,6 @@ fn build_menu(st: Option<&Value>, live_mode: bool) -> Result<Menu, String> {
         let diag = MenuItem::with_id("diag", "Diagnostic GoXLR Mini…", true, None);
         let mut items: Vec<&dyn IsMenuItem> = vec![&mixer, &mic];
         // retour de ta voix dans le casque en cours : on sait le couper depuis le menu
-        let listening = st.is_some_and(|s| s["listening"] == true);
         let monitor_stop = MenuItem::with_id("monitor-stop", "Couper le retour casque", true, None);
         if listening {
             items.push(&monitor_stop);
@@ -125,7 +133,7 @@ fn build_menu(st: Option<&Value>, live_mode: bool) -> Result<Menu, String> {
     }
     menu.append(&PredefinedMenuItem::separator()).map_err(e)?;
     if live_mode {
-        menu.append(&CheckMenuItem::with_id("startup", "Démarrer avec Windows", true, session::startup_enabled(), None)).map_err(e)?;
+        menu.append(&CheckMenuItem::with_id("startup", "Démarrer avec Windows", true, startup, None)).map_err(e)?;
     }
     menu.append(&MenuItem::with_id("quit", "Quitter Rustudio", true, None)).map_err(e)?;
     Ok(menu)
@@ -205,10 +213,11 @@ pub fn start(
 ) -> Result<(), String> {
     let icons = icons()?;
     let live_mode = client.is_live();
+    let initial_startup = if live_mode { session::startup_enabled() } else { false };
     let tray = TrayIconBuilder::new()
         .with_icon(icons.off.clone())
         .with_tooltip("Rustudio")
-        .with_menu(Box::new(build_menu(None, live_mode)?))
+        .with_menu(Box::new(build_menu(None, live_mode, false, initial_startup)?))
         .with_menu_on_left_click(false)
         .build()
         .map_err(|e| e.to_string())?;
@@ -248,21 +257,39 @@ pub fn start(
         let mut previous_mic: Option<String> = None;
         let (mut icon_key, mut tip, mut menu_key) = (String::new(), String::new(), String::new());
         let (mut last_ok, mut last_rescue) = (Instant::now(), Instant::now() - Duration::from_secs(120));
-        let mut tick = 0u64;
+        let mut cached_state: Option<Value> = None;
+        let mut cached_ver: Option<(String, u64)> = None;
+        let mut startup = initial_startup;
+        let mut startup_checked = Instant::now();
         loop {
             let reader = watch.clone();
-            let with_state = tick.is_multiple_of(3);
-            let (live, state) = cx
+            let prev_ver = cached_ver.clone();
+            let need_startup = live_mode && startup_checked.elapsed() >= Duration::from_secs(3);
+            let (live, fetched_state, fetched_startup) = cx
                 .background_executor()
                 .spawn(async move {
                     let live = reader.live_state().ok();
-                    let state = if with_state && live.is_some() { reader.get("/api/state").ok() } else { None };
-                    (live, state)
+                    let next_ver = live.as_ref().map(|l| (l["boot"].as_str().unwrap_or("").to_owned(), l["v"].as_u64().unwrap_or(0)));
+                    // On ne relit /api/state (complet) que si la version du moteur a change.
+                    let state = match (&live, &next_ver) {
+                        (Some(_), Some(nv)) if prev_ver.as_ref() != Some(nv) => reader.get("/api/state").ok(),
+                        _ => None,
+                    };
+                    let startup = need_startup.then(session::startup_enabled);
+                    (live, state, startup)
                 })
                 .await;
+            if let Some(s) = fetched_startup {
+                startup = s;
+                startup_checked = Instant::now();
+            }
             match &live {
                 Some(l) => {
                     last_ok = Instant::now();
+                    if let Some(state) = fetched_state {
+                        cached_ver = Some((l["boot"].as_str().unwrap_or("").to_owned(), l["v"].as_u64().unwrap_or(0)));
+                        cached_state = Some(state);
+                    }
                     if live_mode
                         && let Some(v) = l["app_version"].as_str()
                             && should_relaunch(v, crate::VERSION, installed_exe(v).map(|_| v)) && cx.update(|cx| relaunch(v, cx)).unwrap_or(false) {
@@ -281,6 +308,8 @@ pub fn start(
                 }
                 None => {
                     previous_mic = None;
+                    cached_state = None;
+                    cached_ver = None;
                     if live_mode && last_ok.elapsed() > Duration::from_secs(20) && last_rescue.elapsed() > Duration::from_secs(60) {
                         last_rescue = Instant::now();
                         session::start_service();
@@ -297,25 +326,23 @@ pub fn start(
                 let _ = tray.set_tooltip(Some(&text));
                 tip = text;
             }
-            if with_state {
-                let s = state.as_ref();
-                let mk = format!(
-                    "{}|{}|{}|{}|{}|{}|{}",
-                    s.map(|s| s["connected"].to_string()).unwrap_or_default(),
-                    s.map(|s| s["state"]["mutes"]["Mic"].to_string()).unwrap_or_default(),
-                    s.map(|s| s["state"]["partial"]["Mic"].to_string()).unwrap_or_default(),
-                    s.map(|s| s["state"]["scene"].to_string()).unwrap_or_default(),
-                    s.and_then(|s| s["state"]["user_scenes"].as_object()).map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
-                    s.map(|s| s["listening"].to_string()).unwrap_or_default(),
-                    session::startup_enabled(),
-                );
-                if mk != menu_key
-                    && let Ok(menu) = build_menu(s, live_mode) {
-                        tray.set_menu(Some(Box::new(menu)));
-                        menu_key = mk;
-                    }
-            }
-            tick += 1;
+            let s = cached_state.as_ref();
+            let listening = is_listening(live.as_ref(), s);
+            let mk = format!(
+                "{}|{}|{}|{}|{}|{}|{}",
+                s.map(|s| s["connected"].to_string()).unwrap_or_default(),
+                s.map(|s| s["state"]["mutes"]["Mic"].to_string()).unwrap_or_default(),
+                s.map(|s| s["state"]["partial"]["Mic"].to_string()).unwrap_or_default(),
+                s.map(|s| s["state"]["scene"].to_string()).unwrap_or_default(),
+                s.and_then(|s| s["state"]["user_scenes"].as_object()).map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
+                listening,
+                startup,
+            );
+            if mk != menu_key
+                && let Ok(menu) = build_menu(s, live_mode, listening, startup) {
+                    tray.set_menu(Some(Box::new(menu)));
+                    menu_key = mk;
+                }
             cx.background_executor().timer(Duration::from_millis(if native_osd { 300 } else { 1000 })).await;
         }
     })
@@ -333,6 +360,8 @@ pub fn start(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     #[test]
     fn relance_apres_mise_a_jour_ou_retour() {
         assert!(super::should_relaunch("5.7.1", "5.7.0", Some("5.7.1")));
@@ -340,5 +369,14 @@ mod tests {
         assert!(!super::should_relaunch("5.7.0", "5.7.0", Some("5.7.0")));
         assert!(!super::should_relaunch("5.6.14", "5.7.0", Some("5.7.0")));
         assert!(!super::should_relaunch("5.6.14", "5.7.0", None));
+    }
+
+    #[test]
+    fn retour_casque_detecte_depuis_live_et_etat() {
+        assert!(!super::is_listening(None, None));
+        assert!(!super::is_listening(Some(&json!({"listening": 0.0})), Some(&json!({"state": {"routing": {"Microphone": {"Headphones": false}}, "volumes": {"MicMonitor": 0}}}))));
+        assert!(super::is_listening(Some(&json!({"listening": 12.5})), None));
+        assert!(super::is_listening(Some(&json!({"listening": 0.0})), Some(&json!({"state": {"routing": {"Microphone": {"Headphones": true}}, "volumes": {"MicMonitor": 128}}}))));
+        assert!(!super::is_listening(Some(&json!({"listening": 0.0})), Some(&json!({"state": {"routing": {"Microphone": {"Headphones": true}}, "volumes": {"MicMonitor": 0}}}))));
     }
 }

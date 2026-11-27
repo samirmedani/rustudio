@@ -2,6 +2,7 @@
 use crate::controller::Ctl;
 use rustudio_core::modules;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 
 pub const LOCAL_INDEX: &str = include_str!("../../../library/index.json");
 pub const INDEX_URL: &str = "https://github.com/samirmedani/rustudio/blob/main/library/index.json";
@@ -47,9 +48,14 @@ pub fn clean(index: &Value) -> Vec<Value> {
 }
 
 pub fn snapshot() -> Value {
-    let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap_or(json!({}));
-    json!({"source": "release", "modules": clean(&local), "fetched_at": null, "error": null,
-           "contribute_url": CONTRIBUTE_URL, "index_url": INDEX_URL})
+    static CACHE: OnceLock<Value> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let local: Value = serde_json::from_str(LOCAL_INDEX).unwrap_or(json!({}));
+            json!({"source": "release", "modules": clean(&local), "fetched_at": null, "error": null,
+                   "contribute_url": CONTRIBUTE_URL, "index_url": INDEX_URL})
+        })
+        .clone()
 }
 
 /// Compatible avec les anciennes interfaces : aucune fiche non publiée n'est téléchargée.

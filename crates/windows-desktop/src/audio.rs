@@ -229,21 +229,15 @@ mod win {
     }
 
     pub fn inventory() -> windows::core::Result<Value> {
-        // Sur un fil de travail Tauri, apparier chaque initialisation COM réussie.
-        struct ComGuard;
-        impl Drop for ComGuard {
-            fn drop(&mut self) { unsafe { CoUninitialize() }; }
-        }
-        unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
-            let _com = ComGuard;
+        com(|| unsafe {
             let e: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
             Ok(json!({
                 "status": "ok",
                 "outputs": inventory_side(&e, eRender)?,
                 "inputs": inventory_side(&e, eCapture)?,
             }))
-        }
+        })
+        .unwrap_or_else(|| Err(windows::core::Error::empty()))
     }
 
     pub fn defaults() -> [Option<String>; 4] {
@@ -254,33 +248,49 @@ mod win {
         .unwrap_or([None, None, None, None])
     }
 
-    /// Liste les identifiants des sorties actives exposees par le firmware Rustudio.
-    fn active_rustudio_outputs() -> Vec<String> {
+    /// Sorties actives et identifiants des sorties exposees par le firmware Rustudio en un seul parcours du registre.
+    pub fn active_render_with_rustudio() -> (Vec<Endpoint>, Vec<String>) {
         let mut out = vec![];
+        let mut rustudio_ids = vec![];
         let hk = RegKey::predef(HKEY_LOCAL_MACHINE);
-        let Ok(root) = hk.open_subkey_with_flags(format!(r"{BASE}\Render"), KEY_READ | KEY_WOW64_64KEY) else { return out };
+        let Ok(root) = hk.open_subkey_with_flags(format!(r"{BASE}\Render"), KEY_READ | KEY_WOW64_64KEY) else { return (out, rustudio_ids) };
         for guid in root.enum_keys().flatten() {
             let Ok(k) = root.open_subkey_with_flags(&guid, KEY_READ | KEY_WOW64_64KEY) else { continue };
             if k.get_value::<u32, _>("DeviceState").unwrap_or(0) != 1 {
                 continue;
             }
-            let Ok(p) = root.open_subkey_with_flags(format!(r"{guid}\Properties"), KEY_READ | KEY_WOW64_64KEY) else { continue };
-            let iface = p.get_value::<String, _>(IFACE).unwrap_or_default();
+            let p = root.open_subkey_with_flags(format!(r"{guid}\Properties"), KEY_READ | KEY_WOW64_64KEY).ok();
+            let get = |n: &str| p.as_ref().and_then(|p| p.get_value::<String, _>(n).ok()).unwrap_or_default();
+            let iface = get(IFACE);
+            let id = format!("{{0.0.0.00000000}}.{guid}");
             if is_rustudio_output(&iface) {
-                out.push(format!("{{0.0.0.00000000}}.{guid}"));
+                rustudio_ids.push(id.clone());
             }
+            let (name, goxlr) = goxlr_channel(&iface, get(DESC), false);
+            out.push(Endpoint { id, name, goxlr });
         }
-        out
+        (out, rustudio_ids)
     }
 
     /// Bascule en 24 bits / 48 kHz toute sortie du firmware Rustudio restee en cache 16 bits dans Windows.
     /// Sans effet si la sortie est deja en 24 bits / 48 kHz.
-    pub fn ensure_rustudio_24bit() -> i32 {
-        let ids = active_rustudio_outputs();
+    pub fn ensure_rustudio_24bit_ids(ids: Vec<String>, force: bool) -> i32 {
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
+        static LAST: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
         if ids.is_empty() {
             return 0;
         }
-        com(move || unsafe {
+        if !force {
+            let last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, prev)) = last.as_ref() {
+                if *prev == ids && at.elapsed() < Duration::from_secs(30) {
+                    return 0;
+                }
+            }
+        }
+        let ids_copy = ids.clone();
+        let changed = com(move || unsafe {
             let Ok(p) = CoCreateInstance::<_, IPolicyConfig>(&CLSID_POLICY_CONFIG, None, CLSCTX_ALL) else { return 0 };
             let mut dev_fmt = wav_ext_pcm24_48k();
             let mut mix_fmt = wav_ext_f32_48k();
@@ -308,15 +318,18 @@ mod win {
             }
             changed
         })
-        .unwrap_or(0)
+        .unwrap_or(0);
+        *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), ids_copy));
+        changed
     }
 
     /// Corrige seulement ce qui est faux : sortie hors GoXLR -> System (Chat pour les communications),
     /// entree autre que Chat Mic -> Chat Mic. Un choix deja sur la GoXLR (Jeu, Musique...) est garde.
     /// Renvoie le nombre de roles changes, -1 si la GoXLR n'expose pas ses voies.
     pub fn fix() -> i32 {
-        let _ = ensure_rustudio_24bit();
-        let (render, capture) = (active(false), active(true));
+        let (render, rustudio_ids) = active_render_with_rustudio();
+        let _ = ensure_rustudio_24bit_ids(rustudio_ids, true);
+        let capture = active(true);
         let sound = render.iter().find(|x| x.goxlr && x.name == SOUND).cloned();
         let voice = render.iter().find(|x| x.goxlr && x.name == VOICE).cloned().or(sound.clone());
         let mic = capture.iter().find(|x| x.goxlr && x.name == MIC).cloned();
@@ -359,8 +372,9 @@ pub fn inventory() -> Value {
 pub fn status() -> Value {
     #[cfg(windows)]
     {
-        let _ = win::ensure_rustudio_24bit();
-        status_from(&win::active(false), &win::active(true), win::defaults())
+        let (render, rustudio_ids) = win::active_render_with_rustudio();
+        let _ = win::ensure_rustudio_24bit_ids(rustudio_ids, false);
+        status_from(&render, &win::active(true), win::defaults())
     }
     #[cfg(not(windows))]
     {

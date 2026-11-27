@@ -6,6 +6,7 @@ use rustudio_core::dsp::{mic_type_preset, MIC_PRESETS};
 use rustudio_core::hpeq::{HEADPHONES, HP_BANDS, HP_CHANNELS, HP_Q, HP_STYLES};
 use rustudio_core::{lighting, scenes};
 use serde_json::{json, Map, Value};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 fn live_json(l: &crate::controller::Live) -> Value {
@@ -35,13 +36,14 @@ impl Ctl {
     pub fn live_snapshot(&self, want_level: bool) -> Value {
         let brief = self.updater.brief();
         let v = self.version();
-        let info = self.dev_info.lock().unwrap().clone();
+        let info = self.dev_info_lock().clone();
         let mut g = self.lock();
+        let now = Instant::now();
         if want_level {
-            g.level_until = Some(Instant::now() + Duration::from_secs(3));
+            g.level_until = Some(now + Duration::from_secs(3));
         }
         let s = &g.state;
-        let listening = g.listen_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0);
+        let listening = g.listen_until.map(|t| (t.saturating_duration_since(now).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0);
         // temps de réponse des commandes USB, chronométré par le fil USB lui-même : lu ici sans toucher à l'appareil
         let reply = &info.stats;
         let usb_reply = (g.connected && reply.reply_avg_ms > 0.0)
@@ -51,12 +53,12 @@ impl Ctl {
                "health": self.health_status(&g), "sim": self.simulated(), "osd": s.prefs.osd, "scene": s.scene,
                "modules": {"devices": self.module_devices_locked(&g, &info)},
                "app_version": VERSION, "supervised": self.cfg.supervised, "update": brief, "usb": g.usb, "listening": listening,
-               "sound_test": g.sound_test_until.is_some(), "usb_reply": usb_reply,
-               "ab": g.ab_until.map(|t| (t.saturating_duration_since(Instant::now()).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0)})
+               "sound_test": g.sound_testing(), "usb_reply": usb_reply,
+               "ab": g.ab_until.map(|t| (t.saturating_duration_since(now).as_secs_f64() * 10.0).round() / 10.0).unwrap_or(0.0)})
     }
 
     pub fn health(&self) -> Value {
-        let info = self.dev_info.lock().unwrap().clone();
+        let info = self.dev_info_lock().clone();
         let g = self.lock();
         let now = Instant::now();
         json!({
@@ -78,7 +80,7 @@ impl Ctl {
 
     pub fn snapshot(&self) -> Value {
         let update = self.update_snapshot();
-        let info = self.dev_info.lock().unwrap().clone();
+        let info = self.dev_info_lock().clone();
         let v = self.version();
         let (hp_live, hp_default) = {
             let g = self.lock();
@@ -106,10 +108,10 @@ impl Ctl {
     }
 }
 
-pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
+fn static_meta(mix2: bool) -> Map<String, Value> {
     let map = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), json!(v))).collect::<Map<_, _>>();
     let device = rustudio_core::modules::GOXLR_MINI;
-    json!({
+    let Value::Object(m) = json!({
         "channels": CHANNELS, "faders": FADERS, "inputs": INPUTS.iter().map(|(n, _, _)| *n).collect::<Vec<_>>(),
         "outputs": OUTPUTS.iter().map(|(n, _, _)| *n).filter(|o| mix2 || *o != "StreamMix2").collect::<Vec<_>>(),
         "vod_output": rustudio_core::routing::vod_output(mix2),
@@ -120,7 +122,6 @@ pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
         "channel_inputs": IN_CHANNEL.iter().map(|(i, c)| (c.to_string(), json!(i))).collect::<Map<_, _>>(),
         "mic_presets": MIC_PRESETS.iter().map(|p| (p.key.to_string(), json!({"label": p.label, "desc": p.desc, "dsp": (p.dsp)()}))).collect::<Map<_, _>>(),
         "scenes": scenes::SCENES.iter().map(|s| (s.key.to_string(), json!({"label": s.label, "desc": s.desc, "faders": s.faders_map(), "mic_preset": s.mic_preset}))).collect::<Map<_, _>>(),
-        "themes": THEMES.iter().map(|t| (t.key.to_string(), json!({"label": t.label, "preview": lighting::theme_preview(st, t.key)}))).collect::<Map<_, _>>(),
         "animations": ANIMATIONS.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
         "fader_styles": FADER_STYLES.iter().map(|(k, _, _)| *k).collect::<Vec<_>>(),
         "eq_bands": EQ_BANDS.iter().map(|(k, _, _)| *k).collect::<Vec<_>>(), "ratios": RATIOS,
@@ -132,5 +133,19 @@ pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
         "hp_styles": HP_STYLES.iter().map(|s| (s.key.to_string(), json!({"label": s.label, "desc": s.desc, "bands": s.bands, "headphone": s.headphone}))).collect::<Map<_, _>>(),
         "headphones": HEADPHONES.iter().map(|(n, f)| (n.to_string(), json!(f.iter().map(|(k, f0, g, q)| json!([k, f0, g, q])).collect::<Vec<_>>()))).collect::<Map<_, _>>(),
         "device": {"id": device.id, "name": device.name, "vendor": device.vendor, "module": device.id, "official": true},
-    })
+    }) else {
+        unreachable!()
+    };
+    m
+}
+
+pub fn meta(st: &rustudio_core::State, mix2: bool) -> Value {
+    static BASE: OnceLock<Map<String, Value>> = OnceLock::new();
+    static MIX2: OnceLock<Map<String, Value>> = OnceLock::new();
+    let mut m = if mix2 { MIX2.get_or_init(|| static_meta(true)) } else { BASE.get_or_init(|| static_meta(false)) }.clone();
+    m.insert(
+        "themes".into(),
+        Value::Object(THEMES.iter().map(|t| (t.key.to_string(), json!({"label": t.label, "preview": lighting::theme_preview(st, t.key)}))).collect()),
+    );
+    Value::Object(m)
 }

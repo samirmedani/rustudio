@@ -87,10 +87,10 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY};
 
     type Keys = Option<(u32, u32)>;
+    type Reply = mpsc::SyncSender<Result<(), String>>;
     struct Worker {
         thread: u32,
-        requests: mpsc::Sender<Keys>,
-        replies: mpsc::Receiver<Result<(), String>>,
+        requests: mpsc::Sender<(Keys, Reply)>,
     }
     static WORKER: Mutex<Option<Worker>> = Mutex::new(None);
     const ID: i32 = 1;
@@ -100,8 +100,7 @@ mod win {
         if worker.is_some() {
             return;
         }
-        let (requests, wanted) = mpsc::channel::<Keys>();
-        let (answer, replies) = mpsc::channel();
+        let (requests, wanted) = mpsc::channel::<(Keys, Reply)>();
         let (ready, thread) = mpsc::channel();
         // Un raccourci sans fenêtre arrive dans la file de messages du fil qui l'a enregistré : ce fil fait tout.
         std::thread::spawn(move || unsafe {
@@ -113,7 +112,7 @@ mod win {
                 match msg.message {
                     WM_HOTKEY => action(),
                     WM_APP => {
-                        while let Ok(keys) = wanted.try_recv() {
+                        while let Ok((keys, answer)) = wanted.try_recv() {
                             if bound {
                                 let _ = UnregisterHotKey(None, ID);
                                 bound = false;
@@ -132,16 +131,17 @@ mod win {
             }
         });
         if let Ok(thread) = thread.recv_timeout(std::time::Duration::from_secs(2)) {
-            *worker = Some(Worker { thread, requests, replies });
+            *worker = Some(Worker { thread, requests });
         }
     }
 
     pub fn bind(keys: Keys) -> Result<(), String> {
         let worker = WORKER.lock().unwrap_or_else(|e| e.into_inner());
         let worker = worker.as_ref().ok_or("Raccourcis indisponibles.")?;
-        worker.requests.send(keys).map_err(|_| "Raccourcis indisponibles.")?;
+        let (answer, reply) = mpsc::sync_channel(1);
+        worker.requests.send((keys, answer)).map_err(|_| "Raccourcis indisponibles.")?;
         unsafe { PostThreadMessageW(worker.thread, WM_APP, WPARAM(0), LPARAM(0)) }.map_err(|_| "Raccourcis indisponibles.")?;
-        worker.replies.recv_timeout(std::time::Duration::from_secs(2)).map_err(|_| "Raccourcis indisponibles.".to_owned())?
+        reply.recv_timeout(std::time::Duration::from_secs(2)).map_err(|_| "Raccourcis indisponibles.".to_owned())?
     }
 }
 

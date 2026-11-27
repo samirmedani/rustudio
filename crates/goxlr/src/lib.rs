@@ -155,6 +155,10 @@ impl Tusb for Combined {
         t.close(h)
     }
     fn status_text(&self, code: u32) -> String {
+        // Les codes Thesycon (TSTATUS_*) sont >= 0xEE00_0000 ; en dessous, il s'agit d'un code Win32 (WinUSB).
+        if code < 0x10000 {
+            return self.rustudio.status_text(code);
+        }
         self.official.as_ref().map(|t| t.status_text(code)).unwrap_or_else(|| self.rustudio.status_text(code))
     }
     fn stream_stats(&mut self, h: u32) -> Option<stream::StreamStats> {
@@ -267,6 +271,13 @@ pub struct GoXlr {
     pub log: Box<dyn Fn(&str) + Send>,
 }
 
+struct BusyGuard<'a>(&'a Mutex<DevInfo>);
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).busy_since = None;
+    }
+}
+
 impl GoXlr {
     pub fn new(loader: Loader) -> Self {
         GoXlr {
@@ -280,20 +291,23 @@ impl GoXlr {
         }
     }
 
+    fn info_lock(&self) -> std::sync::MutexGuard<'_, DevInfo> {
+        self.info.lock().unwrap_or_else(|e| e.into_inner())
+    }
     pub fn is_open(&self) -> bool {
         self.h.is_some()
     }
     fn stage(&self, s: Option<&str>) {
-        self.info.lock().unwrap().stage = s.map(String::from);
+        self.info_lock().stage = s.map(String::from);
     }
     pub fn fw(&self) -> [u32; 4] {
-        self.info.lock().unwrap().fw
+        self.info_lock().fw
     }
     pub fn mix2(&self) -> bool {
-        self.info.lock().unwrap().mix2()
+        self.info_lock().mix2()
     }
     pub fn submixes(&self) -> bool {
-        self.info.lock().unwrap().submixes()
+        self.info_lock().submixes()
     }
     fn err(&self, what: &str, code: u32) -> DevError {
         let text = self.tusb.as_ref().map(|t| t.status_text(code)).unwrap_or_else(|| code.to_string());
@@ -331,7 +345,7 @@ impl GoXlr {
             if id.contains("VID_1220") || rustudio {
                 self.h = Some(h);
                 {
-                    let mut info = self.info.lock().unwrap();
+                    let mut info = self.info_lock();
                     info.stats.opens += 1;
                     info.rustudio = rustudio;
                 }
@@ -364,9 +378,10 @@ impl GoXlr {
 
     fn req_out(&mut self, request: u32, data: &[u8]) -> Res<()> {
         let h = self.h.ok_or_else(|| DevError::Device("GoXLR non connectée".into()))?;
-        self.info.lock().unwrap().busy_since = Some(Instant::now());
+        self.info_lock().busy_since = Some(Instant::now());
+        let _guard = BusyGuard(&self.info);
         let code = self.tusb.as_mut().unwrap().vendor_out(h, request, data);
-        self.info.lock().unwrap().busy_since = None;
+        drop(_guard);
         if code != 0 {
             return Err(self.err(&format!("VendorOut({request})"), code));
         }
@@ -375,16 +390,17 @@ impl GoXlr {
 
     fn req_in(&mut self, request: u32, len: usize) -> Res<Vec<u8>> {
         let h = self.h.ok_or_else(|| DevError::Device("GoXLR non connectée".into()))?;
-        self.info.lock().unwrap().busy_since = Some(Instant::now());
+        self.info_lock().busy_since = Some(Instant::now());
+        let _guard = BusyGuard(&self.info);
         let r = self.tusb.as_mut().unwrap().vendor_in(h, request, len);
-        self.info.lock().unwrap().busy_since = None;
+        drop(_guard);
         r.map_err(|code| self.err(&format!("VendorIn({request})"), code))
     }
 
     /// Le firmware Rustudio traite la commande des sa reception : sa reponse se lit sans les 30 ms d'attente
     /// qu'exige le pilote officiel.
     fn read_timing(&self) -> Timing {
-        if self.info.lock().unwrap().rustudio {
+        if self.info_lock().rustudio {
             Timing { first_read_wait: Duration::ZERO, retry_wait: Duration::from_millis(1), ..self.timing }
         } else {
             self.timing
@@ -406,7 +422,7 @@ impl GoXlr {
 
     fn set_count(&mut self, c: u32) {
         self.count = c;
-        self.info.lock().unwrap().count = c;
+        self.info_lock().count = c;
     }
 
     pub fn command(&mut self, command_id: u32, body: &[u8]) -> Res<Vec<u8>> {
@@ -417,11 +433,14 @@ impl GoXlr {
         if self.h.is_none() {
             return Err(DevError::Device("GoXLR non connectée".into()));
         }
+        if body.len() > u16::MAX as usize {
+            return Err(DevError::Device("Commande USB trop longue".into()));
+        }
         if command_id == 0 {
             self.set_count(0);
         } else {
             if self.count >= INDEX_MAX {
-                self.info.lock().unwrap().stats.index_resets += 1; // comme goxlr-utility : remise a zero avant debordement
+                self.info_lock().stats.index_resets += 1; // comme goxlr-utility : remise a zero avant debordement
                 self.command_ex(0, &[], false)?;
             }
             self.set_count(self.count + 1);
@@ -435,7 +454,7 @@ impl GoXlr {
         frame.extend_from_slice(body);
         let sent = Instant::now();
         self.req_out(2, &frame)?;
-        self.info.lock().unwrap().stats.commands += 1;
+        self.info_lock().stats.commands += 1;
         let t0 = Instant::now();
         let timing = self.read_timing();
         let mut wait = timing.first_read_wait;
@@ -447,7 +466,7 @@ impl GoXlr {
             let resp = match self.req_in(3, 1040) {
                 Ok(r) => r,
                 Err(e) if e.code() == Some(STATUS_STALL) => {
-                    self.info.lock().unwrap().stats.stalls += 1;
+                    self.info_lock().stats.stalls += 1;
                     if wait.is_zero() {
                         std::thread::yield_now();
                     }
@@ -460,13 +479,13 @@ impl GoXlr {
                 let ridx = u16::from_le_bytes([resp[6], resp[7]]);
                 if ridx == idx {
                     let end = (16 + rlen).min(resp.len());
-                    self.info.lock().unwrap().stats.note_reply(sent.elapsed().as_secs_f64() * 1000.0);
+                    self.info_lock().stats.note_reply(sent.elapsed().as_secs_f64() * 1000.0);
                     return Ok(resp[16..end].to_vec());
                 }
             }
         }
         if retry && command_id != 0 {
-            self.info.lock().unwrap().stats.resyncs += 1;
+            self.info_lock().stats.resyncs += 1;
             (self.log)("Index de commande désynchronisé : remise à zéro et nouvel essai");
             self.command_ex(0, &[], false)?;
             return self.command_ex(command_id, body, false);
@@ -486,7 +505,7 @@ impl GoXlr {
         let p = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
         let build = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
         let fw = [p >> 12, (p >> 8) & 0xF, p & 0xFF, build];
-        let mut i = self.info.lock().unwrap();
+        let mut i = self.info_lock();
         i.serial = Some(serial);
         i.fw = fw;
         let version = fw.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
@@ -698,5 +717,12 @@ mod tests {
     fn firmware_rustudio_lu_sans_attente() {
         assert!(elapsed(true) < Duration::from_millis(50), "5 commandes sans attente de 30 ms");
         assert!(elapsed(false) >= Duration::from_millis(150), "pilote officiel : 30 ms avant chaque lecture");
+    }
+
+    #[test]
+    fn commande_trop_longue_refusee_sans_troncature() {
+        let mut goxlr = device(true);
+        let err = goxlr.command(0x80F, &vec![0u8; u16::MAX as usize + 1]).unwrap_err();
+        assert!(err.to_string().contains("trop longue"), "{err}");
     }
 }

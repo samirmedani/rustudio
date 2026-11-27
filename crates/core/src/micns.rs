@@ -70,19 +70,24 @@ pub fn is_guid(s: &str) -> bool {
 /// même nom), ou rien. `target` : identifiant de l'entrée et son nombre de voies.
 pub fn config_text(ns: &MicNs, target: Option<(&str, u16)>, plugin_dir: &str, why_off: &str) -> String {
     let mut lines = vec!["# Rustudio : suppression du bruit du micro. Fichier genere : regle-la dans Rustudio (page Micro).".to_string()];
+    let clean = |s: &str| s.chars().filter(|c| !matches!(c, '"' | '\r' | '\n')).collect::<String>();
     match target.filter(|_| ns.enabled) {
         Some((guid, channels)) => {
             let plugin = if channels >= 2 { PLUGIN_STEREO } else { PLUGIN_MONO };
-            lines.push(format!("Device: {}", guid.to_uppercase()));
+            let dir = clean(plugin_dir);
+            let dir = dir.trim_end_matches(['\\', '/']);
+            lines.push(format!("Device: {}", clean(guid).to_uppercase()));
             lines.push(format!(
-                "VSTPlugin: Library \"{}\\{plugin}\" \"VAD Threshold (%)\" {} \"VAD Grace Period (ms)\" {} \"Retroactive VAD Grace (ms)\" 0",
-                plugin_dir.trim_end_matches('\\'),
-                ns.strength,
-                ns.grace_ms
+                "VSTPlugin: Library \"{dir}\\{plugin}\" \"VAD Threshold (%)\" {} \"VAD Grace Period (ms)\" {} \"Retroactive VAD Grace (ms)\" 0",
+                ns.strength.clamp(0, 99),
+                ns.grace_ms.clamp(0, 1000)
             ));
             lines.push("Device: all".into());
         }
-        None => lines.push(format!("# Suppression coupee{}.", if why_off.is_empty() { String::new() } else { format!(" ({why_off})") })),
+        None => {
+            let reason = clean(why_off);
+            lines.push(format!("# Suppression coupee{}.", if reason.is_empty() { String::new() } else { format!(" ({reason})") }));
+        }
     }
     let text = lines.join("\n") + "\n";
     text.chars().map(|c| if c.is_ascii() { c } else { '?' }).collect()
@@ -112,5 +117,14 @@ mod tests {
         assert!(config_text(&ns, Some(("{a}", 2)), "x", "").contains("rnnoise_stereo.dll"));
         let off = config_text(&MicNs::default(), Some(("{a}", 1)), "x", "désactivée");
         assert!(!off.contains("VSTPlugin") && !off.contains("Device:"));
+    }
+
+    #[test]
+    fn config_text_borne_valeurs_et_neutralise_injections() {
+        let ns = MicNs { enabled: true, strength: 150, grace_ms: -20, device: None };
+        let t = config_text(&ns, Some(("{a}\nDevice: all", 1)), "C:\\dir\"/\\", "");
+        assert!(t.contains("\"VAD Threshold (%)\" 99 \"VAD Grace Period (ms)\" 0"), "{t}");
+        assert!(t.contains(r#"Library "C:\dir\rnnoise_mono.dll""#), "{t}");
+        assert_eq!(t.lines().filter(|l| l.starts_with("Device:")).count(), 2, "{t}");
     }
 }

@@ -160,11 +160,35 @@ impl Inner {
         self.want
     }
     pub fn listening(&self) -> bool {
-        self.listen_until.is_some()
+        self.listen_until.is_some_and(|t| t > Instant::now())
+    }
+    pub fn sound_testing(&self) -> bool {
+        self.sound_test_until.is_some_and(|t| t > Instant::now())
     }
     /// Traitements du micro contournés : écoute « Avant » ou enregistrement de l'empreinte vocale.
     pub fn dsp_bypassed(&self) -> bool {
-        self.ab_until.is_some() || self.voice_capture
+        self.ab_until.is_some_and(|t| t > Instant::now()) || self.voice_capture
+    }
+    /// Nettoie les états temporaires expirés (écoute, test du son, Avant/Après), même hors ligne.
+    pub fn expire_ephemeral(&mut self) -> bool {
+        let now = Instant::now();
+        let mut expired = false;
+        if matches!(self.listen_until, Some(t) if now >= t) {
+            self.listen_until = None;
+            self.mark(&[Key::Volume(ch("MicMonitor")), Key::Route(inp("Microphone"))], false);
+            expired = true;
+        }
+        if matches!(self.sound_test_until, Some(t) if now >= t) {
+            self.sound_test_until = None;
+            self.mark(&[Key::Route(inp("Samples"))], false);
+            expired = true;
+        }
+        if matches!(self.ab_until, Some(t) if now >= t) {
+            self.ab_until = None;
+            self.mark(&[Key::Dsp], false);
+            expired = true;
+        }
+        expired
     }
     pub fn cal_for(&self) -> Option<&state::MicCal> {
         self.state.cal_for(None)
@@ -181,7 +205,7 @@ impl Inner {
     }
     pub fn effective_routing(&self, input: &str) -> indexmap::IndexMap<String, bool> {
         let mut r = routing::effective_routing(&self.state, input, self.mix2, self.listening());
-        if input == "Samples" && self.sound_test_until.is_some() {
+        if input == "Samples" && self.sound_testing() {
             // son de test : ni casque, ni Discord, ni enceintes ; seulement le Stream Mix, que le test réécoute
             for (out, on) in r.iter_mut() {
                 *on = out == "BroadcastMix";
@@ -371,7 +395,8 @@ pub struct Ctl {
     pub persist: bool,
     pub absent_retry: Mutex<Duration>,
     pub poll_interval: Mutex<Duration>,
-    last_backup: Mutex<f64>,
+    /// Sérialise les écritures atomiques de state.json et retient l'heure de la dernière copie .bak.
+    save_lock: Mutex<f64>,
     pub loop_running: AtomicBool,
     /// coupures du son comptees par le pilote, relues toutes les \`stats_interval\` par la boucle USB
     pub drops: Mutex<crate::drops::UsbDrops>,
@@ -451,7 +476,7 @@ impl Ctl {
             persist,
             absent_retry: Mutex::new(Duration::from_secs(2)),
             poll_interval: Mutex::new(Duration::from_millis(15)),
-            last_backup: Mutex::new(0.0),
+            save_lock: Mutex::new(0.0),
             loop_running: AtomicBool::new(false),
             drops: Mutex::new(crate::drops::UsbDrops::load(drops_path, now_epoch())),
             stats_interval: Mutex::new(Duration::from_secs(1)),
@@ -466,6 +491,9 @@ impl Ctl {
 
     pub fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub fn dev_info_lock(&self) -> MutexGuard<'_, DevInfo> {
+        self.dev_info.lock().unwrap_or_else(|e| e.into_inner())
     }
     pub fn simulated(&self) -> bool {
         self.cfg.simulate || self.sim.is_some()
@@ -500,7 +528,7 @@ impl Ctl {
         dev.close();
         dev.open()?;
         let (serial, fw, mix2) = {
-            let i = dev.info.lock().unwrap();
+            let i = dev.info.lock().unwrap_or_else(|e| e.into_inner());
             (i.serial.clone().unwrap_or_default(), i.firmware.clone().unwrap_or_default(), i.mix2())
         };
         {
@@ -624,7 +652,7 @@ impl Ctl {
     /// Compteurs du firmware Rustudio, lus par le fil USB. Vérifié d'abord sans toucher l'appareil : une requête
     /// inconnue du firmware officiel serait une erreur USB, et toute erreur USB ferme puis rouvre la connexion.
     pub fn firmware_counters(&self) -> ApiResult {
-        if !self.dev_info.lock().unwrap().rustudio {
+        if !self.dev_info_lock().rustudio {
             return Err(ApiError { status: 404, msg: "Compteurs réservés au firmware Rustudio".into() });
         }
         let read = |dev: &mut GoXlr| {
@@ -689,21 +717,7 @@ impl Ctl {
     }
 
     fn iteration(&self, dev: &mut GoXlr, tick: u64) -> Result<(), DevError> {
-        {
-            let mut g = self.lock();
-            if matches!(g.listen_until, Some(t) if Instant::now() > t) {
-                g.listen_until = None;
-                g.mark(&[Key::Volume(ch("MicMonitor")), Key::Route(inp("Microphone"))], false);
-            }
-            if matches!(g.sound_test_until, Some(t) if Instant::now() > t) {
-                g.sound_test_until = None;
-                g.mark(&[Key::Route(inp("Samples"))], false);
-            }
-            if matches!(g.ab_until, Some(t) if Instant::now() > t) {
-                g.ab_until = None;
-                g.mark(&[Key::Dsp], false);
-            }
-        }
+        self.lock().expire_ephemeral();
         self.run_calls(dev)?;
         self.flush(dev)?;
         let lvl = self.want_level(tick);
@@ -789,11 +803,12 @@ impl Ctl {
                 next_try = Instant::now();
             }
             if !self.lock().connected {
+                self.lock().expire_ephemeral();
                 self.fail_calls("GoXLR non connectée");
                 if Instant::now() >= next_try {
-                    self.dev_info.lock().unwrap().stage = Some("liste USB de Windows".into());
+                    self.dev_info_lock().stage = Some("liste USB de Windows".into());
                     let seen = self.usb_scan();
-                    self.dev_info.lock().unwrap().stage = None;
+                    self.dev_info_lock().stage = None;
                     self.lock().note_usb(seen);
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.connect(&mut dev, true)))
                         .unwrap_or_else(|p| Err(DevError::Device(panic_text(&p))));
@@ -823,7 +838,7 @@ impl Ctl {
                                     if !audio_only {
                                         log("GoXLR absente (éteinte ou débranchée) : nouvel essai toutes les 2 s");
                                     }
-                                    *self.absent_retry.lock().unwrap()
+                                    *self.absent_retry.lock().unwrap_or_else(|e| e.into_inner())
                                 } else {
                                     g.fail_streak += 1;
                                     let d = Duration::from_secs_f64(30f64.min(2f64.powi(g.fail_streak.min(5) as i32)));
@@ -856,7 +871,7 @@ impl Ctl {
                 next_try = Instant::now() + Duration::from_secs_f64(30f64.min(0.5 * 2f64.powi(fs.min(6) as i32)));
             }
             tick += 1;
-            let pi = *self.poll_interval.lock().unwrap();
+            let pi = *self.poll_interval.lock().unwrap_or_else(|e| e.into_inner());
             self.wake.wait(pi);
         }
         dev.close();
@@ -908,11 +923,20 @@ impl Ctl {
                 return Ok(json!({ "ok": true }));
             }
             "raw" => {
-                let cid = u32::from_str_radix(need_str(p, "command_id")?.trim_start_matches("0x"), 16)
+                let raw_cid = need_str(p, "command_id")?;
+                let cid_str = raw_cid.strip_prefix("0x").or_else(|| raw_cid.strip_prefix("0X")).unwrap_or(&raw_cid);
+                let cid = u32::from_str_radix(cid_str, 16)
                     .map_err(|_| ApiError::bad("command_id invalide"))?;
-                let hex = p.get("body_hex").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let body = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<Vec<u8>, _>>()
-                    .map_err(|_| ApiError::bad("body_hex invalide"))?;
+                let hex = p.get("body_hex").and_then(|v| v.as_str()).unwrap_or("");
+                if !hex.is_ascii() || !hex.len().is_multiple_of(2) || hex.len() > 16_384 {
+                    return Err(ApiError::bad("body_hex invalide"));
+                }
+                let body = hex
+                    .as_bytes()
+                    .chunks_exact(2)
+                    .map(|pair| std::str::from_utf8(pair).ok().and_then(|s| u8::from_str_radix(s, 16).ok()))
+                    .collect::<Option<Vec<u8>>>()
+                    .ok_or_else(|| ApiError::bad("body_hex invalide"))?;
                 let r = self.call(
                     Box::new(move |d| d.command(cid, &body).map(|b| json!(b.iter().map(|x| format!("{x:02x}")).collect::<String>()))),
                     Duration::from_secs(5),
@@ -950,19 +974,35 @@ impl Ctl {
             }
             _ => {}
         }
-        let r = {
+        let (r, changed) = {
             let mut g = self.lock();
+            let before_default = match action {
+                "mic-default" => Some(g.mic_default.clone()),
+                "hp-default" => Some(g.hp_default.clone()),
+                _ => None,
+            };
             let r = g.act_locked(action, p)?;
-            g.version += 1;
-            g.save_dirty = true;
-            r
+            let unchanged = match action {
+                "mic-default" => before_default.as_ref() == Some(&g.mic_default),
+                "hp-default" => before_default.as_ref() == Some(&g.hp_default),
+                _ => false,
+            };
+            if !unchanged {
+                g.version += 1;
+                if !matches!(action, "mic-ab" | "sound-test" | "mic-listen" | "mic-default" | "hp-default" | "job-cancel") {
+                    g.save_dirty = true;
+                }
+            }
+            (r, !unchanged)
         };
-        self.mixer_changed.notify_all();
-        if action.starts_with("mic-ns") || action == "mic-default" {
-            self.ns_apply();
-        }
-        if action.starts_with("hp-") {
-            self.hp_apply();
+        if changed {
+            self.mixer_changed.notify_all();
+            if action.starts_with("mic-ns") || action == "mic-default" {
+                self.ns_apply();
+            }
+            if action.starts_with("hp-") {
+                self.hp_apply();
+            }
         }
         Ok(r)
     }
@@ -971,22 +1011,28 @@ impl Ctl {
         if !self.persist {
             return;
         }
+        // Un seul fil ecrit state.json.tmp puis le renomme : evite toute course entre save_loop et l'API.
+        let mut last_backup = self.save_lock.lock().unwrap_or_else(|e| e.into_inner());
         let data = {
             let mut g = self.lock();
             if !g.save_dirty {
                 return;
             }
             g.save_dirty = false;
-            serde_json::to_string_pretty(&g.state).unwrap_or_default()
+            match serde_json::to_string_pretty(&g.state) {
+                Ok(s) => s,
+                Err(e) => {
+                    g.save_dirty = true;
+                    logf!("Sérialisation de l'état impossible : {e}");
+                    return;
+                }
+            }
         };
         let sp = self.cfg.state_path();
         let saved = (|| -> std::io::Result<()> {
             std::fs::create_dir_all(&self.cfg.data_dir)?;
-            {
-                let mut lb = self.last_backup.lock().unwrap();
-                if sp.exists() && now_epoch() - *lb > 600.0 && std::fs::copy(&sp, format!("{}.bak", sp.display())).is_ok() {
-                    *lb = now_epoch();
-                }
+            if sp.exists() && now_epoch() - *last_backup > 600.0 && std::fs::copy(&sp, format!("{}.bak", sp.display())).is_ok() {
+                *last_backup = now_epoch();
             }
             let tmp = format!("{}.tmp", sp.display());
             std::fs::write(&tmp, data)?;

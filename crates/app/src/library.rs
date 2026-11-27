@@ -98,10 +98,11 @@ impl Mixer {
 }
 
 /// Catégories du catalogue, dans l'ordre d'affichage : (kind, titre, icône).
-const KINDS: [(&str, &str, Icon); 6] = [
+const KINDS: [(&str, &str, Icon); 7] = [
     ("audio-interface", "Interfaces audio", Icon::Sliders),
     ("keyboard", "Claviers", Icon::Keyboard),
     ("mouse", "Souris", Icon::Mouse),
+    ("webcam", "Webcams", Icon::Camera),
     ("headset", "Casques", Icon::Headphones),
     ("monitor", "Écrans", Icon::Monitor),
     ("other", "Autres appareils", Icon::Grid),
@@ -117,6 +118,7 @@ fn module_page(id: &str) -> Option<Page> {
         "goxlr-mini" => Some(Page::Mixer),
         "attack-shark-r5-ultra" => Some(Page::Mouse),
         "cooler-master-mk770" => Some(Page::Keyboard),
+        "logitech-c920" => Some(Page::Webcam),
         _ => None,
     }
 }

@@ -130,6 +130,9 @@ impl Inner {
                         if let Some(cs) = c.as_str().filter(|s| !s.is_empty()) {
                             let h = state::hex(cs).ok_or_else(|| ApiError::bad(format!("couleur invalide: {cs}")))?;
                             let e = self.state.colours.entry(t.clone()).or_insert_with(|| vec!["000000".into(); 2]);
+                            if e.len() < 2 {
+                                e.resize(2, "000000".into());
+                            }
                             e[i] = h;
                         }
                     }

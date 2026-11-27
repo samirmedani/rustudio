@@ -191,6 +191,11 @@ unsafe fn badge(dc: HDC, x: i32, y: i32, n: i32, rgb: u32, glyph: &[u8]) {
         let _ = DeleteDC(memory);
         return;
     };
+    if bits.is_null() {
+        let _ = DeleteObject(HGDIOBJ(bitmap.0));
+        let _ = DeleteDC(memory);
+        return;
+    }
     std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits as *mut u8, pixels.len());
     let old = SelectObject(memory, HGDIOBJ(bitmap.0));
     let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };

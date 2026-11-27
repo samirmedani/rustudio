@@ -1460,16 +1460,25 @@ impl Mixer {
             return None;
         }
         let f = self.go.diagnostics.as_ref().map(|d| &d["firmware"]).filter(|f| f.is_object())?;
-        let n = |k: &str| f[k].as_u64().unwrap_or(0);
-        let corrections = n("drops") + n("repeats") + n("jumps");
-        let healthy = n("missed") == 0 && n("underruns") == 0 && corrections == 0;
-        let mut card = ui::section(Icon::Activity, ui::GREEN, "Firmware Rustudio", Some(if f["streaming"] == true { "Son en cours".into() } else { "Aucun son en cours".into() }))
-            .child(ui::status(if healthy { "Son sans coupure" } else { "Coupures relevées" }, if healthy { ui::State::Ok } else { ui::State::Warn }));
+        let v = firmware_verdict(f);
+        let mut card = ui::section(Icon::Activity, ui::GREEN, "Firmware Rustudio", Some(if v.streaming { "Son en cours".into() } else { "Aucun son en cours".into() }))
+            .child(ui::status(v.label, v.state));
+        let missed_sub = if v.missed > 0 && v.state == ui::State::Ok {
+            "1 à 3 paquets à la fermeture d’un flux Windows sont normaux."
+        } else {
+            "Depuis l’ouverture du son par Windows."
+        };
+        let underrun_val = if v.overruns > 0 {
+            format!("{} (+{} sat.)", v.underruns, v.overruns)
+        } else {
+            v.underruns.to_string()
+        };
+        let (loop_val, loop_sub) = firmware_loop_reading(v.max_loop_us, v.slow_loops);
         let rows = [
-            (Icon::Plug, "Paquets audio perdus", n("missed").to_string(), "Depuis l’ouverture du son par Windows."),
-            (Icon::Wave, "Échantillons corrigés", corrections.to_string(), "Sautés ou répétés pour rattraper un retard."),
-            (Icon::Gauge, "Manques de son", n("underruns").to_string(), "La puce n’avait plus rien à jouer."),
-            (Icon::Activity, "Boucle la plus longue", format!("{} µs", n("max_loop_us")), "Au-delà de 125 µs, un paquet USB peut se perdre."),
+            (Icon::Plug, "Paquets audio perdus", v.missed.to_string(), missed_sub),
+            (Icon::Wave, "Échantillons corrigés", v.corrections.to_string(), "Sautés ou répétés pour rattraper un retard."),
+            (Icon::Gauge, "Manques de son", underrun_val, "La puce n’avait plus rien à jouer."),
+            (Icon::Activity, "Boucle la plus longue", loop_val, loop_sub),
         ];
         for (i, (glyph, title, value, sub)) in rows.into_iter().enumerate() {
             card = card.child(ui::list_row(Some((glyph, ui::TEXT2)), title, Some(sub.into()), ui::caption(value), i == 0));
@@ -1744,6 +1753,56 @@ fn kernel_advice(mb: u64, uptime_h: u64) -> String {
     )
 }
 
+#[derive(PartialEq, Eq)]
+struct FirmwareVerdict {
+    label: &'static str,
+    state: ui::State,
+    missed: u64,
+    corrections: u64,
+    underruns: u64,
+    overruns: u64,
+    max_loop_us: u64,
+    slow_loops: u64,
+    streaming: bool,
+}
+
+/// Évalue les compteurs du firmware Rustudio sans fausse alerte sur les 1 à 3 paquets « missed » normaux
+/// quand Windows ferme un flux audio (arrêt ISO avant SET_INTERFACE alt 0).
+fn firmware_verdict(f: &Value) -> FirmwareVerdict {
+    let n = |k: &str| f[k].as_u64().unwrap_or(0);
+    let streaming = f["streaming"] == true;
+    let packets = n("packets");
+    let missed = n("missed");
+    let underruns = n("underruns");
+    let overruns = n("overruns");
+    let corrections = n("drops") + n("repeats") + n("jumps");
+    let slow_loops = n("slow_loops");
+    let max_loop_us = n("max_loop_us");
+    let benign_close_missed = missed <= 3 && underruns == 0 && overruns == 0 && corrections == 0 && (!streaming || slow_loops == 0);
+    let has_cuts = underruns > 0 || overruns > 0 || corrections > 0 || (missed > 0 && !benign_close_missed);
+    let (label, state) = if has_cuts {
+        ("Coupures relevées", ui::State::Warn)
+    } else if !streaming && packets == 0 {
+        ("Prêt (aucun son lu)", ui::State::Ok)
+    } else {
+        ("Son sans coupure", ui::State::Ok)
+    };
+    FirmwareVerdict { label, state, missed, corrections, underruns, overruns, max_loop_us, slow_loops, streaming }
+}
+
+fn firmware_loop_reading(max_loop_us: u64, slow_loops: u64) -> (String, &'static str) {
+    if slow_loops == 0 && max_loop_us > 125 {
+        (format!("{max_loop_us} µs (hors audio)"), "Pic de démarrage ou hors flux : aucune boucle lente pendant le son.")
+    } else if slow_loops > 0 {
+        (
+            format!("{max_loop_us} µs ({slow_loops} lente{})", if slow_loops > 1 { "s" } else { "" }),
+            "Au-delà de 125 µs, un paquet USB peut se perdre.",
+        )
+    } else {
+        (format!("{max_loop_us} µs"), "Au-delà de 125 µs, un paquet USB peut se perdre.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1762,5 +1821,32 @@ mod tests {
         let advice = kernel_advice(6246, 62);
         assert!(advice.contains("6,0 Go") && advice.contains("2 jours") && !advice.contains("  "), "{advice}");
         assert!(kernel_advice(4096, 20).contains("depuis 20 h"));
+    }
+
+    #[test]
+    fn verdict_firmware_distingue_fermeture_normale_et_vraies_coupures() {
+        // 1 a 3 missed a la fermeture du flux sans underrun/correction : sain
+        let close_ok = firmware_verdict(&json!({"streaming": false, "packets": 12000, "missed": 2, "underruns": 0, "drops": 0, "repeats": 0, "jumps": 0, "overruns": 0, "slow_loops": 0, "max_loop_us": 420}));
+        assert!(close_ok.state == ui::State::Ok);
+        assert_eq!(close_ok.label, "Son sans coupure");
+        assert!(firmware_loop_reading(close_ok.max_loop_us, close_ok.slow_loops).0.contains("hors audio"));
+        // Au repos apres boot (0 paquet, pic initial > 125 us, 0 slow_loops) : pret
+        let boot_idle = firmware_verdict(&json!({"streaming": false, "packets": 0, "missed": 0, "underruns": 0, "slow_loops": 0, "max_loop_us": 600}));
+        assert!(boot_idle.state == ui::State::Ok);
+        assert_eq!(boot_idle.label, "Prêt (aucun son lu)");
+        // Vraies coupures : underrun, overrun, correction, >= 4 missed, ou missed + slow_loops en streaming
+        for bad in [
+            json!({"streaming": true, "packets": 5000, "missed": 4, "underruns": 0, "slow_loops": 0}),
+            json!({"streaming": true, "packets": 5000, "missed": 1, "underruns": 0, "slow_loops": 2}),
+            json!({"streaming": true, "packets": 5000, "missed": 0, "underruns": 1}),
+            json!({"streaming": false, "packets": 5000, "missed": 0, "overruns": 1}),
+            json!({"streaming": true, "packets": 5000, "missed": 0, "drops": 1}),
+        ] {
+            let v = firmware_verdict(&bad);
+            assert!(v.state == ui::State::Warn, "{bad}");
+            assert_eq!(v.label, "Coupures relevées", "{bad}");
+        }
+        assert!(firmware_loop_reading(180, 3).0.contains("3 lentes"));
+        assert_eq!(firmware_loop_reading(42, 0).0, "42 µs");
     }
 }

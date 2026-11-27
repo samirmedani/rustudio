@@ -63,6 +63,10 @@ struct Inner {
     /// dernière sortie par défaut sur laquelle on a tenté de brancher Equalizer APO
     tried_default: Option<String>,
     written_mic: Option<String>,
+    /// Dernière configuration micro demandée (conservée pendant une pause de mesure vocale).
+    pending_mic: Option<String>,
+    /// Pause temporaire de RNNoise pendant la capture de l'empreinte vocale.
+    mic_bypass: bool,
     sim_capture: bool,
     sim_plugin: bool,
 }
@@ -99,6 +103,8 @@ impl EqApo {
                 last_auto: None,
                 tried_default: None,
                 written_mic: None,
+                pending_mic: None,
+                mic_bypass: false,
                 sim_capture: false,
                 sim_plugin: false,
             }),
@@ -140,7 +146,9 @@ impl EqApo {
         self.lock().setup.clone().map(Value::Object)
     }
     pub fn reset_written(&self) {
-        self.lock().written = None;
+        let mut g = self.lock();
+        g.written = None;
+        g.written_mic = None;
     }
     pub fn auto_due(&self) -> bool {
         self.lock().last_auto.map(|t| t.elapsed().as_secs() > 600).unwrap_or(true)
@@ -224,11 +232,15 @@ impl EqApo {
         let _ = std::fs::remove_file(cfg_dir.join("goxlr-mini.txt.tmp"));
         let cur = std::fs::read(&cfg).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string()).unwrap_or_default();
         let mic = rustudio_core::micns::CONFIG_FILE;
-        if cur.contains(&format!("Include: {CONFIG_FILE}")) && cur.contains(&format!("Include: {mic}")) {
+        let inc_hp = format!("Include: {CONFIG_FILE}");
+        let inc_mic = format!("Include: {mic}");
+        let has_hp = cur.lines().any(|l| l.trim() == inc_hp);
+        let has_mic = cur.lines().any(|l| l.trim() == inc_mic);
+        if has_hp && has_mic {
             return;
         }
         let mut lines = vec!["# Gere par Rustudio (pages Casque et Micro de l'appli).".to_string()];
-        if cur.contains(&format!("Include: {CONFIG_FILE}")) {
+        if has_hp {
             // déjà à Rustudio : on garde ses lignes et on ajoute le fichier du micro
             lines = cur.lines().filter(|l| !l.starts_with("# Gere par Rustudio")).map(String::from).collect();
             lines.insert(0, "# Gere par Rustudio (pages Casque et Micro de l'appli).".into());
@@ -237,11 +249,14 @@ impl EqApo {
             let _ = std::fs::write(cfg_dir.join(&backup), &cur);
             lines.push(format!("# Configuration precedente : {backup}"));
         }
-        if !lines.iter().any(|l| l.trim() == format!("Include: {CONFIG_FILE}")) {
-            lines.push(format!("Include: {CONFIG_FILE}"));
+        if !lines.iter().any(|l| l.trim() == inc_hp) {
+            lines.push(inc_hp);
         }
-        lines.push(format!("Include: {mic}"));
-        let _ = std::fs::write(&cfg, lines.join("\n") + "\n");
+        if !lines.iter().any(|l| l.trim() == inc_mic) {
+            lines.push(inc_mic);
+        }
+        let content = lines.join("\n") + "\n";
+        let _ = write_atomic(&cfg, &cfg_dir.join("config.txt.tmp"), &content);
         log("Equalizer APO : configuration reprise par Rustudio");
     }
 
@@ -255,7 +270,7 @@ impl EqApo {
         }
         let path = cfg_dir.join(CONFIG_FILE);
         let tmp = cfg_dir.join(format!("{CONFIG_FILE}.tmp"));
-        if std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+        if !write_atomic(&path, &tmp, text) {
             return false; // Equalizer APO relit le fichier des qu'il change
         }
         self.lock().written = Some(text.into());
@@ -265,8 +280,12 @@ impl EqApo {
 
     /// Écrit rustudio-micro.txt (suppression du bruit du micro) s'il a changé.
     pub fn write_mic(&self, text: &str) -> bool {
-        if self.lock().written_mic.as_deref() == Some(text) {
-            return false;
+        {
+            let mut g = self.lock();
+            g.pending_mic = Some(text.into());
+            if g.mic_bypass || g.written_mic.as_deref() == Some(text) {
+                return false;
+            }
         }
         let cfg_dir = self.dir.join("config");
         if !cfg_dir.is_dir() {
@@ -274,12 +293,43 @@ impl EqApo {
         }
         let name = rustudio_core::micns::CONFIG_FILE;
         let (path, tmp) = (cfg_dir.join(name), cfg_dir.join(format!("{name}.tmp")));
-        if std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+        if !write_atomic(&path, &tmp, text) {
             return false;
         }
         self.lock().written_mic = Some(text.into());
         self.bump();
         true
+    }
+
+    /// Met en pause RNNoise pendant une mesure vocale afin que Windows capture la voix brute et le vrai bruit
+    /// de la pièce, puis restaure immédiatement la configuration dès la fin de la mesure.
+    pub fn set_mic_bypass(&self, bypass: bool) {
+        let restore = {
+            let mut g = self.lock();
+            if g.mic_bypass == bypass {
+                return;
+            }
+            g.mic_bypass = bypass;
+            if bypass {
+                None
+            } else {
+                g.pending_mic.clone()
+            }
+        };
+        if bypass {
+            let cfg_dir = self.dir.join("config");
+            if cfg_dir.is_dir() {
+                let name = rustudio_core::micns::CONFIG_FILE;
+                let (path, tmp) = (cfg_dir.join(name), cfg_dir.join(format!("{name}.tmp")));
+                let paused = "# Rustudio : suppression du bruit du micro en pause (mesure vocale en cours).\n";
+                if write_atomic(&path, &tmp, paused) {
+                    self.lock().written_mic = Some(paused.into());
+                    self.bump();
+                }
+            }
+        } else if let Some(text) = restore {
+            self.write_mic(&text);
+        }
     }
 
     pub fn plugin_dir(&self) -> &std::path::Path {
@@ -366,7 +416,14 @@ impl EqApo {
         }
         #[cfg(windows)]
         {
-            win::uninstall_capture(guid).map_err(|e| e.to_string())
+            match win::uninstall_capture(guid) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    win::own_capture_key(guid)?;
+                    win::uninstall_capture(guid).map_err(|e| e.to_string())
+                }
+                Err(e) => Err(e.to_string()),
+            }
         }
         #[cfg(not(windows))]
         {
@@ -416,6 +473,7 @@ impl EqApo {
             if !self.installed() {
                 return Err("Equalizer APO ne s'est pas installé.".into());
             }
+            self.reset_written();
             log("Equalizer APO 1.4.2 installé");
             Ok(())
         })();
@@ -426,7 +484,10 @@ impl EqApo {
     /// Désinstalle Equalizer APO de Windows (son désinstalleur, sans fenêtre), puis vérifie qu'il est parti.
     pub fn uninstall_software(&self) -> Result<(), String> {
         if self.sim {
-            self.lock().sim_apo = false;
+            let mut g = self.lock();
+            g.sim_apo = false;
+            g.written = None;
+            g.written_mic = None;
             return Ok(());
         }
         let un = self.dir.join("Uninstall.exe");
@@ -442,7 +503,7 @@ impl EqApo {
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        self.lock().written = None;
+        self.reset_written();
         Ok(())
     }
 
@@ -456,6 +517,15 @@ impl EqApo {
                "endpoints": endpoints, "live": live, "active": active,
                "setup": g.setup.clone().map(Value::Object), "sim": self.sim})
     }
+}
+
+/// Écriture atomique via fichier temporaire, avec repli direct si le service audio Windows verrouille brièvement le rename.
+fn write_atomic(path: &std::path::Path, tmp: &std::path::Path, text: &str) -> bool {
+    if std::fs::write(tmp, text).and_then(|_| std::fs::rename(tmp, path)).is_ok() {
+        return true;
+    }
+    let _ = std::fs::remove_file(tmp);
+    std::fs::write(path, text).is_ok()
 }
 
 #[cfg(windows)]
@@ -587,6 +657,7 @@ $acl=$k.GetAccessControl(); $acl.AddAccessRule((New-Object System.Security.Acces
         let get = |name: &str| fx.get_value::<String, _>(name).ok();
         let orig: IndexMap<u32, Option<String>> = FX_SLOTS.iter().map(|s| (*s, get(&format!("{FX}{s}")))).collect();
         if orig.values().flatten().any(|v| v.to_uppercase() == EQAPO_PRE || v.to_uppercase() == EQAPO_POST) {
+            let _ = fx.delete_value(DISABLE_ENH);
             return Ok(());
         }
         let o = |s: u32| orig.get(&s).cloned().flatten();
@@ -653,5 +724,64 @@ $acl=$k.GetAccessControl(); $acl.AddAccessRule((New-Object System.Security.Acces
             }
         }
         hklm().delete_subkey_with_flags(format!(r"{CHILD_APOS}\{guid}"), KEY_WOW64_64KEY)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_eqapo(tag: &str) -> (PathBuf, EqApo) {
+        let dir = std::env::temp_dir().join(format!("rustudio-eqapo-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("eqapo-sim/config")).unwrap();
+        let cfg = Config {
+            simulate: true,
+            port: 0,
+            data_dir: dir.clone(),
+            base_dir: dir.clone(),
+            supervised: false,
+            engine_restarts: 0,
+        };
+        (dir, EqApo::new(&cfg, true))
+    }
+
+    #[test]
+    fn bypass_micro_met_en_pause_et_restaure_la_derniere_config() {
+        let (dir, apo) = temp_eqapo("bypass");
+        let mic_cfg = dir.join("eqapo-sim/config").join(rustudio_core::micns::CONFIG_FILE);
+        assert!(apo.write_mic("Device: {A}\nVSTPlugin: test1\nDevice: all\n"));
+        assert!(std::fs::read_to_string(&mic_cfg).unwrap().contains("VSTPlugin: test1"));
+
+        apo.set_mic_bypass(true);
+        let paused = std::fs::read_to_string(&mic_cfg).unwrap();
+        assert!(!paused.contains("VSTPlugin"), "RNNoise doit etre coupe pendant la mesure : {paused}");
+
+        // Une ecriture en arriere-plan (watch::ns_apply) ne doit pas reactiver RNNoise pendant la pause,
+        // mais la nouvelle valeur doit etre restauree a la fin de la pause.
+        assert!(!apo.write_mic("Device: {A}\nVSTPlugin: test2\nDevice: all\n"));
+        assert!(!std::fs::read_to_string(&mic_cfg).unwrap().contains("VSTPlugin"));
+
+        apo.set_mic_bypass(false);
+        assert!(std::fs::read_to_string(&mic_cfg).unwrap().contains("VSTPlugin: test2"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn take_config_ignore_lignes_commentees_et_reset_written_reecrit_micro() {
+        let (dir, apo) = temp_eqapo("take");
+        let cfg_file = dir.join("eqapo-sim/config/config.txt");
+        std::fs::write(&cfg_file, "# Include: rustudio.txt\n# Include: rustudio-micro.txt\n").unwrap();
+        apo.take_config();
+        let content = std::fs::read_to_string(&cfg_file).unwrap();
+        assert!(content.lines().any(|l| l.trim() == "Include: rustudio.txt"), "{content}");
+        assert!(content.lines().any(|l| l.trim() == "Include: rustudio-micro.txt"), "{content}");
+
+        let text = "Device: {A}\nVSTPlugin: test\nDevice: all\n";
+        assert!(apo.write_mic(text));
+        assert!(!apo.write_mic(text));
+        apo.reset_written();
+        assert!(apo.write_mic(text), "reset_written doit aussi invalider le cache micro");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

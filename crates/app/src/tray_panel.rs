@@ -23,6 +23,7 @@ pub struct TrayPanel {
     client: Client,
     open: Opener,
     live_mode: bool,
+    startup: bool,
     state: Option<Value>,
     scenes: bool,
 }
@@ -68,7 +69,8 @@ pub fn toggle(cx: &mut App, client: Client, live_mode: bool, open: Opener) {
                 }
             })
             .detach();
-            let mut panel = TrayPanel { client, open, live_mode, state: None, scenes: false };
+            let startup = if live_mode { session::startup_enabled() } else { false };
+            let mut panel = TrayPanel { client, open, live_mode, startup, state: None, scenes: false };
             panel.refresh(cx);
             panel
         })
@@ -78,11 +80,15 @@ pub fn toggle(cx: &mut App, client: Client, live_mode: bool, open: Opener) {
 impl TrayPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let client = self.client.clone();
-        let job = cx.background_executor().spawn(async move { client.get("/api/state").ok() });
+        let live_mode = self.live_mode;
+        let job = cx.background_executor().spawn(async move {
+            (client.get("/api/state").ok(), if live_mode { session::startup_enabled() } else { false })
+        });
         cx.spawn(async move |this, cx| {
-            let state = job.await;
+            let (state, startup) = job.await;
             let _ = this.update(cx, |this, cx| {
                 this.state = state;
+                this.startup = startup;
                 cx.notify();
             });
         })
@@ -229,9 +235,10 @@ impl TrayPanel {
                 })
                 .child(div().h(px(1.)).mx(px(4.)).my(px(5.)).bg(alpha(ui::INK, 0.07)))
                 .when(self.live_mode, |d| {
-                    let on = session::startup_enabled();
-                    d.child(Self::row("startup", Icon::Power, "Démarrer avec Windows").child(div().flex_1().flex().justify_end().child(ui::toggle("startup-toggle", on, true))).on_click(cx.listener(move |_, _, _, cx| {
+                    let on = self.startup;
+                    d.child(Self::row("startup", Icon::Power, "Démarrer avec Windows").child(div().flex_1().flex().justify_end().child(ui::toggle("startup-toggle", on, true))).on_click(cx.listener(move |this, _, _, cx| {
                         let _ = session::set_startup(!on);
+                        this.startup = session::startup_enabled();
                         cx.notify();
                     })))
                 })

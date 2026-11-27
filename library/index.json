@@ -103,6 +103,39 @@
       "review_pr": null
     },
     {
+      "id": "logitech-c920",
+      "name": "C920",
+      "vendor": "Logitech",
+      "kind": "webcam",
+      "status": "official",
+      "usb": [
+        {
+          "vid": "046D",
+          "pid": "0892"
+        },
+        {
+          "vid": "046D",
+          "pid": "082D"
+        },
+        {
+          "vid": "046D",
+          "pid": "08E5"
+        }
+      ],
+      "source": "crates/logitech-c920",
+      "summary": "Image, exposition manuelle, compensation basse lumière, mise au point, cadrage, préréglages et maintien automatique des réglages en USB.",
+      "features": [
+        "Image et couleur",
+        "Exposition et focus",
+        "Préréglages",
+        "Maintien des réglages",
+        "LED et contrôles XU"
+      ],
+      "builtin": true,
+      "author": "samirmedani",
+      "review_pr": null
+    },
+    {
       "id": "ddc-monitor",
       "name": "Écrans (DDC/CI)",
       "vendor": "Générique",

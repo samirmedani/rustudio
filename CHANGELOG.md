@@ -1,5 +1,23 @@
 # Nouveautés
 
+## 6.8.0 (27 novembre 2026)
+
+Rustudio 6.8.0 accueille la webcam Logitech C920, fiabilise l’onboarding micro et la suppression du bruit par IA, et gagne en stabilité sur l’appli comme sur le firmware Rustudio.
+
+**Nouveau**
+- **Webcam Logitech C920** : règle ta C920 directement dans Rustudio, même pendant que OBS ou Discord utilisent l’image, sans toucher à son micro. Ajuste l’image et les couleurs (luminosité, contraste, saturation, netteté, balance des blancs, anti-scintillement 50/60 Hz), l’optique et le cadrage (exposition, fluidité 30 ips en basse lumière, mise au point, zoom, panoramique et inclinaison) ainsi que le voyant lumineux.
+- **Préréglages et maintien « Garder mes réglages »** : applique en un clic les profils Studio / Stream, Faible lumière, Naturel ou Cinéma, puis active « Garder mes réglages » pour que Rustudio rétablisse automatiquement tes réglages si Windows, OBS, Discord ou une sortie de veille les réinitialisent.
+
+**Amélioré**
+- **Appli plus légère au quotidien** : Rustudio consomme nettement moins de processeur quand tu n’es pas sur la page Audio, limite les accès disque inutiles et garde le suivi des applis et des périphériques réactif sans ralentir le PC.
+- **Analyse vocale et profil Radio FM affinés** : l’analyse de ta voix est plus rapide, évite la saturation sur les gains forts et conserve la chaleur des graves du profil Radio FM même avec un micro brillant.
+
+**Corrigé**
+- **Onboarding micro plus fiable** : l’intensité de l’effet Radio FM s’applique désormais toujours en entier, l’égaliseur à 4 curseurs ajuste chaque bande sans écraser les médiums, la réécoute Avant / Après reste propre même si ton micro n’est pas en 48 kHz et l’annulation d’une mesure s’arrête nettement.
+- **Suppression du bruit par IA pendant la mesure** : Rustudio met automatiquement en pause l’anti-bruit IA et coupe le retour micro pendant la prise d’empreinte vocale, puis rétablit ton réglage dès la fin ou en cas d’annulation.
+- **Retour micro dans la barre des tâches** : le bouton « Couper le retour » près de l’horloge reflète toujours fidèlement l’état réel du retour casque.
+- **Diagnostic et stabilité du firmware Rustudio** : fermer une appli ou couper une vidéo ne fait plus apparaître de faux paquets perdus, le démarrage de la capture micro est plus propre et tes volumes comme tes réglages de voix restent conservés après une veille ou une reprise USB.
+
 ## 6.7.0 (26 novembre 2026)
 
 Rustudio 6.7.0 ajoute un parcours guidé pas à pas en 8 étapes pour régler ton micro de A à Z et introduit le profil Radio FM pour obtenir un vrai son d’antenne (style Skyrock).

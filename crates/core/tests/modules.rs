@@ -41,6 +41,9 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     let keyboard = modules::find("cooler-master-mk770").unwrap();
     assert_eq!(keyboard.kind, "keyboard");
     assert_eq!(keyboard.actions, ["settings", "refresh", "macros", "macro-assign", "macro-remove"]);
+    let webcam = modules::find("logitech-c920").unwrap();
+    assert_eq!(webcam.kind, "webcam");
+    assert_eq!(webcam.actions, ["settings", "preset", "reset", "lock", "refresh"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");
     }

@@ -14,7 +14,7 @@ struct Request {
     deadline: Instant,
     answer: mpsc::SyncSender<Result<Value, String>>,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct State {
     settings: Option<Settings>,
     connected: bool,
@@ -44,7 +44,7 @@ impl KeyboardHub {
     }
     pub fn runtime(&self) -> rustudio_core::modules::ModuleRuntime {
         use rustudio_core::modules::{ModuleRuntime, ModuleStatus};
-        let s = self.shared.state.lock().unwrap();
+        let s = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
         let status = if s.connected { ModuleStatus::Ready } else if s.present { ModuleStatus::Error } else { ModuleStatus::Disconnected };
         ModuleRuntime {
             id: ID, status, connected: s.connected, simulated: self.shared.simulated,
@@ -54,14 +54,14 @@ impl KeyboardHub {
         }
     }
     pub fn state(&self) -> Value {
-        let s = self.shared.state.lock().unwrap();
+        let s = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
         json!({"state": s.settings, "v": self.changes()})
     }
     pub fn command(&self, action: &str, body: &Value) -> Result<Value, String> {
         if !matches!(action, "settings" | "refresh" | "macros" | "macro-assign" | "macro-remove") {
             return Err("Commande clavier inconnue.".into());
         }
-        if self.rx.lock().unwrap().is_some() {
+        if self.rx.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
             return Err("Le module clavier n’est pas démarré".into());
         }
         let (answer, rx) = mpsc::sync_channel(1);
@@ -70,29 +70,29 @@ impl KeyboardHub {
         rx.recv_timeout(Duration::from_secs(15)).map_err(|_| "Le clavier ne répond pas : actualise avant de réessayer".to_string())?
     }
     pub fn start(&self) {
-        let Some(rx) = self.rx.lock().unwrap().take() else { return };
+        let Some(rx) = self.rx.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
         let weak = Arc::downgrade(&self.shared);
         std::thread::Builder::new()
             .name("mk770-hid".into())
             .spawn(move || {
                 let mut keyboard: Option<Keyboard<Box<dyn Transport>>> = None;
+                let mut wait = Duration::from_millis(100);
                 loop {
-                    let Some(shared) = weak.upgrade() else { break };
-                    // relecture lente quand le clavier répond : elle détecte un débranchement sans charger le câble
-                    let wait = if keyboard.is_some() { Duration::from_secs(15) } else { Duration::from_millis(100) };
                     let request = match rx.recv_timeout(wait) {
                         Ok(req) => Some(req),
                         Err(mpsc::RecvTimeoutError::Timeout) => None,
-                        Err(_) => break,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     };
+                    let Some(shared) = weak.upgrade() else { break };
                     if request.as_ref().is_some_and(|r| r.deadline <= Instant::now()) {
                         continue;
                     }
                     let mut macro_result = None;
+                    let mut present_now = None;
                     let result = (|| -> Result<Settings, String> {
                         if keyboard.is_none() {
                             let opened = open(shared.simulated);
-                            shared.state.lock().unwrap().present = opened.is_ok();
+                            present_now = Some(opened.is_ok());
                             keyboard = Some(Keyboard::new(opened?));
                         }
                         let kb = keyboard.as_mut().unwrap();
@@ -118,7 +118,11 @@ impl KeyboardHub {
                     // une demande refusée ne fait pas disparaître un clavier qui répond encore
                     let recovered = if result.is_err() && request.is_some() { keyboard.as_mut().and_then(|k| k.read().ok()) } else { None };
                     {
-                        let mut state = shared.state.lock().unwrap();
+                        let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                        let before = state.clone();
+                        if let Some(p) = present_now {
+                            state.present = p;
+                        }
                         match result.as_ref().ok().cloned().or(recovered) {
                             Some(settings) => {
                                 state.settings = Some(settings);
@@ -131,15 +135,15 @@ impl KeyboardHub {
                                 keyboard = None;
                             }
                         }
-                        shared.version.fetch_add(1, Ordering::Relaxed);
+                        if *state != before {
+                            shared.version.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                     if let Some(r) = request {
                         let _ = r.answer.send(result.map(|s| json!({"ok": true, "state": s, "macros": macro_result})));
                     }
-                    if keyboard.is_none() {
-                        drop(shared);
-                        std::thread::sleep(Duration::from_secs(2));
-                    }
+                    // relecture lente quand le clavier repond ; tentative toutes les 2 s hors ligne (reveil immediat sur commande)
+                    wait = if keyboard.is_some() { Duration::from_secs(15) } else { Duration::from_secs(2) };
                 }
             })
             .expect("fil clavier");
@@ -157,5 +161,20 @@ fn open(simulated: bool) -> Result<Box<dyn Transport>, String> {
     #[cfg(not(windows))]
     {
         Err("Le module MK770 réel nécessite Windows".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_stable_quand_le_clavier_ne_change_pas() {
+        let hub = KeyboardHub::new(true);
+        hub.start();
+        let _ = hub.command("refresh", &json!({})).unwrap();
+        let v = hub.changes();
+        let _ = hub.command("refresh", &json!({})).unwrap();
+        assert_eq!(hub.changes(), v, "un rafraichissement identique ne doit pas invalider la version");
     }
 }

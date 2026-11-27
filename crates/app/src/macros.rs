@@ -572,7 +572,9 @@ impl Mixer {
                             {
                                 this.macros.load(slot.data);
                                 this.macros.slot = id;
-                                this.macros.source = slot.bindings[0].key;
+                                if let Some(first) = slot.bindings.first() {
+                                    this.macros.source = first.key;
+                                }
                                 this.macros.selected_saved = None;
                             }
                             cx.notify();
@@ -643,8 +645,10 @@ impl Mixer {
                     .collect(),
                 idle,
                 move |this, i, _| {
-                    this.macros.draft.mode = modes[i];
-                    this.macros.dirty = true;
+                    if let Some(&mode) = modes.get(i) {
+                        this.macros.draft.mode = mode;
+                        this.macros.dirty = true;
+                    }
                 },
                 cx,
             )
@@ -828,11 +832,13 @@ impl Mixer {
                 )
                 .when(idle, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
-                        let e = &this.macros.draft.events[i];
-                        this.macros.selected_event = Some(i);
-                        this.macros.manual_key = e.key;
-                        this.macros.delay = e.delay_ms.to_string();
-                        cx.notify();
+                        if let Some(e) = this.macros.draft.events.get(i) {
+                            let (key, delay_ms) = (e.key, e.delay_ms);
+                            this.macros.selected_event = Some(i);
+                            this.macros.manual_key = key;
+                            this.macros.delay = delay_ms.to_string();
+                            cx.notify();
+                        }
                     }))
                 }),
             );
@@ -850,7 +856,9 @@ impl Mixer {
                     .collect(),
                 idle,
                 move |this, i, _| {
-                    this.macros.manual_key = options[i];
+                    if let Some(&k) = options.get(i) {
+                        this.macros.manual_key = k;
+                    }
                 },
                 cx,
             )
@@ -966,7 +974,7 @@ impl Mixer {
                             } else {
                                 Some(i + 1).filter(|j| *j < m.draft.events.len())
                             };
-                            if let Some(j) = j {
+                            if let Some(j) = j.filter(|&j| i < m.draft.events.len() && j < m.draft.events.len()) {
                                 m.draft.events.swap(i, j);
                                 m.selected_event = Some(j);
                                 m.dirty = true;
@@ -985,9 +993,11 @@ impl Mixer {
                 )
                 .when(idle, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.macros.draft.events.remove(i);
+                        if i < this.macros.draft.events.len() {
+                            this.macros.draft.events.remove(i);
+                            this.macros.dirty = true;
+                        }
                         this.macros.selected_event = None;
-                        this.macros.dirty = true;
                         cx.notify();
                     }))
                 }),

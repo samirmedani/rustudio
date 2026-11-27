@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 struct Request { action: String, body: Value, deadline: Instant, answer: mpsc::SyncSender<Result<Value, String>> }
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 /// `present` : récepteur ou câble ouvert ; `asleep` : présent mais souris muette.
 struct State { settings: Option<Settings>, connected: bool, present: bool, asleep: bool, error: Option<String> }
 struct Shared { state: Mutex<State>, version: AtomicU64, simulated: bool }
@@ -21,44 +21,48 @@ impl MouseHub {
     pub fn changes(&self) -> u64 { self.shared.version.load(Ordering::Relaxed) }
     pub fn runtime(&self) -> rustudio_core::modules::ModuleRuntime {
         use rustudio_core::modules::{ModuleRuntime, ModuleStatus};
-        let s = self.shared.state.lock().unwrap();
+        let s = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
         let status = if s.connected { ModuleStatus::Ready } else if s.asleep { ModuleStatus::Asleep } else if s.present { ModuleStatus::Error } else { ModuleStatus::Disconnected };
         ModuleRuntime { id: "attack-shark-r5-ultra", status, connected: s.connected,
             simulated: self.shared.simulated, firmware: if s.connected { s.settings.as_ref().map(|x| x.firmware.clone()) } else { None },
             firmware_kind: None, error: s.error.clone() }
     }
     pub fn state(&self) -> Value {
-        let s = self.shared.state.lock().unwrap();
+        let s = self.shared.state.lock().unwrap_or_else(|e| e.into_inner());
         json!({"state": s.settings, "v": self.changes()})
     }
     pub fn command(&self, action: &str, body: &Value) -> Result<Value, String> {
-        if self.rx.lock().unwrap().is_some() { return Err("Le module souris n’est pas démarré".into()); }
+        if self.rx.lock().unwrap_or_else(|e| e.into_inner()).is_some() { return Err("Le module souris n’est pas démarré".into()); }
         let (answer, rx) = mpsc::sync_channel(1);
         let req = Request { action: action.into(), body: body.clone(), deadline: Instant::now() + Duration::from_secs(20), answer };
         self.tx.try_send(req).map_err(|_| "Une commande souris est déjà en attente".to_string())?;
         rx.recv_timeout(Duration::from_secs(20)).map_err(|_| "La souris ne répond pas : actualise ses réglages avant de réessayer".to_string())?
     }
     pub fn start(&self) {
-        let Some(rx) = self.rx.lock().unwrap().take() else { return; };
+        let Some(rx) = self.rx.lock().unwrap_or_else(|e| e.into_inner()).take() else { return; };
         let weak = Arc::downgrade(&self.shared);
         std::thread::Builder::new().name("r5-hid".into()).spawn(move || {
             let mut mouse: Option<Mouse<Box<dyn Transport>>> = None;
+            let mut wait = Duration::from_millis(100);
             loop {
-                let Some(shared) = weak.upgrade() else { break; };
-                // souris ouverte : batterie et câble suivis toutes les 2 s, pour voir la charge en direct
-                let request = match rx.recv_timeout(if mouse.is_some() { Duration::from_secs(2) } else { Duration::from_millis(100) }) {
-                    Ok(req) => Some(req), Err(mpsc::RecvTimeoutError::Timeout) => None, Err(_) => break,
+                // Attente hors ligne ou suivi batterie sans tenir d'Arc : reveil immediat sur commande ou arret.
+                let request = match rx.recv_timeout(wait) {
+                    Ok(req) => Some(req),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 };
+                let Some(shared) = weak.upgrade() else { break; };
                 if request.as_ref().is_some_and(|r| r.deadline <= Instant::now()) { continue; }
                 // câble branché ou débranché : la liaison change (récepteur ↔ USB), on rouvre la bonne
                 if request.is_none() && mouse.as_ref().is_some_and(|m| cable_present(shared.simulated).is_some_and(|wired| wired != m.wired())) {
                     mouse = None;
                 }
                 let fresh = mouse.is_none();
+                let mut present_now = None;
                 let result = (|| -> Result<Settings, String> {
                     if mouse.is_none() {
                         let opened = open(shared.simulated);
-                        shared.state.lock().unwrap().present = opened.is_ok();
+                        present_now = Some(opened.is_ok());
                         mouse = Some(Mouse::new(opened?));
                     }
                     let m = mouse.as_mut().unwrap();
@@ -66,7 +70,7 @@ impl MouseHub {
                     if let Some(r) = &request {
                         if r.action == "settings" {
                             let profile = r.body["profile"].as_u64().and_then(|n| u8::try_from(n).ok()).ok_or("Profil absent")?;
-                            let cached = shared.state.lock().unwrap().settings.clone().ok_or("Actualise les réglages avant d’enregistrer")?;
+                            let cached = shared.state.lock().unwrap_or_else(|e| e.into_inner()).settings.clone().ok_or("Actualise les réglages avant d’enregistrer")?;
                             return m.apply_changes(&cached, profile, &r.body["changes"]);
                         }
                         if r.action == "setting" {
@@ -75,7 +79,7 @@ impl MouseHub {
                         }
                     }
                     if request.is_none() && !fresh {
-                        let cached = shared.state.lock().unwrap().settings.clone();
+                        let cached = shared.state.lock().unwrap_or_else(|e| e.into_inner()).settings.clone();
                         if let Some(mut s) = cached {
                             let (battery, charging) = m.battery()?;
                             s.battery = battery;
@@ -94,7 +98,11 @@ impl MouseHub {
                 }) } else { None };
                 if let Some(m) = mouse.as_mut() { m.set_deadline(None); }
                 {
-                    let mut state = shared.state.lock().unwrap();
+                    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    let before = state.clone();
+                    if let Some(p) = present_now {
+                        state.present = p;
+                    }
                     match &result {
                         Ok(settings) => { state.settings = Some(settings.clone()); state.connected = true; state.asleep = false; state.error = None; }
                         Err(e) => {
@@ -107,14 +115,15 @@ impl MouseHub {
                             }
                         }
                     }
-                    shared.version.fetch_add(1, Ordering::Relaxed);
+                    if *state != before {
+                        shared.version.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 if let Some(r) = request {
                     let answer = result.map(|s| json!({"ok":true,"state":s})).map_err(|e| if is_asleep(&e) { SLEEP_ANSWER.to_string() } else { human(&e) });
                     let _ = r.answer.send(answer);
                 }
-                // Faible consommation hors ligne, sans tenir d'Arc du controleur.
-                if mouse.is_none() { drop(shared); std::thread::sleep(Duration::from_secs(2)); }
+                wait = Duration::from_secs(2);
             }
         }).expect("fil souris");
     }
@@ -160,8 +169,11 @@ mod tests {
         assert!(!is_asleep("R5 Ultra absente : branche son récepteur 2,4 GHz ou son câble USB"));
     }
 
+    static SIM_ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn veille_puis_reveil_sans_action() {
+        let _guard = SIM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let flag = std::env::temp_dir().join(format!("rustudio-r5-veille-{}", std::process::id()));
         std::fs::write(&flag, b"").unwrap();
         std::env::set_var("RUSTUDIO_SIM_MOUSE_SLEEP_FILE", &flag);
@@ -183,5 +195,16 @@ mod tests {
         assert!(awake.connected && awake.error.is_none(), "{awake:?}");
         assert_eq!(hub.state()["state"]["polling_hz"], 1000);
         std::env::remove_var("RUSTUDIO_SIM_MOUSE_SLEEP_FILE");
+    }
+
+    #[test]
+    fn version_stable_quand_la_souris_ne_change_pas() {
+        let _guard = SIM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let hub = MouseHub::new(true);
+        hub.start();
+        let _ = hub.command("refresh", &json!({})).unwrap();
+        let v = hub.changes();
+        let _ = hub.command("refresh", &json!({})).unwrap();
+        assert_eq!(hub.changes(), v, "un rafraichissement identique ne doit pas invalider la version");
     }
 }

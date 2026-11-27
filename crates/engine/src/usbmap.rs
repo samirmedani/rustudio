@@ -19,8 +19,8 @@ pub fn cpu_attached(controller_id: &str) -> Option<bool> {
     if !id.contains("VEN_1022&DEV_") {
         return None;
     }
-    let dev = id.split("DEV_").nth(1).map(|s| &s[..4.min(s.len())]).unwrap_or("");
-    match dev {
+    let dev: String = id.split("DEV_").nth(1).map(|s| s.chars().take(4).collect()).unwrap_or_default();
+    match dev.as_str() {
         "15B6" | "15B7" | "15B8" | "149C" | "1639" | "15E0" | "15E1" => Some(true), // Ryzen 7000/9000, 3000/5000, APU
         "43F7" | "43EE" | "43D5" | "43BB" | "43B9" | "43BA" => Some(false),           // chipsets 300 à 800
         _ => None,
@@ -151,9 +151,10 @@ mod win {
                 return out;
             }
             let ids: Vec<String> = String::from_utf16_lossy(&buf).split('\0').filter(|s| !s.is_empty()).map(String::from).collect();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::with_capacity(ids.len() * 2);
             let mut todo = ids;
             while let Some(id) = todo.pop() {
-                if out.iter().any(|n| n.id.eq_ignore_ascii_case(&id)) {
+                if !seen.insert(id.to_uppercase()) {
                     continue;
                 }
                 let w = wide(&id);
@@ -168,10 +169,9 @@ mod win {
                     .or_else(|| prop(inst, &DEVPKEY_NAME))
                     .unwrap_or_default();
                 if let Some(par) = &parent {
-                    if !par.to_uppercase().starts_with("PCI\\") || !out.iter().any(|n| n.id.eq_ignore_ascii_case(par)) {
-                        if !par.to_uppercase().starts_with("HTREE") && out.len() < 2000 {
-                            todo.push(par.clone());
-                        }
+                    let par_upper = par.to_uppercase();
+                    if !par_upper.starts_with("HTREE") && !seen.contains(&par_upper) && out.len() < 2000 {
+                        todo.push(par.clone());
                     }
                 }
                 out.push(Node { id, parent, name });
@@ -240,5 +240,6 @@ mod tests {
         assert_eq!(summarize(&[])["found"], false);
         assert_eq!(cpu_attached("PCI\\VEN_8086&DEV_7AE0"), None);
         assert_eq!(cpu_attached("PCI\\VEN_1022&DEV_15B6&SUBSYS_1"), Some(true));
+        assert_eq!(cpu_attached("PCI\\VEN_1022&DEV_éà"), None);
     }
 }

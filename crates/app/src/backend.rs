@@ -63,6 +63,8 @@ pub struct Glance {
     pub battery: Option<(u8, bool)>,
     /// Effet affiché par le clavier MK770.
     pub keyboard_effect: Option<String>,
+    /// Résumé en direct de la webcam Logitech C920.
+    pub webcam_summary: Option<String>,
 }
 
 impl Snapshot {
@@ -137,6 +139,7 @@ pub struct Client {
     mixer_visible: Arc<AtomicBool>,
     mouse_visible: Arc<AtomicBool>,
     keyboard_visible: Arc<AtomicBool>,
+    webcam_visible: Arc<AtomicBool>,
     go_visible: Arc<AtomicBool>,
     audio_visible: Arc<AtomicBool>,
     level_visible: Arc<AtomicBool>,
@@ -159,6 +162,7 @@ impl Client {
             mixer_visible: Arc::new(AtomicBool::new(false)),
             mouse_visible: Arc::new(AtomicBool::new(false)),
             keyboard_visible: Arc::new(AtomicBool::new(false)),
+            webcam_visible: Arc::new(AtomicBool::new(false)),
             go_visible: Arc::new(AtomicBool::new(false)),
             audio_visible: Arc::new(AtomicBool::new(false)),
             level_visible: Arc::new(AtomicBool::new(false)),
@@ -250,6 +254,47 @@ impl Client {
     }
     pub fn set_keyboard_visible(&self, visible: bool) {
         self.keyboard_visible.store(visible, Ordering::Relaxed);
+    }
+    pub fn set_webcam_visible(&self, visible: bool) {
+        self.webcam_visible.store(visible, Ordering::Relaxed);
+    }
+
+    pub fn webcam_view(&self) -> Result<crate::webcam::WebcamView, String> {
+        let view: crate::webcam::WebcamView = serde_json::from_value(self.get(&format!("{}/state", crate::webcam::MODULE))?)
+            .map_err(|_| "Réponse Logitech C920 illisible")?;
+        if view.device.simulated == self.live {
+            return Err("Mode webcam incompatible.".into());
+        }
+        Ok(view)
+    }
+
+    pub fn webcam_command(&self, action: &str, params: &Value) -> Result<crate::webcam::Settings, String> {
+        if !matches!(action, "settings" | "preset" | "reset" | "lock" | "refresh") {
+            return Err("Commande webcam inconnue.".into());
+        }
+        self.live_state()?;
+        let result = self
+            .agent
+            .post(&format!("{}{}/{}", self.base, crate::webcam::MODULE, action))
+            .timeout(Duration::from_secs(18))
+            .set("X-Rustudio", "1")
+            .send_json(params.clone());
+        let response = match result {
+            Ok(response) => response,
+            Err(ureq::Error::Status(_, response)) => {
+                return Err(response
+                    .into_json::<Value>()
+                    .ok()
+                    .and_then(|v| v["error"].as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "Commande webcam refusée.".into()));
+            }
+            Err(e) => return Err(format!("Commande webcam non confirmée : {e}")),
+        };
+        let body: Value = response.into_json().map_err(|_| "Réponse webcam illisible")?;
+        if body["ok"] != true {
+            return Err("Commande webcam non confirmée.".into());
+        }
+        serde_json::from_value(body["state"].clone()).map_err(|_| "Réglages webcam relus illisibles.".into())
     }
 
     pub fn keyboard_view(&self) -> Result<crate::keyboard::KeyboardView, String> {
@@ -403,6 +448,21 @@ impl Client {
             && let Some(effect) = keyboard["state"]["active_effect"].as_u64()
         {
             glance.keyboard_effect = Some(rustudio_core::mk770::effect_name(effect as u8).to_owned());
+        }
+        if ready("logitech-c920")
+            && let Ok(cam) = self.get(&format!("{}/state", crate::webcam::MODULE))
+            && cam["state"].is_object()
+        {
+            let preset = match cam["state"]["active_preset"].as_str() {
+                Some("studio") => "Studio / Stream",
+                Some("low-light") => "Faible lumière",
+                Some("natural") => "Naturel",
+                Some("cinema") => "Cinéma",
+                _ if cam["state"]["exposure_auto"] == false => "Exposition manuelle",
+                _ => "Réglages actifs",
+            };
+            let locked = cam["state"]["locked"] == true;
+            glance.webcam_summary = Some(if locked { format!("{preset} · Verrouillé") } else { preset.to_owned() });
         }
         result.glance = glance;
         result.engine_version = live["app_version"].as_str().map(str::to_owned);
@@ -620,6 +680,7 @@ pub enum Event {
     Inventory(Option<Inventory>),
     Mouse(Option<crate::mouse::MouseView>),
     Keyboard(Option<crate::keyboard::KeyboardView>),
+    Webcam(Option<crate::webcam::WebcamView>),
     Go(Option<crate::goxlr::GoView>),
     Audio(Value),
     MicOsd(String),
@@ -646,7 +707,17 @@ pub fn start(
         let mut last = None;
         let mut last_go = None;
         let mut last_keyboard = None;
+        let mut last_webcam = None;
         while !mouse_tx.is_closed() {
+            if mouse_client.webcam_visible.load(Ordering::Relaxed) {
+                let current = mouse_client.webcam_view().ok();
+                if current != last_webcam {
+                    last_webcam = current.clone();
+                    if mouse_tx.send_blocking(Event::Webcam(current)).is_err() {
+                        break;
+                    }
+                }
+            }
             if mouse_client.keyboard_visible.load(Ordering::Relaxed) {
                 let current = mouse_client.keyboard_view().ok();
                 if current != last_keyboard {
@@ -676,7 +747,9 @@ pub fn start(
             }
             std::thread::sleep(Duration::from_millis(
                 if mouse_client.mouse_visible.load(Ordering::Relaxed)
+                    || mouse_client.keyboard_visible.load(Ordering::Relaxed)
                     || mouse_client.go_visible.load(Ordering::Relaxed)
+                    || mouse_client.webcam_visible.load(Ordering::Relaxed)
                 {
                     750
                 } else {

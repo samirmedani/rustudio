@@ -41,7 +41,7 @@ pub const MODELS: &[MicModel] = &[
         self_noise_dba: Some(5.0), max_spl_db: Some(137.0), pattern: "cardioïde", distance_cm: [10, 20], bright: true,
         response: NT1A_RESPONSE,
         tips: &[
-            "Parle face au point doré, à 10–20 cm, le filtre anti-pop entre ta bouche et la grille.",
+            "Parle face au point doré, à 10 à 20 cm, le filtre anti-pop entre ta bouche et la grille.",
             "Il entend toute la pièce : tourne son dos vers le PC et le clavier, et garde toujours la même distance.",
             "Le 48 V est obligatoire : Rustudio l’allume pour toi.",
         ],
@@ -53,7 +53,7 @@ pub const MODELS: &[MicModel] = &[
         distance_cm: [10, 20], bright: false, response: &[],
         tips: &[
             "Branche-le en XLR sur la GoXLR : en USB-C, il ne passe pas par elle.",
-            "Parle à 10–20 cm avec le filtre anti-pop, son dos tourné vers le PC et le clavier.",
+            "Parle à 10 à 20 cm avec le filtre anti-pop, son dos tourné vers le PC et le clavier.",
             "Le 48 V est obligatoire : Rustudio l’allume pour toi.",
         ],
         generic: false, source: Some("https://edge.rode.com/pdf/products/1184/NT1%205th%20GEN_Datasheet.pdf"),
@@ -63,7 +63,7 @@ pub const MODELS: &[MicModel] = &[
         sensitivity_mv_pa: Some(14.1), self_noise_dba: Some(20.0), max_spl_db: Some(144.0), pattern: "cardioïde",
         distance_cm: [10, 20], bright: false, response: &[],
         tips: &[
-            "Parle à 10–20 cm, face à la grille, avec un filtre anti-pop.",
+            "Parle à 10 à 20 cm, face à la grille, avec un filtre anti-pop.",
             "Il entend la pièce : éloigne-le du PC et du clavier.",
             "Le 48 V est obligatoire : Rustudio l’allume pour toi.",
         ],
@@ -73,7 +73,7 @@ pub const MODELS: &[MicModel] = &[
         key: "rode-podmic", brand: "RØDE", name: "PodMic", kind: "dynamic", phantom: false, sensitivity_mv_pa: Some(1.6),
         self_noise_dba: None, max_spl_db: None, pattern: "cardioïde", distance_cm: [5, 10], bright: false, response: &[],
         tips: &[
-            "Parle tout près, à 5–10 cm, face à la grille : il ignore le bruit de la pièce.",
+            "Parle tout près, à 5 à 10 cm, face à la grille : il ignore le bruit de la pièce.",
             "Il demande beaucoup de gain : c’est normal pour un micro dynamique.",
         ],
         generic: false, source: Some("https://edge.rode.com/pdf/products/108/PodMic_Datasheet_FA.pdf"),
@@ -82,7 +82,7 @@ pub const MODELS: &[MicModel] = &[
         key: "shure-sm7b", brand: "Shure", name: "SM7B", kind: "dynamic", phantom: false, sensitivity_mv_pa: Some(1.12),
         self_noise_dba: None, max_spl_db: None, pattern: "cardioïde", distance_cm: [3, 10], bright: false, response: &[],
         tips: &[
-            "Parle tout près, à 3–10 cm, avec la bonnette fournie.",
+            "Parle tout près, à 3 à 10 cm, avec la bonnette fournie.",
             "Laisse ses interrupteurs arrière à plat : Rustudio corrige à l’égaliseur.",
             "Il demande beaucoup de gain (55 à 60 dB) : c’est normal.",
         ],
@@ -91,24 +91,24 @@ pub const MODELS: &[MicModel] = &[
     MicModel {
         key: "shure-sm58", brand: "Shure", name: "SM58", kind: "dynamic", phantom: false, sensitivity_mv_pa: Some(1.85),
         self_noise_dba: None, max_spl_db: None, pattern: "cardioïde", distance_cm: [5, 10], bright: false, response: &[],
-        tips: &["Parle à 5–10 cm, dans l’axe de la grille.", "Il demande beaucoup de gain : c’est normal pour un micro dynamique."],
+        tips: &["Parle à 5 à 10 cm, dans l’axe de la grille.", "Il demande beaucoup de gain : c’est normal pour un micro dynamique."],
         generic: false, source: Some("https://pubs.shure.com/file/260009"),
     },
     MicModel {
         key: "generic-dynamic", brand: "", name: "Autre micro dynamique", kind: "dynamic", phantom: false,
         sensitivity_mv_pa: None, self_noise_dba: None, max_spl_db: None, pattern: "", distance_cm: [5, 15], bright: false,
-        response: &[], tips: &["Parle à 5–15 cm, face à la grille."], generic: true, source: None,
+        response: &[], tips: &["Parle à 5 à 15 cm, face à la grille."], generic: true, source: None,
     },
     MicModel {
         key: "generic-condenser", brand: "", name: "Autre micro statique (48 V)", kind: "condenser", phantom: true,
         sensitivity_mv_pa: None, self_noise_dba: None, max_spl_db: None, pattern: "", distance_cm: [10, 20], bright: false,
-        response: &[], tips: &["Parle à 10–20 cm avec un filtre anti-pop, son dos tourné vers le PC et le clavier."],
+        response: &[], tips: &["Parle à 10 à 20 cm avec un filtre anti-pop, son dos tourné vers le PC et le clavier."],
         generic: true, source: None,
     },
     MicModel {
         key: "generic-jack", brand: "", name: "Micro de casque (jack 3,5 mm)", kind: "jack", phantom: false,
         sensitivity_mv_pa: None, self_noise_dba: None, max_spl_db: None, pattern: "", distance_cm: [2, 5], bright: false,
-        response: &[], tips: &["Place la tige à 2–5 cm du coin de ta bouche, pas devant : moins de souffle."],
+        response: &[], tips: &["Place la tige à 2 à 5 cm du coin de ta bouche, pas devant : moins de souffle."],
         generic: true, source: None,
     },
 ];
@@ -165,5 +165,26 @@ pub fn generic_for(kind: &str) -> &'static str {
         "condenser" => "generic-condenser",
         "jack" => "generic-jack",
         _ => "generic-dynamic",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conseils_sans_tiret_cadratin_et_courbe_bornes() {
+        for m in MODELS {
+            assert!(!m.name.contains('\u{2014}') && !m.name.contains('\u{2013}'), "{}", m.key);
+            for tip in m.tips {
+                assert!(!tip.contains('\u{2014}') && !tip.contains('\u{2013}'), "{} : {tip}", m.key);
+            }
+        }
+        let nt1a = model("rode-nt1a").unwrap();
+        assert_eq!(response_db(nt1a, f64::NAN), 0.0);
+        assert_eq!(response_db(nt1a, 0.0), 0.0);
+        assert_eq!(response_db(nt1a, -50.0), 0.0);
+        assert_eq!(response_db(nt1a, 10.0), -2.0);
+        assert_eq!(response_db(nt1a, 25000.0), -2.0);
     }
 }

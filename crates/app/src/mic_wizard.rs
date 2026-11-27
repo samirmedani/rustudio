@@ -19,7 +19,7 @@ use crate::desktop::hint;
 use crate::mixer::Mixer;
 use crate::ui::{self, Icon, Tone, alpha, rgb};
 use gpui::{AnyElement, Context, Div, FontWeight, SharedString, div, prelude::*, px};
-use rustudio_core::{consts::RATIOS, dsp, micchain};
+use rustudio_core::{consts::{RATIOS, eq_default_freq}, dsp, micchain};
 use serde_json::{Value, json};
 use std::sync::{
     Arc,
@@ -99,6 +99,16 @@ pub struct MicWizard {
     run: u64,
     /// numéro de la boucle d'écoute en cours : un arrêt/relance rapide n'en laisse jamais deux tourner
     listen_run: u64,
+    /// numéro de la lecture audio en cours : une réouverture de l'assistant n'est jamais touchée par une ancienne lecture
+    play_run: u64,
+}
+
+impl Drop for MicWizard {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.as_ref() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Default for MicWizard {
@@ -120,6 +130,7 @@ impl MicWizard {
             listening: false,
             run: 0,
             listen_run: 0,
+            play_run: 0,
         }
     }
 
@@ -128,7 +139,28 @@ impl MicWizard {
     }
 }
 
-const CANCELLED: &str = "Mesure annulée.";
+fn is_cancelled_error(e: &str) -> bool {
+    matches!(e, "Analyse annulée." | "Mesure annulée.")
+}
+
+/// Empreinte vocale valable pour le micro actuellement sélectionné (même logique que State::voice_for_mic).
+fn voice_print_valid(state: &Value) -> bool {
+    let vp = &state["voice_print"];
+    if !vp.is_object() {
+        return false;
+    }
+    let mic = &state["mic"];
+    let Some(kind) = mic["type"].as_str() else {
+        return false;
+    };
+    if vp["mic_type"].as_str() != Some(kind) {
+        return false;
+    }
+    match (vp["model"].as_str(), mic["model"].as_str()) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
 
 /// Réglages d'un préréglage tels qu'ils partiraient vers la GoXLR (traitements coupés neutres).
 fn profile_dsp(info: Option<&Value>, preset: &str) -> Option<dsp::Dsp> {
@@ -141,17 +173,88 @@ fn profile_dsp(info: Option<&Value>, preset: &str) -> Option<dsp::Dsp> {
     Some(dsp::effective_dsp(&d, &fx))
 }
 
-/// La lecture du texte dans la prise complète : de son début à sa fin, d'après les étapes du moteur.
+/// La dernière lecture valide du texte dans la prise complète (celle analysée par voice::analyze, y compris
+/// après un rattrapage de saturation).
 fn reading_part(take: &crate::voice::Take, timeline: &Value) -> Option<Take> {
-    let step = timeline.as_array()?.iter().find(|s| s["phase"] == "reading")?;
     let t0 = take.t0_ms as f64 / 1000.;
     let at = |t: f64| (((t - t0).max(0.) * take.rate as f64) as usize).min(take.samples.len());
-    let (a, b) = (at(step["start"].as_f64()?), at(step["end"].as_f64()?));
-    (b > a + take.rate as usize).then(|| Take {
-        samples: Arc::new(take.samples[a..b].to_vec()),
-        rate: take.rate,
-        gain_db: step["gain_db"].as_i64().unwrap_or(0) as i32,
+    timeline.as_array()?.iter().rev().find_map(|step| {
+        if step["phase"] != "reading" {
+            return None;
+        }
+        let (a, b) = (at(step["start"].as_f64()?), at(step["end"].as_f64()?));
+        (b > a + take.rate as usize).then(|| Take {
+            samples: Arc::new(take.samples[a..b].to_vec()),
+            rate: take.rate,
+            gain_db: step["gain_db"].as_i64().unwrap_or(0) as i32,
+        })
     })
+}
+
+/// Fréquence affichée proprement (« 90 Hz », « 3 kHz », « 3,5 kHz »).
+fn fmt_hz(f: f64) -> String {
+    if f < 1000. {
+        format!("{} Hz", f.round())
+    } else {
+        let k = (f / 100.).round() / 10.;
+        let s = if (k - k.round()).abs() < 1e-9 { format!("{}", k.round()) } else { format!("{k:.1}") };
+        format!("{} kHz", s.replace('.', ","))
+    }
+}
+
+/// Ne garde que les notes qui concernent l'égaliseur (les notes de-esser, gate et compresseur ont leur propre étape).
+fn filter_eq_notes(notes: &[Value]) -> Vec<String> {
+    notes
+        .iter()
+        .filter_map(|n| n["t"].as_str())
+        .filter(|t| {
+            !t.starts_with("Sifflantes")
+                && !t.starts_with("Noise gate")
+                && !t.starts_with("Pièce calme")
+                && !t.starts_with("Compresseur")
+        })
+        .map(String::from)
+        .collect()
+}
+
+/// Dose rapide correspondant à l'état actuel du compresseur (aucune si le compresseur est coupé).
+fn selected_dose(comp_on: bool, mic_preset: &str, ratio: f64, thr: f64) -> Option<&'static str> {
+    if !comp_on {
+        return None;
+    }
+    match mic_preset {
+        "antenne" => Some("skyrock"),
+        "stream" => Some("stream"),
+        "naturel" => Some("doux"),
+        _ if ratio >= 9.5 || (ratio >= 8.5 && thr <= -24.) => Some("skyrock"),
+        _ if ratio >= 7. => Some("stream"),
+        _ => Some("doux"),
+    }
+}
+
+/// Paramètres (seuil, ratio, attaque, relâchement, compensation, de-esser) d'une dose rapide,
+/// calés sur l'empreinte vocale si elle est valide pour le micro actuel.
+fn radio_dose_params(info: Option<&Value>, dose: &str) -> (i64, i64, i64, i64, i64, i64) {
+    let (preset_key, fallback) = match dose {
+        "doux" => ("naturel", (-16, 6, 5, 11, 3, 15)),   // 2:1 doux
+        "stream" => ("stream", (-20, 8, 2, 10, 5, 25)),  // 3,2:1 live
+        _ => ("antenne", (-26, 10, 2, 10, 9, 45)),       // 5,6:1 Radio FM / Skyrock
+    };
+    if let Some(info) = info.filter(|i| i["valid"] == true) {
+        let p = &info["profiles"][preset_key]["dsp"];
+        if p.is_object() {
+            let d = dsp::normalize_dsp(p, None);
+            return (
+                d.comp.threshold as i64,
+                d.comp.ratio as i64,
+                d.comp.attack as i64,
+                d.comp.release as i64,
+                d.comp.makeup as i64,
+                d.deesser as i64,
+            );
+        }
+    }
+    fallback
 }
 
 /// Encadré pédagogique clair qui explique « pourquoi on fait ça » sans jargon technique.
@@ -198,25 +301,89 @@ fn eq_db_text(v: f64) -> String {
 impl Mixer {
     pub fn open_mic_wizard(&mut self, cx: &mut Context<Self>) {
         self.go_to(crate::desktop::Page::Go(crate::goxlr::Section::Microphone), cx);
-        self.wizard = Some(MicWizard::new());
-        if self.voice.info.is_none() {
-            self.load_voice_info(cx);
+        let mut w = MicWizard::new();
+        if let Some(p) = self
+            .go
+            .view
+            .as_ref()
+            .and_then(|v| v.state["mic_preset"].as_str())
+            .filter(|p| dsp::is_preset(p) && *p != "brut")
+        {
+            w.chosen = Some(p.to_owned());
         }
+        self.wizard = Some(w);
+        self.load_voice_info(cx);
         cx.notify();
     }
 
     fn close_mic_wizard(&mut self, cx: &mut Context<Self>) {
+        let mut cancel_job = false;
+        let mut stop_listen = false;
         if let Some(w) = self.wizard.as_mut() {
             if let Some(cancel) = w.cancel.as_ref() {
                 cancel.store(true, Ordering::Relaxed);
+                cancel_job = true;
             }
             w.listen_run += 1;
-            if w.listening {
-                self.send_quiet("mic-listen", json!({"seconds": 0}), cx);
-            }
+            w.play_run += 1;
+            stop_listen = w.listening;
+        }
+        if cancel_job {
+            self.send_quiet("job-cancel", json!({}), cx);
+        }
+        if stop_listen {
+            self.send_quiet("mic-listen", json!({"seconds": 0}), cx);
         }
         self.wizard = None;
         self.go_refresh(cx);
+        cx.notify();
+    }
+
+    /// Enchaîne plusieurs commandes GoXLR dans une seule tâche (évite que go_send n'ignore la seconde
+    /// pendant que la première est en cours) et recharge l'état puis, si demandé, l'analyse vocale.
+    fn wizard_send_seq(&mut self, cmds: Vec<(&'static str, Value)>, refresh_voice: bool, cx: &mut Context<Self>) {
+        if self.go.busy || !self.go.enabled() {
+            return;
+        }
+        self.go.busy = true;
+        self.go.notice = None;
+        let client = self.client.clone();
+        let work = cx.background_executor().spawn(async move {
+            let mut outcome = Ok(());
+            for (action, body) in cmds {
+                if let Err(e) = client.go_command(action, body) {
+                    outcome = Err(e);
+                    break;
+                }
+            }
+            (outcome, client.go_view().ok())
+        });
+        cx.spawn(async move |this, cx| {
+            let (outcome, view) = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.go.busy = false;
+                this.go.receive(view);
+                match outcome {
+                    Ok(()) => {
+                        if let Some(w) = this.wizard_mut() {
+                            w.error = None;
+                        }
+                        if refresh_voice {
+                            this.load_voice_info(cx);
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(w) = this.wizard_mut() {
+                            w.error = Some(e);
+                        } else {
+                            this.go.notice = Some((false, e));
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -268,7 +435,7 @@ impl Mixer {
     fn wizard_end(w: &mut MicWizard, error: Option<String>) {
         w.cancel = None;
         w.job = Value::Null;
-        w.error = error.filter(|e| e != CANCELLED);
+        w.error = error.filter(|e| !is_cancelled_error(e));
     }
 
     /// Avancement d'une tâche du moteur, affiché au fil de l'eau.
@@ -309,6 +476,22 @@ impl Mixer {
 
     /// Étape 2 : la mesure guidée ; le moteur mène les étapes, l'appli enregistre la voix brute.
     fn wizard_voice(&mut self, cx: &mut Context<Self>) {
+        if !self.go.enabled() {
+            return;
+        }
+        // Coupe l'écoute au casque avant d'enregistrer pour éviter toute repisse dans le micro.
+        let stop_listen = self.wizard_mut().is_some_and(|w| {
+            if w.listening {
+                w.listening = false;
+                w.listen_run += 1;
+                true
+            } else {
+                false
+            }
+        });
+        if stop_listen {
+            self.send_quiet("mic-listen", json!({"seconds": 0}), cx);
+        }
         let Some((cancel, run)) = self.wizard_begin(Step::Measure) else { return };
         let client = self.client.clone();
         let watcher = self.client.clone();
@@ -336,15 +519,20 @@ impl Mixer {
                 if this.wizard.as_ref().is_none_or(|w| w.run != run) {
                     return;
                 }
-                if let Some(w) = this.wizard_mut() {
-                    match result {
-                        Ok((_, timeline, take)) => {
+                match result {
+                    Ok((info, timeline, take)) => {
+                        this.voice.info = Some(info);
+                        if let Some(w) = this.wizard_mut() {
                             w.take = take.as_ref().and_then(|t| reading_part(t, &timeline));
                             w.step = Step::Gain;
                             Self::wizard_end(w, None);
                             ok = true;
                         }
-                        Err(e) => Self::wizard_end(w, Some(e)),
+                    }
+                    Err(e) => {
+                        if let Some(w) = this.wizard_mut() {
+                            Self::wizard_end(w, Some(e));
+                        }
                     }
                 }
                 // Mesure réussie : on applique directement le profil Radio FM calculé sur TA voix comme base
@@ -366,15 +554,15 @@ impl Mixer {
                         let view = work.await;
                         let _ = this.update(cx, |this, cx| {
                             this.go.receive(view);
+                            this.load_voice_info(cx);
                             cx.notify();
                         });
                     })
                     .detach();
                 } else {
                     this.go_refresh(cx);
+                    this.load_voice_info(cx);
                 }
-                this.voice.info = None;
-                this.load_voice_info(cx);
                 cx.notify();
             });
         })
@@ -393,34 +581,40 @@ impl Mixer {
         let scale = 10f32.powf((gain_now - take.gain_db) as f32 / 20.);
         let (samples, rate) = (take.samples.clone(), take.rate);
         let chain = match preset.as_deref() {
-            Some("actuel") => self.go.view.as_ref().map(|v| {
-                micchain::design(&dsp::effective_dsp(
+            Some("actuel") => {
+                let Some(v) = self.go.view.as_ref() else { return };
+                Some(micchain::design(&dsp::effective_dsp(
                     &dsp::normalize_dsp(&v.state["dsp"], None),
                     &dsp::normalize_fx(&v.state["fx"]),
-                ))
-            }),
+                )))
+            }
             Some(p) => match profile_dsp(self.voice.info.as_ref(), p) {
                 Some(d) => Some(micchain::design(&d)),
                 None => Some(micchain::design(&dsp::preset_dsp(p))),
             },
             None => None,
         };
-        if let Some(w) = self.wizard_mut() {
-            w.playing = Some(preset.clone().unwrap_or_else(|| "avant".into()));
-            w.error = None;
-        }
+        let Some(w) = self.wizard_mut() else { return };
+        w.play_run += 1;
+        let play_run = w.play_run;
+        w.playing = Some(preset.clone().unwrap_or_else(|| "avant".into()));
+        w.error = None;
         let work = cx.background_executor().spawn(async move {
             let raw: Vec<f32> = samples.iter().map(|x| (x * scale).clamp(-1., 1.)).collect();
-            let out = match chain {
-                Some(p) => micchain::render(&p, &raw),
-                None => raw,
+            let (out, play_rate) = match chain {
+                Some(p) => {
+                    // micchain est conçu pour 48 kHz : on rééchantillonne si la capture Windows était à une autre fréquence.
+                    let src = if rate == 48_000 { raw } else { rustudio_windows_desktop::soundcheck::resample(&raw, rate, 48_000) };
+                    (micchain::render(&p, &src), 48_000)
+                }
+                None => (raw, rate),
             };
-            rustudio_windows_desktop::soundcheck::play_default(out, rate)
+            rustudio_windows_desktop::soundcheck::play_default(out, play_rate)
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                if let Some(w) = this.wizard_mut() {
+                if let Some(w) = this.wizard_mut().filter(|w| w.play_run == play_run) {
                     w.playing = None;
                     if let Err(e) = result {
                         w.error = Some(e);
@@ -440,20 +634,34 @@ impl Mixer {
         self.go_send("mic-preset", json!({"name": preset}), cx);
     }
 
+    /// Réinitialise uniquement l'égaliseur (gains et fréquences) sur le profil voulu, sans écraser le Noise Gate ni le compresseur.
+    fn wizard_reset_eq(&mut self, preset: &str, cx: &mut Context<Self>) {
+        let d = profile_dsp(self.voice.info.as_ref(), preset).unwrap_or_else(|| dsp::preset_dsp(preset));
+        self.wizard_send_seq(
+            vec![
+                ("fx", json!({"eq": true})),
+                ("dsp", json!({"eq": d.eq, "eq_freq": d.eq_freq})),
+            ],
+            false,
+            cx,
+        );
+    }
+
     /// Applique uniquement une dose de dynamique (Compresseur + De-esser) sans écraser l'EQ ni le Noise Gate.
     fn wizard_apply_radio_dose(&mut self, dose: &'static str, cx: &mut Context<Self>) {
-        let (thr, ratio, attack, release, makeup, deess) = match dose {
-            "doux" => (-16, 4, 5, 11, 3, 15),       // 2:1 doux
-            "stream" => (-20, 8, 2, 10, 5, 25),     // 3.2:1 live
-            _ => (-26, 10, 2, 10, 9, 45),           // 6:1 Radio FM / Skyrock
-        };
-        self.go_send("fx", json!({"comp": true, "deesser": true}), cx);
-        self.go_send(
-            "dsp",
-            json!({
-                "comp": {"threshold": thr, "ratio": ratio, "attack": attack, "release": release, "makeup": makeup},
-                "deesser": deess
-            }),
+        let (thr, ratio, attack, release, makeup, deess) = radio_dose_params(self.voice.info.as_ref(), dose);
+        self.wizard_send_seq(
+            vec![
+                ("fx", json!({"comp": true, "deesser": deess > 0})),
+                (
+                    "dsp",
+                    json!({
+                        "comp": {"threshold": thr, "ratio": ratio, "attack": attack, "release": release, "makeup": makeup},
+                        "deesser": deess
+                    }),
+                ),
+            ],
+            false,
             cx,
         );
     }
@@ -473,6 +681,9 @@ impl Mixer {
     /// ouvert : appli fermée, plantée ou relancée, le retour s'arrête tout seul en quelques secondes.
     fn wizard_toggle_listen(&mut self, cx: &mut Context<Self>) {
         let Some(w) = self.wizard_mut() else { return };
+        if w.busy() {
+            return;
+        }
         w.listening = !w.listening;
         let on = w.listening;
         w.listen_run += 1;
@@ -512,7 +723,6 @@ impl Mixer {
         }
         w.run += 1;
         Self::wizard_end(w, None);
-        w.error = Some("Mesure annulée : relance-la quand tu es prêt.".into());
         self.send_quiet("job-cancel", json!({}), cx);
         cx.notify();
     }
@@ -681,7 +891,7 @@ impl Mixer {
                             .child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).child("M’écouter en direct"))
                             .child(ui::caption("Entends tes changements au casque")),
                     )
-                    .child(ui::toggle("wizard-listen", w.listening, true).on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_listen(cx)))),
+                    .child(ui::toggle("wizard-listen", w.listening, !w.busy() && self.go.enabled()).on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_listen(cx)))),
             )
     }
 
@@ -699,7 +909,7 @@ impl Mixer {
     fn wizard_mic_view(&self, cx: &mut Context<Self>) -> (Div, Div) {
         let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
         let current = v.state["mic"]["model"].as_str().unwrap_or("").to_owned();
-        let has_print = v.state["voice_print"].is_object();
+        let has_print = voice_print_valid(&v.state);
         let kind_label = |k: &str| match k {
             "condenser" => "Statique (48 V)",
             "jack" => "Jack 3,5 mm",
@@ -719,7 +929,9 @@ impl Mixer {
                 current == *id,
                 None,
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.go_send("mic-model", json!({"model": key}), cx)));
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.wizard_send_seq(vec![("mic-model", json!({"model": key.clone()}))], true, cx);
+            }));
             tiles.push(tile.into_any_element());
         }
         let tip = |glyph: Icon, title: &'static str, text: &'static str| {
@@ -789,6 +1001,7 @@ impl Mixer {
     /// Étape 2 : mesure guidée 25 s (silence, 3 phrases normales, 1 phrase forte).
     fn wizard_measure_view(&self, w: &MicWizard, cx: &mut Context<Self>) -> (Div, Div) {
         if !w.busy() {
+            let enabled = self.go.enabled();
             let body = div()
                 .flex()
                 .flex_col()
@@ -797,11 +1010,16 @@ impl Mixer {
                     Icon::Mic,
                     ui::ORANGE,
                     "La mesure a été interrompue",
-                    "Relance-la quand tu es prêt : 5 secondes de silence, puis 3 phrases à voix normale, puis 1 phrase forte.",
+                    "Relance-la quand tu es prêt : 6 secondes de silence, puis 3 phrases à voix normale, puis 1 phrase forte.",
                 ));
             let nav = self.wizard_nav(
                 Some(ui::pill("wizard-back-mic", Some(Icon::ChevronLeft), "Retour", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Mic, cx))).into_any_element()),
-                vec![ui::pill("wizard-measure-retry", Some(Icon::Refresh), "Relancer la mesure", Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx))).into_any_element()],
+                vec![
+                    ui::pill("wizard-measure-retry", Some(Icon::Refresh), "Relancer la mesure", Tone::Primary)
+                        .when(!enabled, |d| d.opacity(0.45))
+                        .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx)))
+                        .into_any_element(),
+                ],
             );
             return (body, nav);
         }
@@ -877,23 +1095,40 @@ impl Mixer {
         let s = &v.state;
         let enabled = self.go.enabled();
         let gain = s["mic"]["gain_db"].as_f64().unwrap_or(0.);
+        let mic_kind = s["mic"]["type"].as_str();
         let cal = &s["mic_cal"];
-        let noise = cal["noise_peak_db"].as_f64();
+        let cal_matches = cal.is_object() && cal["type"].as_str() == mic_kind;
+        let noise = cal_matches.then(|| {
+            let shift = gain - cal["gain_db"].as_f64().unwrap_or(gain);
+            cal["noise_peak_db"].as_f64().map(|n| n + shift)
+        }).flatten();
         let (room, room_sub) = match noise {
             Some(n) if n > -42. => ("Bruyante", "PC ou ventilateurs très audibles"),
             Some(n) if n > -54. => ("Souffle léger", "Un léger fond sonore s’entend"),
             Some(_) => ("Calme", "Très peu de bruit entre tes phrases"),
             None => ("Non mesurée", "Lance l’étape 2 pour la mesurer"),
         };
-        let summary = self.voice.info.as_ref().map(|i| &i["summary"]);
-        let voice_label = summary.and_then(|u| u["voice_type"].as_str()).unwrap_or("Analysée").to_owned();
-        let f0 = summary.and_then(|u| u["f0_hz"].as_f64()).map(|f| format!("Fondamentale à {} Hz", f.round())).unwrap_or_else(|| "Timbre mesuré".into());
-        let sib = summary.and_then(|u| u["sibilance"].as_str()).unwrap_or("Normales").to_owned();
-        let plos = summary.and_then(|u| u["plosives"].as_u64()).unwrap_or(0);
-        let tips: Vec<String> = self
-            .voice
-            .info
-            .as_ref()
+        let valid_info = self.voice.info.as_ref().filter(|i| i["valid"] == true);
+        let summary = valid_info.map(|i| &i["summary"]);
+        let voice_label = summary
+            .and_then(|u| u["voice_type"].as_str())
+            .map(crate::voice::capital)
+            .unwrap_or_else(|| if valid_info.is_some() { "Analysée".into() } else { "Non mesurée".into() });
+        let f0 = summary
+            .and_then(|u| u["f0_hz"].as_f64())
+            .map(|f| format!("Fondamentale à {} Hz", f.round()))
+            .unwrap_or_else(|| if valid_info.is_some() { "Timbre mesuré".into() } else { "Lance l’étape 2".into() });
+        let sib = summary
+            .and_then(|u| u["sibilance"].as_str())
+            .map(crate::voice::capital)
+            .unwrap_or_else(|| "Non mesurées".into());
+        let plos = summary.and_then(|u| u["plosives"].as_u64());
+        let plos_label = match plos {
+            Some(0) => "Aucun".into(),
+            Some(n) => format!("{n} détecté(s)"),
+            None => "Non mesurés".into(),
+        };
+        let tips: Vec<String> = valid_info
             .and_then(|i| i["notes"].as_array())
             .into_iter()
             .flatten()
@@ -928,7 +1163,7 @@ impl Mixer {
                             .child(ui::fact(room, format!("Ta pièce : {room_sub}")))
                             .child(ui::fact(voice_label, f0))
                             .child(ui::fact(sib, "Tes « S » (sifflantes)"))
-                            .child(ui::fact(if plos == 0 { "Aucun".into() } else { format!("{plos} détecté(s)") }, "Souffles « P / B »")),
+                            .child(ui::fact(plos_label, "Souffles « P / B »")),
                     ),
             );
         for t in tips {
@@ -944,7 +1179,7 @@ impl Mixer {
                 1.,
                 |val| format!("{} dB", val.round()),
                 enabled,
-                |this, val, cx| this.go_send("mic", json!({"gain_db": val.round() as i64}), cx),
+                |this, val, cx| this.wizard_send_seq(vec![("mic", json!({"gain_db": val.round() as i64}))], true, cx),
                 cx,
             ))
             .children(self.wizard_replay_bar(w, cx));
@@ -952,6 +1187,7 @@ impl Mixer {
         let nav = self.wizard_nav(
             Some(
                 ui::pill("wizard-gain-remeasure", Some(Icon::Refresh), "Refaire la mesure", Tone::Plain)
+                    .when(!enabled, |d| d.opacity(0.45))
                     .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx)))
                     .into_any_element(),
             ),
@@ -1041,30 +1277,38 @@ impl Mixer {
         (body, nav)
     }
 
-    /// Étape 5 : Sculpter ta voix (Égaliseur vulgarisé en 4 curseurs humains).
+    /// Étape 5 : Sculpter ta voix (Égaliseur vulgarisé, fidèle aux fréquences réelles calculées sur ta voix).
     fn wizard_eq_view(&self, w: &MicWizard, cx: &mut Context<Self>) -> (Div, Div) {
         let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
         let s = &v.state;
         let enabled = self.go.enabled();
         let eq_on = s["fx"]["eq"] == true;
         let eq = &s["dsp"]["eq"];
-        let warmth = eq["90"].as_f64().unwrap_or(0.);
-        let boxiness = eq["250"].as_f64().unwrap_or(0.);
-        let presence = eq["3000"].as_f64().unwrap_or(0.);
-        let air = eq["8000"].as_f64().unwrap_or(0.);
+        let eq_freq = &s["dsp"]["eq_freq"];
+        let g90 = eq["90"].as_f64().unwrap_or(0.);
+        let g250 = eq["250"].as_f64().unwrap_or(0.);
+        let g500 = eq["500"].as_f64().unwrap_or(0.);
+        let g1000 = eq["1000"].as_f64().unwrap_or(0.);
+        let g3000 = eq["3000"].as_f64().unwrap_or(0.);
+        let g8000 = eq["8000"].as_f64().unwrap_or(0.);
+        let hz_of = |b: &str| eq_freq[b].as_f64().unwrap_or_else(|| eq_default_freq(b));
+        let (f90, f250, f500, f1000, f3000, f8000) = (hz_of("90"), hz_of("250"), hz_of("500"), hz_of("1000"), hz_of("3000"), hz_of("8000"));
+        // Après mesure vocale, la bande 90 coupe les grondements sous la voix et la bande 250 (déplacée vers
+        // 150 à 220 Hz) porte la chaleur radio ; sur préréglage fixe, 90 porte la chaleur grave.
+        let fitted_layout = f250 < 230. || g90 < 0.;
 
-        // Notes expliquant ce que Rustudio a calculé sur la voix pour le profil Radio FM.
-        let active_key = w.chosen.as_deref().unwrap_or("antenne");
+        let preset_key = s["mic_preset"].as_str().filter(|p| dsp::is_preset(p) && *p != "brut");
+        let active_key = preset_key.or(w.chosen.as_deref()).unwrap_or("antenne");
         let eq_notes: Vec<String> = self
             .voice
             .info
             .as_ref()
+            .filter(|i| i["valid"] == true)
             .and_then(|i| i["profiles"][active_key]["notes"].as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|n| n["t"].as_str().map(String::from))
-            .take(3)
-            .collect();
+            .map(|arr| filter_eq_notes(arr))
+            .unwrap_or_default();
+        let reset_key = active_key.to_owned();
+        let reset_label = if active_key == "antenne" { "Réinitialiser l’EQ Radio FM" } else { "Réinitialiser l’EQ" };
 
         let mut body = div()
             .flex()
@@ -1073,8 +1317,8 @@ impl Mixer {
             .child(lesson(
                 Icon::Sliders,
                 ui::ACCENT,
-                "L’Égaliseur : la recette du timbre radio en 4 ingrédients",
-                "L’égaliseur dose les graves et les aigus de ta voix. Pour un son radio FM : un peu de chaleur en bas, on creuse le côté « boîte en carton » au milieu, puis on ajoute présence et brillance pour passer proprement devant la musique.",
+                "L’Égaliseur : la recette du timbre radio en quelques curseurs",
+                "L’égaliseur dose les graves et les aigus de ta voix. Pour un son radio FM : on coupe les grondements sous ta voix, on met de la chaleur, on creuse le côté « boîte en carton » au milieu, puis on ajoute présence et brillance pour passer proprement devant la musique.",
             ))
             .child(
                 div()
@@ -1096,8 +1340,9 @@ impl Mixer {
                             .items_center()
                             .gap(px(10.))
                             .child(
-                                ui::pill("wizard-eq-skyrock", Some(Icon::Sparkles), "Recalculer Radio FM", Tone::Plain)
-                                    .on_click(cx.listener(|this, _, _, cx| this.wizard_choose("antenne".into(), cx))),
+                                ui::pill("wizard-eq-skyrock", Some(Icon::Sparkles), reset_label, Tone::Plain)
+                                    .when(!enabled, |d| d.opacity(0.45))
+                                    .on_click(cx.listener(move |this, _, _, cx| this.wizard_reset_eq(&reset_key, cx))),
                             )
                             .child(ui::toggle("wizard-eq-toggle", eq_on, enabled).on_click(cx.listener(move |this, _, _, cx| this.go_send("fx", json!({"eq": !eq_on}), cx)))),
                     ),
@@ -1109,12 +1354,22 @@ impl Mixer {
             }
             body = body.child(list);
         }
+        let lbl90 = if fitted_layout {
+            format!("Anti-grondement ({} : souffle et chocs sous ta voix)", fmt_hz(f90))
+        } else {
+            format!("Chaleur & coffre radio ({} : voix grave et proche façon antenne)", fmt_hz(f90))
+        };
+        let lbl250 = if fitted_layout {
+            format!("Chaleur & coffre radio ({} : voix proche façon antenne)", fmt_hz(f250))
+        } else {
+            format!("Bas-médiums ({} : baisser allège les graves lourds)", fmt_hz(f250))
+        };
         body = body
             .when(eq_on, |d| {
                 d.child(self.slider_row(
                     "wizard-eq-warmth",
-                    "Chaleur & coffre radio (90 Hz : voix grave et proche façon antenne)",
-                    warmth,
+                    lbl90,
+                    g90,
                     (-9., 9.),
                     1.,
                     eq_db_text,
@@ -1123,23 +1378,44 @@ impl Mixer {
                     cx,
                 ))
                 .child(self.slider_row(
-                    "wizard-eq-mud",
-                    "Propreté anti-carton (250 à 500 Hz : baisser un peu éclaircit tout de suite)",
-                    boxiness,
+                    "wizard-eq-lowmid",
+                    lbl250,
+                    g250,
                     (-9., 9.),
                     1.,
                     eq_db_text,
                     enabled,
-                    |this, val, cx| {
-                        let v500 = (val * 0.65).round() as i64;
-                        this.go_send("dsp", json!({"eq": {"250": val.round() as i64, "500": v500}}), cx)
-                    },
+                    |this, val, cx| this.go_send("dsp", json!({"eq": {"250": val.round() as i64}}), cx),
                     cx,
                 ))
                 .child(self.slider_row(
+                    "wizard-eq-mud",
+                    format!("Propreté anti-carton ({} : baisser éclaircit tout de suite)", fmt_hz(f500)),
+                    g500,
+                    (-9., 9.),
+                    1.,
+                    eq_db_text,
+                    enabled,
+                    |this, val, cx| this.go_send("dsp", json!({"eq": {"500": val.round() as i64}}), cx),
+                    cx,
+                ))
+                .when(g1000.abs() >= 0.5 || (f1000 - 1000.).abs() >= 1., |d| {
+                    d.child(self.slider_row(
+                        "wizard-eq-mid",
+                        format!("Équilibre des médiums ({} : ajuste le timbre au centre)", fmt_hz(f1000)),
+                        g1000,
+                        (-9., 9.),
+                        1.,
+                        eq_db_text,
+                        enabled,
+                        |this, val, cx| this.go_send("dsp", json!({"eq": {"1000": val.round() as i64}}), cx),
+                        cx,
+                    ))
+                })
+                .child(self.slider_row(
                     "wizard-eq-presence",
-                    "Présence & clarté des mots (3 kHz : fait sortir ta voix devant la musique)",
-                    presence,
+                    format!("Présence & clarté des mots ({} : fait sortir ta voix devant la musique)", fmt_hz(f3000)),
+                    g3000,
                     (-9., 9.),
                     1.,
                     eq_db_text,
@@ -1149,8 +1425,8 @@ impl Mixer {
                 ))
                 .child(self.slider_row(
                     "wizard-eq-air",
-                    "Brillance & air studio (8 kHz : côté net et haute définition)",
-                    air,
+                    format!("Brillance & air studio ({} : côté net et haute définition)", fmt_hz(f8000)),
+                    g8000,
                     (-9., 9.),
                     1.,
                     eq_db_text,
@@ -1189,13 +1465,8 @@ impl Mixer {
         let makeup = comp["makeup"].as_f64().unwrap_or(6.);
         let deess = s["dsp"]["deesser"].as_f64().unwrap_or(30.);
 
-        let dose_selected = if ratio >= 9.5 && thr <= -23. {
-            "skyrock"
-        } else if ratio >= 7. {
-            "stream"
-        } else {
-            "doux"
-        };
+        let mic_preset = s["mic_preset"].as_str().unwrap_or("custom");
+        let dose_selected = selected_dose(comp_on, mic_preset, ratio, thr);
 
         let doses = ui::grid(
             vec![
@@ -1204,7 +1475,7 @@ impl Mixer {
                     Some((Icon::Leaf, ui::GREEN)),
                     "Doux (Naturel)",
                     Some("Lisse juste les petits écarts, dynamique très libre.".into()),
-                    dose_selected == "doux",
+                    dose_selected == Some("doux"),
                     None,
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_radio_dose("doux", cx)))
@@ -1214,7 +1485,7 @@ impl Mixer {
                     Some((Icon::Headphones, ui::ACCENT)),
                     "Présent (Stream)",
                     Some("Voix bien calée devant le jeu, sans excès.".into()),
-                    dose_selected == "stream",
+                    dose_selected == Some("stream"),
                     None,
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_radio_dose("stream", cx)))
@@ -1224,7 +1495,7 @@ impl Mixer {
                     Some((Icon::Radio, ui::ORANGE)),
                     "Radio FM (Skyrock)",
                     Some("Compression dense 5,6:1 + brillance maîtrisée : gros son d’antenne.".into()),
-                    dose_selected == "skyrock",
+                    dose_selected == Some("skyrock"),
                     Some(("Son Skyrock".into(), ui::ORANGE)),
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_radio_dose("skyrock", cx)))
@@ -1233,6 +1504,11 @@ impl Mixer {
             3,
         );
 
+        let limiter_note = if self.rustudio_firmware() {
+            "Et un limiteur à -1 dB empêche automatiquement toute saturation."
+        } else {
+            "Et la compensation reste bornée avec de la marge pour éviter toute saturation."
+        };
         let body = div()
             .flex()
             .flex_col()
@@ -1241,7 +1517,9 @@ impl Mixer {
                 Icon::Radio,
                 ui::ORANGE,
                 "Le vrai secret de Skyrock : le trio Compresseur + De-esser + Limiteur",
-                "Le compresseur rapproche tes chuchotements et calme tes cris pour garder ta voix dense et collée devant. Le de-esser adoucit les « S » agressifs quand on pousse les aigus. Et un limiteur à -1 dB empêche automatiquement toute saturation.",
+                format!(
+                    "Le compresseur rapproche tes chuchotements et calme tes cris pour garder ta voix dense et collée devant. Le de-esser adoucit les « S » agressifs quand on pousse les aigus. {limiter_note}"
+                ),
             ))
             .child(div().flex().flex_col().gap(px(6.)).child(ui::label("Choisis l’intensité radio en un clic")).child(doses))
             .child(
@@ -1360,16 +1638,43 @@ impl Mixer {
             rows.push(div().flex().items_center().gap(px(8.)).child(tile.flex_1().min_w(px(0.))).children(play).into_any_element());
         }
 
+        let compare_lesson = if can_play {
+            "Compare ta voix brute (sans aucun filtre) avec ton son réglé. Tu peux garder les réglages sur mesure que tu viens de sculpter, ou cliquer sur un style complet recalculé sur ta voix (▶ pour l’écouter avant de choisir)."
+        } else {
+            "Tu peux garder les réglages sur mesure que tu viens de sculpter, ou choisir un style complet ci-dessous. Active « M’écouter en direct » en bas pour comparer au casque, ou relance l’étape 2 pour enregistrer une prise à réécouter."
+        };
         let mut body = div()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(lesson(
-                Icon::Ear,
-                ui::GREEN,
-                "Le test final à l’oreille : Avant vs Après",
-                "Compare ta voix brute (sans aucun filtre) avec ton son réglé. Tu peux garder les réglages sur mesure que tu viens de sculpter, ou cliquer sur un style complet recalculé sur ta voix (▶ pour l’écouter avant de choisir).",
-            ));
+            .child(lesson(Icon::Ear, ui::GREEN, "Le test final à l’oreille : Avant vs Après", compare_lesson));
+        if !can_play {
+            body = body.child(
+                div()
+                    .p(px(12.))
+                    .rounded(px(12.))
+                    .bg(alpha(ui::INK, 0.035))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(ui::caption(if current == "custom" {
+                                "Ton réglage personnalisé des étapes 3 à 6 est actif. Aucune prise enregistrée dans cette session pour la réécoute."
+                            } else {
+                                "Aucune prise enregistrée dans cette session : utilise l’écoute en direct en bas ou refais la mesure."
+                            })),
+                    )
+                    .child(
+                        ui::pill("wizard-compare-remeasure", Some(Icon::Refresh), "Enregistrer une prise", Tone::Plain)
+                            .when(!self.go.enabled(), |d| d.opacity(0.45))
+                            .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx))),
+                    ),
+            );
+        }
         if can_play {
             body = body.child(
                 div()
@@ -1440,12 +1745,19 @@ impl Mixer {
         let preset = s.and_then(|s| s["mic_preset"].as_str()).and_then(dsp::preset).map(|p| p.label).unwrap_or("Sur mesure");
         let gain = s.and_then(|s| s["mic"]["gain_db"].as_f64()).unwrap_or(0.);
         let ns_on = v.is_some_and(|v| v.mic_ns["ready"] == true && v.state["mic_ns"]["enabled"] == true);
+        let goxlr_active = s.is_some_and(|s| {
+            micchain::design(&dsp::effective_dsp(
+                &dsp::normalize_dsp(&s["dsp"], None),
+                &dsp::normalize_fx(&s["fx"]),
+            ))
+            .active()
+        });
         let mut on: Vec<&str> = [("eq", "Égaliseur"), ("gate", "Noise gate"), ("comp", "Compresseur"), ("deesser", "De-esser")]
             .into_iter()
             .filter(|(k, _)| s.is_some_and(|s| s["fx"][*k] == true))
             .map(|(_, l)| l)
             .collect();
-        if !on.is_empty() {
+        if self.rustudio_firmware() && goxlr_active {
             on.push("Coupe-bas & Limiteur");
         }
         if ns_on {
@@ -1481,7 +1793,7 @@ impl Mixer {
             .child(hint(if on.is_empty() {
                 "Ta voix part telle quelle, sans traitement.".to_owned()
             } else {
-                format!("Chaîne active dans ta GoXLR : {}.", on.join(", "))
+                format!("Chaîne active : {}.", on.join(", "))
             }))
             .child(lesson(
                 Icon::Chat,
@@ -1535,5 +1847,71 @@ mod tests {
         for (_, label) in STEPS {
             assert!(!label.contains('\u{2014}') && !label.contains('\u{2013}'));
         }
+        assert_eq!(fmt_hz(90.), "90 Hz");
+        assert_eq!(fmt_hz(3000.), "3 kHz");
+        assert_eq!(fmt_hz(3500.), "3,5 kHz");
+    }
+
+    #[test]
+    fn reading_part_prend_la_derniere_lecture_apres_rattrapage_saturation() {
+        let take = crate::voice::Take {
+            samples: (0..48_000 * 12).map(|i| i as f32 / 1000.).collect(),
+            rate: 48_000,
+            t0_ms: 100_000,
+        };
+        let timeline = json!([
+            {"phase": "silence", "start": 100.0, "end": 102.0, "gain_db": 45},
+            {"phase": "reading", "start": 102.0, "end": 104.0, "gain_db": 45},
+            {"phase": "reading", "start": 105.0, "end": 111.0, "gain_db": 35},
+            {"phase": "loud", "start": 111.0, "end": 112.0, "gain_db": 35}
+        ]);
+        let part = reading_part(&take, &timeline).expect("lecture trouvee");
+        assert_eq!(part.gain_db, 35, "doit prendre la derniere lecture non saturee");
+        assert_eq!(part.samples.len(), 6 * 48_000);
+    }
+
+    #[test]
+    fn empreinte_valide_seulement_pour_le_micro_selectionne() {
+        let st = json!({
+            "mic": {"type": "condenser", "model": "rode-nt1a"},
+            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
+        });
+        assert!(voice_print_valid(&st));
+        let other_model = json!({
+            "mic": {"type": "condenser", "model": "at2020"},
+            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
+        });
+        assert!(!voice_print_valid(&other_model));
+        let other_type = json!({
+            "mic": {"type": "dynamic", "model": "shure-sm7b"},
+            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
+        });
+        assert!(!voice_print_valid(&other_type));
+        let no_model = json!({
+            "mic": {"type": "condenser", "model": null},
+            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
+        });
+        assert!(voice_print_valid(&no_model));
+    }
+
+    #[test]
+    fn notes_eq_filtrees_et_doses_coherentes() {
+        let notes = vec![
+            json!({"lvl": "ok", "t": "+3 dB à 180 Hz : chaleur « Radio FM »."}),
+            json!({"lvl": "ok", "t": "−3 dB à 380 Hz : médiums allégés pour « Radio FM »."}),
+            json!({"lvl": "ok", "t": "Sifflantes normales : de-esser à 40 %."}),
+            json!({"lvl": "ok", "t": "Noise gate à −48 dB : 24 dB de bruit en moins entre tes phrases."}),
+            json!({"lvl": "ok", "t": "Compresseur 4:1 dès −26 dB (attaque 3 ms, relâchement 115 ms), +8 dB de compensation : ta voix reste régulière."}),
+        ];
+        assert_eq!(filter_eq_notes(&notes).len(), 2);
+        assert_eq!(selected_dose(false, "antenne", 10., -26.), None);
+        assert_eq!(selected_dose(true, "antenne", 9., -20.), Some("skyrock"));
+        assert_eq!(selected_dose(true, "custom", 8., -20.), Some("stream"));
+        assert_eq!(selected_dose(true, "custom", 6., -16.), Some("doux"));
+        assert!(is_cancelled_error("Analyse annulée."));
+        assert!(is_cancelled_error("Mesure annulée."));
+        assert!(!is_cancelled_error("GoXLR déconnectée."));
+        assert_eq!(radio_dose_params(None, "doux"), (-16, 6, 5, 11, 3, 15));
+        assert_eq!(radio_dose_params(None, "skyrock"), (-26, 10, 2, 10, 9, 45));
     }
 }

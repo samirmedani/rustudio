@@ -171,11 +171,13 @@ const SIB_BAND: (f64, f64) = (4_000.0, 12_000.0);
 const LOWMID_BAND: (f64, f64) = (80.0, 4_000.0);
 const LF_BAND: (f64, f64) = (20.0, 100.0);
 const MID_BAND: (f64, f64) = (100.0, 2_000.0);
-/// sifflante : énergie 4–12 kHz dominante, pas plus de 25 dB sous la médiane de la parole
+/// sifflante : énergie 4 à 12 kHz dominante, pas plus de 25 dB sous la médiane de la parole
 const SIB_WITHIN_DB: f64 = 25.0;
-/// plosive : 20–100 Hz au moins 15 dB au-dessus de leur médiane pendant la parole, et plus forts que 100 Hz–2 kHz ;
+/// plosive : 20 à 100 Hz au moins 15 dB au-dessus de leur médiane pendant la parole, et plus forts que 100 Hz à 2 kHz ;
 /// au-delà de 100 Hz, la fondamentale d'une voix aiguë qui descend ressemblerait à un coup de souffle
 const PLOSIVE_OVER_DB: f64 = 15.0;
+/// en dessous, un résidu grave n'est pas un coup de souffle audible (voix déjà filtrée passe-haut)
+const PLOSIVE_MIN_DB: f64 = -55.0;
 const PLOSIVE_GAP_S: f64 = 0.15;
 /// plus long, ce n'est pas une plosive (pied de micro heurté, camion qui passe)
 const PLOSIVE_MAX_S: f64 = 0.2;
@@ -202,8 +204,8 @@ const YIN_THRESHOLD: f64 = 0.15;
 /// - voice_db, noise_db, sibilant_db : puissance par bande de 1/6 d'octave (dBFS, convention du module) ;
 /// - sibilance.excess_db : bande la plus forte des sifflantes entre 4 et 11 kHz, moins la moyenne de voice_db entre
 ///   1 et 3 kHz ; sans sifflante repérée, calculé sur voice_db (valeur basse) ;
-/// - plosives : trames dont les graves (20–100 Hz) dépassent d'au moins 15 dB leur médiane pendant la parole et
-///   l'emportent sur 100 Hz–2 kHz ; deux coups à moins de 150 ms n'en font qu'un, un coup de plus de 200 ms n'est
+/// - plosives : trames dont les graves (20 à 100 Hz) dépassent d'au moins 15 dB leur médiane pendant la parole et
+///   l'emportent sur 100 Hz à 2 kHz ; deux coups à moins de 150 ms n'en font qu'un, un coup de plus de 200 ms n'est
 ///   pas une plosive ; per_minute rapporté à la durée de la lecture ;
 /// - hum : pic à 50/100/150 Hz ou 60/120/180 Hz, 10 dB au-dessus de son voisinage (6 à 20 Hz de part et
 ///   d'autre) et au-dessus de -80 dBFS ;
@@ -517,7 +519,7 @@ fn plosives(frames: &[Frame], speech: &[bool], hop_s: f64, reading_s: f64) -> Pl
     let mut events: Vec<(usize, usize, f64)> = vec![];
     for (i, f) in frames.iter().enumerate() {
         let over = lf[i] - ref_lf;
-        if over >= PLOSIVE_OVER_DB && f.lf > f.mid {
+        if lf[i] >= PLOSIVE_MIN_DB && over >= PLOSIVE_OVER_DB && f.lf > f.mid {
             match events.last_mut() {
                 Some(e) if (i - e.1) as f64 * hop_s <= PLOSIVE_GAP_S => {
                     e.1 = i;
@@ -583,25 +585,25 @@ fn yin(seg: &[f64], fd: f64, w: usize, tmin: usize, tmax: usize, dn: &mut [f64])
     if energy <= 1e-14 {
         return None;
     }
+    let start = tmin.max(2);
     let mut cum = 0.0;
+    let mut in_dip = false;
     dn[0] = 1.0;
     for tau in 1..=tmax + 1 {
         let d: f64 = seg[..w].iter().zip(&seg[tau..tau + w]).map(|(p, q)| (p - q) * (p - q)).sum();
         cum += d;
         dn[tau] = if cum > 0.0 { d * tau as f64 / cum } else { 1.0 };
-    }
-    let mut tau = tmin.max(2);
-    while tau <= tmax {
-        if dn[tau] < YIN_THRESHOLD {
-            while tau < tmax && dn[tau + 1] < dn[tau] {
-                tau += 1;
+        if in_dip {
+            let cur = tau - 1;
+            if cur == tmax || dn[tau] >= dn[cur] {
+                let (p, q, r) = (dn[cur - 1], dn[cur], dn[tau]);
+                let den = p - 2.0 * q + r;
+                let shift = if den.abs() > 1e-12 { (0.5 * (p - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
+                return Some(fd / (cur as f64 + shift));
             }
-            let (p, q, r) = (dn[tau - 1], dn[tau], dn[tau + 1]);
-            let den = p - 2.0 * q + r;
-            let shift = if den.abs() > 1e-12 { (0.5 * (p - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
-            return Some(fd / (tau as f64 + shift));
+        } else if tau >= start && tau <= tmax && dn[tau] < YIN_THRESHOLD {
+            in_dip = true;
         }
-        tau += 1;
     }
     None
 }
@@ -717,7 +719,7 @@ fn hum(x: &[f32], xh: &[f32], fs: f64, a: usize, b: usize, quiet_db: f64) -> Opt
     best.map(|h| Hum { hz: h.hz, level_db: r1(h.level_db) })
 }
 
-/// Enveloppe 500 Hz–4 kHz : fenêtres de 20 ms tous les 5 ms, en dB.
+/// Enveloppe 500 Hz à 4 kHz : fenêtres de 20 ms tous les 5 ms, en dB.
 fn band_env(x: &[f32], fs: f64, a: usize, b: usize) -> Vec<f64> {
     let pre = ((0.05 * fs) as usize).min(a);
     let mut hp = Biquad::highpass(fs, 500.0, std::f64::consts::FRAC_1_SQRT_2);
@@ -1444,5 +1446,78 @@ mod tests {
         let a: f64 = weights(100.0, 1000.0, df, half).iter().map(|(_, w)| w).sum();
         let b: f64 = weights(1000.0, 10_000.0, df, half).iter().map(|(_, w)| w).sum();
         assert!((a + b - total).abs() < 1e-9);
+    }
+
+    #[test]
+    fn yin_sortie_anticipee_identique_au_balayage_complet() {
+        let fd: f64 = 8000.0;
+        let w = (0.03 * fd).round() as usize;
+        let tmin = (fd / F0_MAX_HZ).floor() as usize;
+        let tmax = (fd / F0_MIN_HZ).ceil() as usize;
+        let naive = |seg: &[f64]| -> Option<f64> {
+            let energy: f64 = seg[..w].iter().map(|v| v * v).sum();
+            if energy <= 1e-14 {
+                return None;
+            }
+            let mut dn = vec![0.0; tmax + 2];
+            let mut cum = 0.0;
+            dn[0] = 1.0;
+            for tau in 1..=tmax + 1 {
+                let d: f64 = seg[..w].iter().zip(&seg[tau..tau + w]).map(|(p, q)| (p - q) * (p - q)).sum();
+                cum += d;
+                dn[tau] = if cum > 0.0 { d * tau as f64 / cum } else { 1.0 };
+            }
+            let mut tau = tmin.max(2);
+            while tau <= tmax {
+                if dn[tau] < YIN_THRESHOLD {
+                    while tau < tmax && dn[tau + 1] < dn[tau] {
+                        tau += 1;
+                    }
+                    let (p, q, r) = (dn[tau - 1], dn[tau], dn[tau + 1]);
+                    let den = p - 2.0 * q + r;
+                    let shift = if den.abs() > 1e-12 { (0.5 * (p - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
+                    return Some(fd / (tau as f64 + shift));
+                }
+                tau += 1;
+            }
+            None
+        };
+        let mut scratch = vec![0.0; tmax + 2];
+        for f0 in [60.0, 85.0, 120.0, 220.0, 395.0] {
+            let seg: Vec<f64> = (0..w + tmax + 2)
+                .map(|i| {
+                    let t = i as f64 / fd;
+                    (2.0 * PI * f0 * t).sin() + 0.4 * (4.0 * PI * f0 * t).sin()
+                })
+                .collect();
+            assert_eq!(yin(&seg, fd, w, tmin, tmax, &mut scratch), naive(&seg), "f0={f0}");
+        }
+        // bruit pur : aucune fondamentale
+        let mut rng = Rng(42);
+        let noise: Vec<f64> = (0..w + tmax + 2).map(|_| rng.white()).collect();
+        assert_eq!(yin(&noise, fd, w, tmin, tmax, &mut scratch), naive(&noise));
+    }
+
+    #[test]
+    fn plosives_ignorent_bruit_inaudible_sous_voix_filtree() {
+        // voix haute (300 Hz uniquement, zero energie 20 a 100 Hz) avec un residu grave inaudible a -85 dBFS
+        let fs = 16_000.0;
+        let len = (6.0 * fs) as usize;
+        let mut x = vec![0.0f32; len];
+        for (i, slot) in x.iter_mut().enumerate() {
+            let t = i as f64 / fs;
+            if t >= 1.5 && ((t * 2.0) as usize) % 2 == 0 {
+                *slot = (0.1 * (2.0 * PI * 300.0 * t).sin()) as f32;
+            }
+            if (2.75..2.80).contains(&t) {
+                *slot += (5e-5 * (2.0 * PI * 50.0 * t).sin()) as f32;
+            }
+        }
+        let segs = [
+            Segment { phase: Phase::Silence, start_s: 0.0, end_s: 1.5, gain_db: 40 },
+            Segment { phase: Phase::Reading, start_s: 1.5, end_s: 6.0, gain_db: 40 },
+        ];
+        let p = analyze(&x, 16_000, &segs).unwrap();
+        assert_eq!(p.plosives.count, 0, "bruit inaudible ne doit pas compter comme plosive : {:?}", p.plosives);
     }
 }

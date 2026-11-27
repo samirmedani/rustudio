@@ -217,7 +217,10 @@ pub fn fit_dsp(name: &str, cal: Option<&MicCal>, gain_db: Option<i32>) -> Dsp {
     let thr = clamp_f(med - 4.0 + fit.comp, -40, -6);
     d.comp.threshold = thr;
     let ratio = RATIOS[d.comp.ratio.clamp(0, 14) as usize];
-    d.comp.makeup = clamp_f((peak - thr as f64).max(0.0) * (1.0 - 1.0 / ratio) * fit.makeup, 0, 12);
+    let mut makeup = (peak - thr as f64).max(0.0) * (1.0 - 1.0 / ratio) * fit.makeup;
+    let peak_out = thr as f64 + (peak - thr as f64).max(0.0) / ratio;
+    makeup = makeup.min(-3.0 - peak_out);
+    d.comp.makeup = clamp_f(makeup, 0, 12);
     d.gate.attenuation = match fit.att {
         Some(a) => a,
         None => gate_att_percent(
@@ -327,4 +330,25 @@ pub fn normalize_dsp(src: &Value, base: Option<&Dsp>) -> Dsp {
 
 pub fn ratio_x(ratio: i32) -> f64 {
     RATIOS[ratio.clamp(0, 14) as usize]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::normalize_cal;
+    use serde_json::json;
+
+    #[test]
+    fn fit_dsp_evite_saturation_sur_voix_tres_forte() {
+        let hot = normalize_cal(&json!({
+            "type": "dynamic", "gain_db": 55, "t": 1.0,
+            "noise_db": -65.0, "noise_peak_db": -60.0,
+            "voice_low_db": -16.0, "voice_db": -8.0, "voice_peak_db": -1.5
+        }))
+        .unwrap();
+        let d = fit_dsp("antenne", Some(&hot), Some(55));
+        let ratio = ratio_x(d.comp.ratio);
+        let peak_out = d.comp.threshold as f64 + (-1.5 - d.comp.threshold as f64).max(0.0) / ratio + d.comp.makeup as f64;
+        assert!(peak_out <= -2.5, "compensation excessive sur voix forte : {peak_out} dBFS ({:?})", d.comp);
+    }
 }

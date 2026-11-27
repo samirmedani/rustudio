@@ -39,7 +39,7 @@ fn request(ctl: &Arc<Ctl>, path: &str, body: Option<Value>, authorized: bool, ho
 fn adaptateur_suit_connexion_erreur_et_simulation() {
     let ctl = controller(true);
     let installed = ctl.modules_snapshot()["installed"].clone();
-    assert_eq!(installed.as_array().unwrap().len(), 3);
+    assert_eq!(installed.as_array().unwrap().len(), 4);
     assert_eq!(installed[0]["id"], "goxlr-mini");
     let devices = || ctl.modules_snapshot()["devices"].clone();
     assert_eq!(devices()[0]["status"], "starting");
@@ -246,5 +246,53 @@ fn clavier_mk770_independant_et_commandes_relues() {
     assert_eq!(ctl.module_state_snapshot("cooler-master-mk770").unwrap()["state"]["effects"][1]["speed"], 4);
     assert_eq!(ctl.snapshot()["state"], original_audio);
     let (code, _) = request(&ctl, "/api/modules/cooler-master-mk770/settings", Some(json!({"active_effect":0})), false, None);
+    assert_eq!(code, 403);
+}
+
+#[test]
+fn webcam_c920_independante_presets_verrouillage_et_relecture() {
+    let ctl = controller(true);
+    rustudio_engine::webcam::start(&ctl);
+    let original_audio = ctl.snapshot()["state"].clone();
+    let (code, initial) = request(&ctl, "/api/modules/logitech-c920/state", None, false, None);
+    assert_eq!(code, 200);
+    assert_eq!(initial["device"]["connected"], true);
+    assert_eq!(initial["state"]["brightness"], 128);
+    assert_eq!(initial["state"]["locked"], false);
+
+    let (code, studio) = request(&ctl, "/api/modules/logitech-c920/preset", Some(json!({"id": "studio"})), true, None);
+    assert_eq!(code, 200, "{studio}");
+    assert_eq!(studio["state"]["exposure_auto"], false);
+    assert_eq!(studio["state"]["low_light_comp"], false);
+    assert_eq!(studio["state"]["power_line"], "hz50");
+    assert_eq!(studio["state"]["active_preset"], "studio");
+
+    let (code, tuned) = request(&ctl, "/api/modules/logitech-c920/settings", Some(json!({"brightness": 145, "zoom": 140, "led_mode": "off"})), true, None);
+    assert_eq!(code, 200, "{tuned}");
+    assert_eq!(tuned["state"]["brightness"], 145);
+    assert_eq!(tuned["state"]["zoom"], 140);
+    assert_eq!(tuned["state"]["led_mode"], "off");
+    assert!(tuned["state"]["active_preset"].is_null());
+
+    let (code, locked) = request(&ctl, "/api/modules/logitech-c920/lock", Some(json!({"enabled": true})), true, None);
+    assert_eq!(code, 200, "{locked}");
+    assert_eq!(locked["state"]["locked"], true);
+
+    let (code, refused) = request(&ctl, "/api/modules/logitech-c920/settings", Some(json!({"brightness": 999})), true, None);
+    assert_eq!(code, 400);
+    assert!(refused["error"].as_str().unwrap().contains("Luminosité"));
+
+    let (code, _) = request(&ctl, "/api/modules/logitech-c920/volume", Some(json!({"channel": "Music", "value": 10})), true, None);
+    assert_eq!(code, 404);
+
+    let (code, reset) = request(&ctl, "/api/modules/logitech-c920/reset", Some(json!({})), true, None);
+    assert_eq!(code, 200, "{reset}");
+    assert_eq!(reset["state"]["brightness"], 128);
+    assert_eq!(reset["state"]["zoom"], 100);
+
+    assert_eq!(ctl.modules_snapshot()["devices"][3]["connected"], true);
+    assert_eq!(ctl.snapshot()["state"], original_audio);
+
+    let (code, _) = request(&ctl, "/api/modules/logitech-c920/settings", Some(json!({"brightness": 130})), false, None);
     assert_eq!(code, 403);
 }

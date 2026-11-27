@@ -26,7 +26,7 @@ fn take(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Value, Stri
     if mode["connected"] != true || mode["job"]["running"] == true {
         return Err("La GoXLR doit être connectée et disponible pour la mesure.".into());
     }
-    if mode["mic"]["muted"] == true || mode["mic"]["partial"].is_string() {
+    if mode["mic"]["muted"] == true || mode["mic"]["partial"].as_str() == Some("chat") {
         return Err("Réactive le micro pour lancer la mesure.".into());
     }
     let start = client.post_module(MODULE, "voice-print", options)?;
@@ -84,6 +84,9 @@ pub struct Take {
 pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<(Value, Value, Option<Take>), String> {
     if !client.is_live() {
         let job = take(client, cancel, quick)?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Analyse annulée.".into());
+        }
         return Ok((client.send_voice(None)?, job["timeline"].clone(), None));
     }
     let stop = AtomicBool::new(false);
@@ -107,6 +110,9 @@ pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<(Val
     });
     let (time, rate, job) = run?;
     let bytes = bytes?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err("Analyse annulée.".into());
+    }
     let samples: Vec<f32> = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();
     let result = client.send_voice(Some((time, rate, bytes)))?;
     Ok((result, job["timeline"].clone(), Some(Take { samples, rate, t0_ms: time })))
@@ -120,6 +126,7 @@ pub struct VoiceExtras {
     pub playing: bool,
     pub info: Option<Value>,
     pub loading: bool,
+    pub reload: bool,
     pub echo: Option<Value>,
     pub echo_running: bool,
     pub note: Option<String>,
@@ -130,6 +137,7 @@ const REC_SECONDS: f64 = 8.0;
 impl Mixer {
     pub fn load_voice_info(&mut self, cx: &mut Context<Self>) {
         if self.voice.loading {
+            self.voice.reload = true;
             return;
         }
         self.voice.loading = true;
@@ -139,7 +147,12 @@ impl Mixer {
             let r = job.await;
             let _ = this.update(cx, |this, cx| {
                 this.voice.loading = false;
-                this.voice.info = r.ok();
+                if let Ok(info) = r {
+                    this.voice.info = Some(info);
+                }
+                if std::mem::take(&mut this.voice.reload) {
+                    this.load_voice_info(cx);
+                }
                 cx.notify();
             });
         })
@@ -289,6 +302,9 @@ impl Mixer {
             return p.child(hint("Lance « Régler mon micro » : ta voix apparaîtra ici, avant et après le préréglage."));
         };
         let values: Vec<f64> = voice.iter().chain(after.iter()).filter_map(Value::as_f64).collect();
+        if bands.is_empty() || values.is_empty() {
+            return p.child(hint("Lance « Régler mon micro » : ta voix apparaîtra ici, avant et après le préréglage."));
+        }
         let (lo, hi) = values.iter().fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
         let span = (hi - lo).max(1.0);
         let height = |v: Option<f64>| gpui::relative((((v.unwrap_or(lo) - lo) / span) * 0.94 + 0.04) as f32);
@@ -344,7 +360,7 @@ impl Mixer {
 }
 
 /// « grave » → « Grave ».
-fn capital(text: &str) -> String {
+pub(crate) fn capital(text: &str) -> String {
     let mut c = text.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }

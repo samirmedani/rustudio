@@ -174,11 +174,17 @@ pub fn run_apply_update() -> i32 {
 
 pub struct WinHooks;
 
+pub(crate) fn path_under(path: &str, root: &Path) -> bool {
+    let norm = |s: &str| s.replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    let p = norm(path);
+    let r = norm(&root.to_string_lossy());
+    !r.is_empty() && (p == r || p.strip_prefix(&r).is_some_and(|rest| rest.starts_with('\\')))
+}
+
 fn engine_pids(root: &Path) -> Vec<u32> {
-    let prefix = root.to_string_lossy().to_lowercase();
     crate::win::processes_named("rustudio-engine.exe")
         .into_iter()
-        .filter(|(_, p)| p.to_lowercase().starts_with(&prefix))
+        .filter(|(_, p)| path_under(p, root))
         .map(|(pid, _)| pid)
         .collect()
 }
@@ -233,11 +239,10 @@ impl Hooks for WinHooks {
             "Get-CimInstance Win32_Process -Filter \"Name='Rustudio.exe'\" | ForEach-Object { \
              $o = Invoke-CimMethod -InputObject $_ -MethodName GetOwner; '{0}|{1}\\{2}|{3}' -f $_.ProcessId, $o.Domain, $o.User, $_.ExecutablePath }",
         );
-        let prefix = plan.to.to_string_lossy().to_lowercase();
         out.lines()
             .filter_map(|l| {
                 let p: Vec<&str> = l.trim().splitn(3, '|').collect();
-                (p.len() == 3 && p[2].to_lowercase().starts_with(&prefix) && p[1] != "\\").then(|| (p[0].parse().ok(), p[1].to_string()))
+                (p.len() == 3 && path_under(p[2], &plan.to) && p[1] != "\\").then(|| (p[0].parse().ok(), p[1].to_string()))
             })
             .filter_map(|(pid, u)| pid.map(|pid| (pid, u)))
             .collect()
@@ -287,5 +292,21 @@ impl Hooks for WinHooks {
             ));
             log("Appli rouverte après la mise à jour (elle ne s’était pas relancée seule)");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_under_respecte_les_frontieres_de_dossier() {
+        let root = Path::new(r"C:\Program Files\Rustudio");
+        assert!(path_under(r"C:\Program Files\Rustudio\Rustudio.exe", root));
+        assert!(path_under(r"c:/program files/rustudio/sub/rustudio-engine.exe", root));
+        assert!(path_under(r"C:\Program Files\Rustudio\", root));
+        assert!(!path_under(r"C:\Program Files\Rustudio-dev\Rustudio.exe", root));
+        assert!(!path_under(r"C:\Program Files\Rustudio2\rustudio-engine.exe", root));
+        assert!(!path_under(r"C:\Program Files\Autre\Rustudio.exe", root));
     }
 }

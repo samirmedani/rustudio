@@ -237,6 +237,7 @@ assets!(
     Tower => "radioTower", Keyboard => "keyboard", Podcast => "pod", Gauge => "gauge", Help => "help",
     History => "history", Trash => "trash", Alert => "alert", Play => "play", Stop => "stop", Palette => "palette",
     External => "link", Minus => "minus", Square => "square", Star => "star", Bolt => "bolt",
+    Camera => "camera",
 );
 
 pub struct Assets;

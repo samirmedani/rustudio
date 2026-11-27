@@ -128,7 +128,21 @@ pub const MK770: ModuleDescriptor = ModuleDescriptor {
     actions: &["settings", "refresh", "macros", "macro-assign", "macro-remove"],
 };
 
-const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA, MK770];
+pub const LOGITECH_C920: ModuleDescriptor = ModuleDescriptor {
+    id: "logitech-c920", name: "C920", vendor: "Logitech", kind: "webcam",
+    origin: ModuleOrigin::Official, author: "samirmedani", source: "crates/logitech-c920", review_pr: None,
+    summary: "Image, exposition manuelle, focus, cadrage, préréglages et maintien anti-réinitialisation en USB.",
+    capabilities: &["image", "optics", "presets", "lock", "led"],
+    pages: &[
+        ModulePage { id: "webcam", label: "Ma webcam", icon: "camera" },
+        ModulePage { id: "webcam-image", label: "Image et couleur", icon: "sun" },
+        ModulePage { id: "webcam-optics", label: "Optique et cadrage", icon: "sliders" },
+        ModulePage { id: "webcam-info", label: "Ma C920", icon: "camera" },
+    ],
+    actions: &["settings", "preset", "reset", "lock", "refresh"],
+};
+
+const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA, MK770, LOGITECH_C920];
 
 pub fn installed() -> &'static [ModuleDescriptor] {
     INSTALLED

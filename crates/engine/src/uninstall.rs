@@ -45,10 +45,9 @@ pub fn run(args: &[String]) -> i32 {
         return 1; // garde-fou : on n'efface que le dossier de Rustudio
     }
     let _ = crate::service::uninstall();
-    let prefix = dir.to_string_lossy().to_lowercase();
     for name in ["Rustudio.exe", "rustudio-engine.exe"] {
         for (pid, path) in crate::win::processes_named(name) {
-            if path.to_lowercase().starts_with(&prefix) {
+            if crate::apply::path_under(&path, &dir) {
                 crate::win::kill_pid(pid);
             }
         }

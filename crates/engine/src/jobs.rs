@@ -179,15 +179,28 @@ fn run_job(ctl: &Arc<Ctl>, kind: &str, p: &Value) {
             update(ctl, &[("running", json!(false)), ("error", json!(m))]);
         }
     }
-    let mut g = ctl.lock();
-    g.fast_level = false;
-    g.gain_override = None;
-    g.mark(&[Key::Mic], true);
-    if std::mem::replace(&mut g.voice_capture, false) {
-        // fin de l'empreinte (réussie, annulée ou en erreur) : traitements, routage et volume du micro reviennent
-        let mut keys = vec![Key::Dsp, Key::Volume(crate::controller::ch("Mic"))];
-        keys.extend((0..INPUTS.len()).map(Key::Route));
-        g.mark(&keys, false);
+    let restore_voice = {
+        let mut g = ctl.lock();
+        g.fast_level = false;
+        g.gain_override = None;
+        g.mark(&[Key::Mic], true);
+        if std::mem::replace(&mut g.voice_capture, false) {
+            // fin de l'empreinte (réussie, annulée ou en erreur) : traitements, routage et volume du micro reviennent
+            let mut keys = vec![
+                Key::Dsp,
+                Key::Volume(crate::controller::ch("Mic")),
+                Key::Volume(crate::controller::ch("MicMonitor")),
+            ];
+            keys.extend((0..INPUTS.len()).map(Key::Route));
+            g.mark(&keys, false);
+            true
+        } else {
+            false
+        }
+    };
+    if restore_voice {
+        ctl.eqapo.set_mic_bypass(false);
+        ctl.ns_apply();
     }
 }
 
@@ -400,7 +413,7 @@ fn voice_notes(ctl: &Ctl, mtype: &str, gain: i32, cal: &MicCal) -> Vec<Value> {
     if gain >= 72 && cal.voice_peak_db < VOICE_TARGET_DB - 3.0 {
         notes.push(json!({"lvl": "warn", "t": "Ta voix arrive faiblement, même au gain maximum : rapproche-toi du micro (10 à 15 cm)."}));
     } else if mtype == "condenser" && gain >= 42 {
-        notes.push(json!({"lvl": "tip", "t": "Tu sembles loin du micro : à 10–15 cm, ta voix sera plus présente et l’écho de la pièce bien plus faible."}));
+        notes.push(json!({"lvl": "tip", "t": "Tu sembles loin du micro : à 10 à 15 cm, ta voix sera plus présente et l’écho de la pièce bien plus faible."}));
     } else if gain <= 6 {
         notes.push(json!({"lvl": "tip", "t": "Ta voix arrive très fort : tu peux reculer un peu du micro (10 à 15 cm)."}));
     }
@@ -412,7 +425,7 @@ fn voice_notes(ctl: &Ctl, mtype: &str, gain: i32, cal: &MicCal) -> Vec<Value> {
         notes.push(json!({"lvl": "ok", "t": "Bruit de fond très faible : ta voix ressort nettement."}));
     }
     if mtype == "condenser" {
-        notes.push(json!({"lvl": "tip", "t": "Micro statique : parle à 10–15 cm, face au micro, avec un filtre anti-pop."}));
+        notes.push(json!({"lvl": "tip", "t": "Micro statique : parle à 10 à 15 cm, face au micro, avec un filtre anti-pop."}));
     }
     if s.route("Chat", "ChatMic") {
         notes.push(json!({"lvl": "warn", "t": "Discord s’entend lui-même : tes amis ont de l’écho.",
@@ -504,17 +517,24 @@ fn voice_print(ctl: &Ctl, p: &Value) -> JR<Value> {
     // jamais de mesure à un gain absurde : on part au plus du plafond de ce micro
     let mut gain = old_gain.min(ceiling);
     let mut timeline: Vec<(Phase, f64, f64, i32)> = vec![];
-    // 1. préparation : traitements neutres, ta voix seule vers Chat Mic, volume du micro au maximum
+    // 1. préparation : traitements neutres (GoXLR et RNNoise PC), retour casque coupé, ta voix seule vers Chat Mic, volume du micro au maximum
     set_phase(ctl, "prepare", 1.2, "Je prépare l’enregistrement…");
     let gen = {
         let mut g = ctl.lock();
         g.voice_capture = true;
         g.ab_until = None;
+        g.listen_until = None;
         g.gain_override = Some((mtype.clone(), gain));
-        let mut keys = vec![Key::Dsp, Key::Mic, Key::Volume(crate::controller::ch("Mic"))];
+        let mut keys = vec![
+            Key::Dsp,
+            Key::Mic,
+            Key::Volume(crate::controller::ch("Mic")),
+            Key::Volume(crate::controller::ch("MicMonitor")),
+        ];
         keys.extend((0..INPUTS.len()).map(Key::Route));
         g.mark(&keys, false)
     };
+    ctl.eqapo.set_mic_bypass(true);
     wait_applied(ctl, gen, Duration::from_secs(4))?;
     sample(ctl, 0.9, 0.0, 0.04)?;
     let total = silence_s + reading_s + loud_s;
@@ -551,7 +571,13 @@ fn voice_print(ctl: &Ctl, p: &Value) -> JR<Value> {
         }
         gain = (gain - 10).max(0);
         set_gain_and_wait(ctl, &mtype, gain)?;
-        step(ctl, &format!("Ta voix saturait : gain baissé à {gain} dB. Relis le texte, même voix."));
+        update(
+            ctl,
+            &[
+                ("retry", json!(attempt + 1)),
+                ("step", json!(format!("Ta voix saturait : gain baissé à {gain} dB. Relis le texte, même voix."))),
+            ],
+        );
         sample(ctl, 0.8, c, c)?;
     }
     // 4. phrase forte : la marge avant saturation
@@ -694,5 +720,24 @@ mod tests {
         let mut seen = None;
         assert_eq!(fresh_level(Some(-20.0), Some(t), &mut seen, t + Duration::from_millis(900)), None);
         assert_eq!(fresh_level(None, None, &mut seen, t), None);
+    }
+
+    #[test]
+    fn segments_bornes_et_trop_courts_ecartes() {
+        let take = VoiceTake {
+            done_at: Instant::now(),
+            timeline: vec![
+                (Phase::Silence, 100.0, 100.3, 40),   // 0,3 s : trop court
+                (Phase::Silence, 101.0, 106.0, 40),   // 5 s
+                (Phase::Reading, 106.0, 121.0, 30),   // 15 s (depasse dur = 18 s -> tronque a 18)
+                (Phase::Loud, 121.0, 125.0, 30),      // hors duree
+            ],
+            mic_type: "condenser".into(),
+            model: Some("rode-nt1a".into()),
+        };
+        let segs = segments(&take, 100.0, 18.0);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0], Segment { phase: Phase::Silence, start_s: 1.0, end_s: 6.0, gain_db: 40 });
+        assert_eq!(segs[1], Segment { phase: Phase::Reading, start_s: 6.0, end_s: 18.0, gain_db: 30 });
     }
 }

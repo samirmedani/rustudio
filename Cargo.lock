@@ -5115,7 +5115,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-app"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",
@@ -5134,7 +5134,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-attack-shark"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "hidapi",
  "serde",
@@ -5143,7 +5143,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-cooler-master"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "hidapi",
  "rustudio-core",
@@ -5153,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-core"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "indexmap",
  "serde",
@@ -5162,7 +5162,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-engine"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "chrono",
  "indexmap",
@@ -5171,6 +5171,7 @@ dependencies = [
  "rustudio-cooler-master",
  "rustudio-core",
  "rustudio-goxlr",
+ "rustudio-logitech-c920",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5184,7 +5185,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-goxlr"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "indexmap",
  "libloading 0.9.0",
@@ -5195,8 +5196,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustudio-logitech-c920"
+version = "6.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "rustudio-setup"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",
@@ -5210,7 +5220,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-windows-desktop"
-version = "6.7.0"
+version = "6.8.0"
 dependencies = [
  "serde_json",
  "windows 0.62.2",
