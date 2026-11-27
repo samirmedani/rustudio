@@ -682,11 +682,6 @@ pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
         .child(div().flex_1().min_w(px(0.)).line_height(px(19.)).child(text.into()))
 }
 
-/// Fenêtre de dialogue centrée, au-dessus d'un voile léger : la page ne bouge pas.
-pub fn modal(content: Div) -> impl IntoElement {
-    modal_sized(content, 560.)
-}
-
 /// Fenêtre de confirmation : icône et titre, explication en paragraphes, boutons alignés à droite.
 pub fn dialog(glyph: Icon, colour: u32, title: impl Into<SharedString>, text: Vec<SharedString>, buttons: Vec<AnyElement>) -> Div {
     div()
@@ -708,15 +703,18 @@ pub fn dialog(glyph: Icon, colour: u32, title: impl Into<SharedString>, text: Ve
         .child(div().flex().justify_end().gap(px(8.)).mt(px(8.)).children(buttons))
 }
 
-/// Fenêtre par-dessus la page, de la largeur demandée (fenêtre de mise à jour : 640).
-pub fn modal_sized(content: Div, width: f32) -> impl IntoElement {
+/// Fenêtre par-dessus la page avec identifiant distinct (évite toute collision entre deux fenêtres superposées)
+/// et hauteur/largeur bornées à la fenêtre visible.
+pub fn modal_sized_id(id: &'static str, content: Div, width: f32) -> impl IntoElement {
     use gpui::AnimationExt as _;
+    let anim_id = SharedString::from(format!("{id}-in"));
     div()
-        .id("modal")
+        .id(id)
         .absolute()
         .top_0()
         .left_0()
         .size_full()
+        .p(px(20.))
         .flex()
         .items_center()
         .justify_center()
@@ -725,10 +723,12 @@ pub fn modal_sized(content: Div, width: f32) -> impl IntoElement {
         .child(
             content
                 .w(px(width))
+                .max_w(gpui::relative(0.95))
+                .max_h(gpui::relative(0.92))
                 .bg(alpha(PAPER, 1.))
                 .shadow(vec![gpui::BoxShadow { color: alpha(0x000000, 0.2), offset: gpui::point(px(0.), px(18.)), blur_radius: px(48.), spread_radius: px(0.) }]),
         )
-        .with_animation("modal-in", gpui::Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(t))
+        .with_animation(anim_id, gpui::Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(t))
 }
 
 /// Notification flottante en bas de la fenêtre (au-dessus de la page, sans la décaler).

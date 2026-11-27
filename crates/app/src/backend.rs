@@ -146,6 +146,8 @@ pub struct Client {
     latency_visible: Arc<AtomicBool>,
     /// Temps aller-retour de la dernière lecture réussie de /api/live, en µs. 0 indique une mesure indisponible.
     engine_response_us: Arc<AtomicU64>,
+    /// Sérialise les commandes mic-listen pour qu'un arrêt ne puisse jamais être doublé par un renouvellement.
+    listen_lock: Arc<Mutex<()>>,
     cached: Arc<Mutex<Option<(u64, Snapshot)>>>,
 }
 
@@ -168,8 +170,19 @@ impl Client {
             level_visible: Arc::new(AtomicBool::new(false)),
             latency_visible: Arc::new(AtomicBool::new(false)),
             engine_response_us: Arc::new(AtomicU64::new(0)),
+            listen_lock: Arc::new(Mutex::new(())),
             cached: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Active ou coupe l'écoute de ta voix au casque, dans l'ordre strict des appels.
+    pub(crate) fn set_mic_listen(&self, seconds: u32, level: Option<i64>) -> Result<Value, String> {
+        let _guard = self.listen_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let body = match level {
+            Some(lvl) if seconds > 0 => json!({"seconds": seconds, "level": lvl}),
+            _ => json!({"seconds": seconds}),
+        };
+        self.go_command("mic-listen", body)
     }
 
     pub fn set_mixer_visible(&self, visible: bool) {
@@ -686,6 +699,8 @@ pub enum Event {
     MicOsd(String),
     /// Niveau d'entrée du micro en dB (nul : pas de mesure).
     MicLevel(Option<f64>),
+    /// Réduction en direct des 4 traitements du firmware Rustudio (dB) : gate, compresseur, de-esser, limiteur.
+    VoiceMeters(Option<[f64; 4]>),
     /// Latence en direct : temps de réponse USB (moteur) et estimation de Windows.
     Latency(Value),
     Update(Value),
@@ -809,6 +824,9 @@ pub fn start(
     let level_tx = event_tx.clone();
     std::thread::spawn(move || {
         let mut last: Option<f64> = None;
+        let mut last_meters: Option<[f64; 4]> = None;
+        let mut meter_tick: u32 = 0;
+        let mut fw_supported = true;
         while !level_tx.is_closed() {
             let visible = level_client.level_visible.load(Ordering::Relaxed);
             // « level=1 » demande au moteur de mesurer pendant trois secondes : rien n'est lu page fermée
@@ -821,11 +839,42 @@ pub fn start(
                     // au dixième : des paliers d'un décibel faisaient sauter le vumètre
                     .map(|db| (db * 10.).round() / 10.)
             } else {
+                fw_supported = true;
                 None
             };
             if current != last {
                 last = current;
                 if level_tx.send_blocking(Event::MicLevel(current)).is_err() {
+                    break;
+                }
+            }
+            if visible && fw_supported {
+                meter_tick = meter_tick.wrapping_add(1);
+                if meter_tick % 6 == 1 {
+                    match level_client.get("/api/firmware") {
+                        Ok(fw) if fw["voice"].is_object() => {
+                            let v = &fw["voice"];
+                            let r = |k: &str| (v[k].as_f64().unwrap_or(0.).abs() * 10.).round() / 10.;
+                            let next = Some([r("gate"), r("comp"), r("deesser"), r("limiter")]);
+                            if next != last_meters {
+                                last_meters = next;
+                                if level_tx.send_blocking(Event::VoiceMeters(next)).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {
+                            fw_supported = false;
+                            if last_meters.take().is_some()
+                                && level_tx.send_blocking(Event::VoiceMeters(None)).is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if !visible && last_meters.take().is_some() {
+                if level_tx.send_blocking(Event::VoiceMeters(None)).is_err() {
                     break;
                 }
             }

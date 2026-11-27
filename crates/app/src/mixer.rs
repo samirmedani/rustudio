@@ -326,6 +326,16 @@ impl Mixer {
             None => {}
         }
         self.page = page;
+        match page {
+            Page::WebcamImage => self.webcam.tab = crate::webcam::WebcamTab::Image,
+            Page::WebcamOptics => self.webcam.tab = crate::webcam::WebcamTab::Optics,
+            Page::WebcamInfo => self.webcam.tab = crate::webcam::WebcamTab::Device,
+            _ => {}
+        }
+        if page != Page::Go(crate::goxlr::Section::Microphone) && self.wizard.as_ref().is_some_and(|w| w.is_listening()) {
+            self.cut_monitor(cx);
+        }
+        self.webcam_visibility(page.is_webcam());
         self.audio_visibility(page == Page::WindowsAudio, cx);
         if page != Page::KeyboardMacros { self.macros.stop(); }
         if page == Page::KeyboardMacros { self.macro_command("macros", json!({}), cx); }
@@ -411,12 +421,21 @@ impl Mixer {
                 force_render = self.page == Page::Go(crate::goxlr::Section::Microphone) && !self.go.level_moving();
                 self.go.level = level;
             }
+            Event::VoiceMeters(meters) => {
+                force_render = self.page == Page::Go(crate::goxlr::Section::Microphone);
+                self.go.voice_meters = meters;
+            }
             Event::Latency(value) => {
                 self.go.latency = Some(value);
                 force_render = self.page == Page::Go(crate::goxlr::Section::Diagnostic);
             }
             Event::Go(view) => {
                 self.go.receive(view);
+                if let (Some(w), Some(v)) = (self.wizard.as_mut(), self.go.view.as_ref())
+                    && w.snapshot.is_none()
+                {
+                    w.snapshot = Some(crate::mic_wizard::MicSnapshot::capture(&v.state));
+                }
                 force_render = matches!(self.page, Page::Go(_));
             }
             Event::Mouse(view) => {
@@ -981,14 +1000,16 @@ impl Render for Mixer {
         if self.page == Page::Keyboard && self.keyboard.shows_previews() {
             ui::animation_frame_every(window, crate::keyboard::PREVIEW_FRAME);
         }
+        self.sync_webcam_preview(window);
+        if self.page.is_webcam() && self.webcam.preview_running() {
+            ui::animation_frame_every(window, crate::webcam::PREVIEW_FRAME);
+        }
         let sheet = self.update_sheet_view(cx);
-        let wizard = self.mic_wizard_view(cx);
         let shell = self
             .shell(window, cx)
             .children(toast.map(|(ok, text)| ui::toast(ok, text)))
-            .children(wizard.map(|w| ui::modal_sized(w, 820.)))
-            .children(sheet.map(|s| ui::modal_sized(s, 640.)))
-            .children(dialog.map(ui::modal));
+            .children(sheet.map(|s| ui::modal_sized_id("modal-sheet", s, 640.)))
+            .children(dialog.map(|d| ui::modal_sized_id("modal-dialog", d, 560.)));
         ui::keep_animating(window);
         shell
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {

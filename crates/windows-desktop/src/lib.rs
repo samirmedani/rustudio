@@ -8,6 +8,7 @@ pub mod session;
 pub mod soundcheck;
 pub mod spectrum;
 pub mod usage;
+pub mod webcam_preview;
 
 #[cfg(windows)]
 pub mod osd;

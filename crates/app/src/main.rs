@@ -69,6 +69,11 @@ fn run() -> Result<(), String> {
     use std::time::{Duration, Instant};
 
     let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.iter().any(|a| a == "--probe-c920-preview") {
+        let (w, h) = rustudio_windows_desktop::webcam_preview::probe_one_frame()?;
+        println!("OK C920 preview: {w}x{h}");
+        return Ok(());
+    }
     // Diagnostic sans fenêtre : Rustudio.exe --sound-check|--loop-test <secondes> [fichier.json] [--exclusive]
     // Rustudio.exe --latency-test [fichier.json] : estimation de Windows et aller-retour mesuré
     // (la voie Sample doit être isolée vers le Stream Mix : action « sound-test » du moteur).
@@ -110,6 +115,7 @@ fn run() -> Result<(), String> {
     let mut self_test = false;
     let mut relaunch = None;
     let mut start_page = None;
+    let mut start_wizard_step: Option<crate::mic_wizard::Step> = None;
     let mut theme = None;
     let mut hotkey = None;
     while let Some(arg) = args.next() {
@@ -130,7 +136,24 @@ fn run() -> Result<(), String> {
             "--tray" => tray_mode = true,
             "--start-demo" => start_demo = true,
             "--mixer" => open_mixer = true,
-            "--page" => start_page = Some(desktop::Page::from_name(&args.next().ok_or("Page manquante.")?).ok_or("Page inconnue.")?),
+            "--page" => {
+                let p = args.next().ok_or("Page manquante.")?;
+                if let Some(step_name) = p.strip_prefix("mic-wizard") {
+                    start_page = Some(desktop::Page::Go(goxlr::Section::Microphone));
+                    start_wizard_step = Some(match step_name.trim_start_matches('-') {
+                        "measure" | "2" => mic_wizard::Step::Measure,
+                        "gain" | "3" => mic_wizard::Step::Gain,
+                        "noise" | "4" => mic_wizard::Step::Noise,
+                        "eq" | "5" => mic_wizard::Step::Eq,
+                        "radio" | "6" => mic_wizard::Step::Radio,
+                        "compare" | "7" => mic_wizard::Step::Compare,
+                        "done" | "8" => mic_wizard::Step::Done,
+                        _ => mic_wizard::Step::Mic,
+                    });
+                } else {
+                    start_page = Some(desktop::Page::from_name(&p).ok_or("Page inconnue.")?);
+                }
+            }
             // apparence imposée pour cette exécution, sans toucher à la préférence (captures, essais)
             "--theme" => theme = Some(args.next().as_deref().and_then(ui::Appearance::from_name).ok_or("Apparence attendue : auto, clair ou sombre.")?),
             // raccourci du micro imposé pour un essai, y compris en démonstration (jamais enregistré)
@@ -289,6 +312,12 @@ fn run() -> Result<(), String> {
                             cx,
                         );
                         mixer.go_to(page.unwrap_or(initial), cx);
+                        if let Some(step) = start_wizard_step {
+                            mixer.open_mic_wizard(cx);
+                            if let Some(w) = mixer.wizard.as_mut() {
+                                w.step = step;
+                            }
+                        }
                         mixer
                     })
                 },

@@ -306,13 +306,13 @@ pub struct Profile {
 pub const PROFILES: [Profile; 7] = [
     Profile { key: "naturel", alpha: 0.45, window: 3.5, warmth: 0.0, mud: 0.0, presence: 0.0, air: 0.0, floor: 0.8,
               comp: (14.0, 4, 2.0, 9, 13, 0.5), gate: (-4.0, Some(15.0), 20), deess: 0.6 },
-    Profile { key: "antenne", alpha: 0.75, window: 1.2, warmth: 4.0, mud: -3.0, presence: 3.5, air: 2.5, floor: 0.80,
-              comp: (5.0, 10, 8.0, 2, 10, 0.9), gate: (0.0, Some(24.0), 18), deess: 1.45 },
+    Profile { key: "antenne", alpha: 0.65, window: 1.8, warmth: 2.8, mud: -2.2, presence: 2.2, air: 1.2, floor: 0.85,
+              comp: (5.0, 10, 7.0, 2, 10, 0.85), gate: (0.0, Some(24.0), 18), deess: 1.35 },
     Profile { key: "studio", alpha: 0.55, window: 2.5, warmth: 0.5, mud: -1.0, presence: 1.0, air: 1.0, floor: 0.85,
               comp: (11.0, 6, 3.0, 7, 12, 0.6), gate: (0.0, Some(20.0), 20), deess: 0.9 },
-    Profile { key: "radio", alpha: 0.7, window: 1.5, warmth: 2.5, mud: -2.0, presence: 2.5, air: 1.5, floor: 0.85,
+    Profile { key: "radio", alpha: 0.65, window: 1.8, warmth: 2.2, mud: -1.8, presence: 2.0, air: 1.2, floor: 0.85,
               comp: (7.0, 9, 6.0, 4, 11, 0.8), gate: (0.0, Some(24.0), 19), deess: 1.2 },
-    Profile { key: "stream", alpha: 0.65, window: 2.0, warmth: 0.5, mud: -1.5, presence: 3.0, air: 1.5, floor: 0.95,
+    Profile { key: "stream", alpha: 0.65, window: 2.0, warmth: 0.5, mud: -1.5, presence: 2.5, air: 1.2, floor: 0.95,
               comp: (8.0, 8, 5.0, 3, 10, 0.75), gate: (1.0, Some(24.0), 18), deess: 1.0 },
     Profile { key: "podcast", alpha: 0.6, window: 2.0, warmth: 2.0, mud: -1.0, presence: 1.0, air: -0.5, floor: 0.85,
               comp: (9.0, 7, 4.0, 6, 12, 0.7), gate: (-2.0, Some(18.0), 21), deess: 1.1 },
@@ -336,10 +336,14 @@ fn warmth_hz(f0: f64) -> f64 {
     (1.5 * f0).clamp(110.0, 300.0)
 }
 
-/// Couleur du profil (dB) à la fréquence f.
-fn flavor(p: &Profile, f: f64, f0: f64) -> f64 {
-    let air = if f >= 11000.0 { p.air } else { bump(f, 11000.0, 0.6, p.air) };
-    bump(f, warmth_hz(f0), 0.6, p.warmth) + bump(f, 380.0, 0.7, p.mud) + bump(f, 3500.0, 0.7, p.presence) + air
+/// Couleur du profil (dB) à la fréquence f ; sur un micro brillant (ex. RØDE NT1-A), on calme présence et air
+/// pour éviter un haut du spectre agressif ou sifflant.
+fn flavor(p: &Profile, f: f64, f0: f64, bright: bool) -> f64 {
+    let presence = if bright { p.presence * 0.45 } else { p.presence };
+    let air_g = if bright { p.air * 0.25 } else { p.air };
+    let air = if f >= 11000.0 { air_g } else { bump(f, 11000.0, 0.6, air_g) };
+    let tame = if bright { bump(f, 8500.0, 0.7, -1.8) } else { 0.0 };
+    bump(f, warmth_hz(f0), 0.6, p.warmth) + bump(f, 380.0, 0.7, p.mud) + bump(f, 3500.0, 0.7, presence) + air + tame
 }
 
 fn dz(x: f64, w: f64) -> f64 {
@@ -491,13 +495,11 @@ fn plan(p: &Profile, v: &VoicePrint, model: Option<&MicModel>) -> Plan {
     let mut weight = vec![0.0; g.len()];
     let (mut lo, mut hi) = (vec![0.0; g.len()], vec![0.0; g.len()]);
     let sib = v.sibilance.excess_db;
+    let bright = model.map(|m| m.bright).unwrap_or(false);
     for (i, &f) in g.iter().enumerate() {
         let snr = voice_db[i] - noise_db[i];
         let p_dev = resp[i] - resp_mid;
-        color[i] = flavor(p, f, f0);
-        if model.map(|m| m.bright).unwrap_or(false) {
-            color[i] += bump(f, 11000.0, 0.5, -1.5); // micro brillant : ses aigus se calment toujours un peu
-        }
+        color[i] = flavor(p, f, f0, bright);
         if f < floor_hz {
             // sous la voix : tout ce qui reste est à enlever (jamais de remontée)
             corr[i] = -p.alpha.max(0.75) * dev[i].max(0.0);
@@ -671,7 +673,7 @@ fn deesser_amount(p: &Profile, v: Option<&VoicePrint>, model: Option<&MicModel>,
         }
         None => 25.0,
     };
-    let bright = if model.map(|m| m.bright).unwrap_or(false) { 6.0 } else { 0.0 };
+    let bright = if model.map(|m| m.bright).unwrap_or(false) { 10.0 } else { 0.0 };
     ((base + bright + 3.0 * hf_boost.max(0.0)) * p.deess).round().clamp(0.0, 70.0) as i32
 }
 
@@ -679,7 +681,9 @@ fn deesser_amount(p: &Profile, v: Option<&VoicePrint>, model: Option<&MicModel>,
 pub fn fit_with_print(p: &Profile, v: &VoicePrint, cal: Option<&MicCal>, gain_db: i32, model: Option<&MicModel>) -> Fitted {
     let label = dsp::preset(p.key).map(|x| x.label).unwrap_or(p.key);
     let pl = plan(p, v, model);
-    let bands = fit_bands(&pl.target, &pl.weight, pl.floor_hz * 1.1);
+    // Empêche la bande 250 Hz de glisser à 100 Hz juste à côté de la coupure 90 Hz (bosse résonante boueuse).
+    let no_boost = (pl.floor_hz * 1.35).max(125.0);
+    let bands = fit_bands(&pl.target, &pl.weight, no_boost);
     let mut d = dsp::preset_dsp(p.key);
     for ((b, _, _), (f, g)) in EQ_BANDS.iter().zip(&bands) {
         d.eq.insert(b.to_string(), *g);
@@ -997,5 +1001,28 @@ mod tests {
         for n in f.notes.iter().chain(print_notes(&v, Some(nt1a), 50).iter()) {
             assert!(!n.t.contains('\u{2014}') && !n.t.contains('\u{2013}'), "tiret interdit : {}", n.t);
         }
+    }
+
+    #[test]
+    fn antenne_sur_nt1a_evite_bosse_100hz_et_aigus_agressifs() {
+        let v = sample_print();
+        let nt1a = mics::model("rode-nt1a").unwrap();
+        let f = fit_with_print(profile("antenne").unwrap(), &v, None, 30, Some(nt1a));
+        if f.dsp.eq["250"] > 0 {
+            assert!(
+                f.dsp.eq_freq["250"] >= 125.0,
+                "la chaleur 250 Hz ne doit pas coller a la coupure 90 Hz : {} Hz",
+                f.dsp.eq_freq["250"]
+            );
+        }
+        let g = grid();
+        let curve = eq_curve(&f.dsp, g);
+        let hf_max = g
+            .iter()
+            .zip(&curve)
+            .filter(|(freq, _)| (5000.0..=12000.0).contains(*freq))
+            .map(|(_, db)| *db)
+            .fold(f64::MIN, f64::max);
+        assert!(hf_max <= 2.5, "aigus trop pousses sur NT1-A brillant : +{hf_max:.1} dB");
     }
 }

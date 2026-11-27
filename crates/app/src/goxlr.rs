@@ -106,10 +106,10 @@ pub struct GoView {
     hp_eq: Value,
     /// Voix brute en cours d'écoute (comparaison avant / après traitement)
     #[serde(default)]
-    ab: bool,
+    pub(crate) ab: bool,
     /// écoute temporaire de ta voix dans le casque en cours
     #[serde(default)]
-    listening: bool,
+    pub(crate) listening: bool,
     /// Suppression du bruit du micro sur le PC (RNNoise via Equalizer APO)
     #[serde(default)]
     pub(crate) mic_ns: Value,
@@ -130,6 +130,8 @@ pub struct GoPage {
     pub(crate) level: Option<f64>,
     /// Niveau affiché par le vumètre : il suit `level` en douceur.
     pub(crate) level_shown: Option<f64>,
+    /// Réduction en direct des 4 traitements du firmware Rustudio (dB) : gate, compresseur, de-esser, limiteur.
+    pub(crate) voice_meters: Option<[f64; 4]>,
     level_tick: Option<std::time::Instant>,
     confirm: Option<(&'static str, Value, Ask)>,
     editing: Option<usize>,
@@ -352,11 +354,12 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Coupe tout retour de ta voix dans le casque : bail d'écoute terminé et volume du retour à zéro.
+    /// Coupe tout retour de ta voix dans le casque : arrêt immédiat de la boucle d'écoute, bail terminé et volume à zéro.
     pub(crate) fn cut_monitor(&mut self, cx: &mut Context<Self>) {
+        self.stop_wizard_listen_state();
         let client = self.client.clone();
         let work = cx.background_executor().spawn(async move {
-            let _ = client.go_command("mic-listen", json!({"seconds": 0}));
+            let _ = client.set_mic_listen(0, None);
             let _ = client.go_command("volume", json!({"channel": "MicMonitor", "value": 0}));
             client.go_view().ok()
         });
@@ -368,13 +371,16 @@ impl Mixer {
             });
         })
         .detach();
+        cx.notify();
     }
 
-    /// Vrai si ta voix part dans le casque en ce moment (bail d'écoute ou retour réglé à la main).
+    /// Vrai si ta voix part dans le casque en ce moment (bail d'écoute, assistant actif ou retour réglé à la main).
     pub(crate) fn monitor_on(&self) -> bool {
-        self.go.view.as_ref().is_some_and(|v| {
-            v.listening || (v.state["volumes"]["MicMonitor"].as_i64().unwrap_or(0) > 0 && v.state["routing"]["Microphone"]["Headphones"] == true)
-        })
+        let wizard_on = self.wizard.as_ref().is_some_and(|w| w.is_listening());
+        wizard_on
+            || self.go.view.as_ref().is_some_and(|v| {
+                v.listening || (v.state["volumes"]["MicMonitor"].as_i64().unwrap_or(0) > 0 && v.state["routing"]["Microphone"]["Headphones"] == true)
+            })
     }
 
     pub(crate) fn refresh_diag(&mut self, cx: &mut Context<Self>) {
@@ -706,9 +712,12 @@ impl Mixer {
         ui::settings_columns(width, vec![look.into_any_element()], vec![colours.into_any_element()])
     }
 
-    /// Page Micro : en tête, ce qui compte tout le temps (quel micro, son niveau, son gain, l'assistant) ;
-    /// en dessous, un onglet à la fois : la voix, les réglages fins, le bouton et le retour.
+    /// Page Micro : si l'assistant guidé est ouvert, il occupe toute la page (sans fenêtre modale tronquée) ;
+    /// sinon, en-tête micro + onglets (ta voix, réglages fins, bouton et retour).
     fn microphone(&self, v: &GoView, width: f32, cx: &mut Context<Self>) -> Div {
+        if let Some(workspace) = self.mic_wizard_workspace(width, cx) {
+            return workspace;
+        }
         let wide = width >= 900.;
         let tab = self.go.mic_tab;
         let mut tabs = ui::tabs();

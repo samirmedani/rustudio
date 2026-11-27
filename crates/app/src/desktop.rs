@@ -184,10 +184,10 @@ impl Page {
             Page::KeyboardShortcuts => "Raccourcis Fn et aide pour le mode Windows ou macOS.",
             Page::KeyboardInfo => "Connexion, firmware et caractéristiques du clavier.",
             Page::KeyboardMacros => "Expérimental · Crée tes séquences de touches et enregistre-les dans ton clavier.",
-            Page::Webcam => "Préréglages, maintien anti-réinitialisation et réglages complets de ta C920.",
-            Page::WebcamImage => "Luminosité, contraste, saturation, netteté, balance des blancs et 50 / 60 Hz.",
-            Page::WebcamOptics => "Exposition manuelle, compensation basse lumière, autofocus, zoom et contrôles XU.",
-            Page::WebcamInfo => "Révision USB, formats vidéo, unités XU et réinitialisation d’usine.",
+            Page::Webcam => "Aperçu vidéo en direct, préréglages et réglages complets de ta C920.",
+            Page::WebcamImage => "Aperçu vidéo en direct, luminosité, contraste, saturation, netteté et balance des blancs.",
+            Page::WebcamOptics => "Aperçu vidéo en direct, exposition manuelle, focus, zoom et cadrage.",
+            Page::WebcamInfo => "Voyant LED, maintien anti-réinitialisation et fiche technique C920.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",
@@ -224,10 +224,7 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
             (Page::KeyboardInfo, Icon::Keyboard, "Informations"),
         ],
         Space::Webcam => &[
-            (Page::Webcam, Icon::Camera, "Préréglages et vue"),
-            (Page::WebcamImage, Icon::Sun, "Image et couleur"),
-            (Page::WebcamOptics, Icon::Sliders, "Optique et cadrage"),
-            (Page::WebcamInfo, Icon::Settings, "Fiche C920"),
+            (Page::Webcam, Icon::Camera, "Ma webcam"),
         ],
     }
 }

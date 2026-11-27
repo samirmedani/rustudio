@@ -1,5 +1,22 @@
 # Nouveautés
 
+## 6.9.0 (27 novembre 2026)
+
+Rustudio 6.9.0 transforme l’assistant micro en véritable espace studio pleine page (avec réglages complets, retour casque fiable et annulation intégrale) et réorganise toute la page Logitech C920 autour d’un aperçu vidéo en temps réel.
+
+**Nouveau**
+- **Aperçu vidéo en temps réel pour la Logitech C920** : vois l’image de ta webcam évoluer en direct pendant que tu règles la luminosité, le contraste, la saturation, la balance des blancs, l’exposition, la mise au point ou le zoom, avec bouton pause et miroir local. L’aperçu n’ouvre jamais le micro de la webcam et libère instantanément la caméra pour OBS ou Discord dès que tu quittes la page.
+- **Espace Studio Micro pleine page** : l’assistant « Régler mon micro » s’ouvre désormais en grand directement dans la page Micro (plus de fenêtre tronquée), avec vumètres DSP en direct (Noise Gate, Compresseur, De-esser, Limiteur), bascule instantanée Voix brute / Son traité et réglages complets à chaque étape (Noise Gate attaque et relâchement, égaliseur 6 bandes à faders verticaux avec fréquences réglables et courbe visuelle, compresseur complet à 5 réglages).
+- **Annulation et restauration complète** : clique sur « Annuler et restaurer » à tout moment ou à la fin de l’assistant micro pour retrouver exactement tous tes réglages d’avant et couper le retour casque.
+
+**Amélioré**
+- **Page Logitech C920 réorganisée** : fin des pages dispersées et des longs blocs empilés. L’aperçu en direct, les préréglages en un clic et « Garder mes réglages » restent visibles à gauche pendant que tu navigues entre trois onglets clairs à droite (Image et couleur, Optique et cadrage, Appareil et LED), avec envoi fluide sans perte lors des glissements rapides.
+- **Son plus doux et naturel sur les micros statiques brillants** : le calibrage et le profil Radio FM adoucissent les aigus sur les micros brillants (comme le RØDE NT1-A), évitent toute bosse grave près du coupe-bas et ne forcent plus l’IA anti-bruit sans ton choix.
+
+**Corrigé**
+- **Boutons Terminer et Annuler toujours actifs** : l’assistant micro ne déborde plus hors de l’écran, ne bloque plus la barre d’état et coupe systématiquement le retour micro et la comparaison Avant / Après en terminant ou en annulant.
+- **Fin du retour micro bloqué dans le casque** : l’écoute en direct est synchronisée avec l’état réel du moteur et sérialisée pour qu’un arrêt coupe ta voix immédiatement, sans jamais laisser le retour actif par erreur.
+
 ## 6.8.0 (27 novembre 2026)
 
 Rustudio 6.8.0 accueille la webcam Logitech C920, fiabilise l’onboarding micro et la suppression du bruit par IA, et gagne en stabilité sur l’appli comme sur le firmware Rustudio.

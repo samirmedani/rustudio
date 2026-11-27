@@ -135,9 +135,6 @@ pub const LOGITECH_C920: ModuleDescriptor = ModuleDescriptor {
     capabilities: &["image", "optics", "presets", "lock", "led"],
     pages: &[
         ModulePage { id: "webcam", label: "Ma webcam", icon: "camera" },
-        ModulePage { id: "webcam-image", label: "Image et couleur", icon: "sun" },
-        ModulePage { id: "webcam-optics", label: "Optique et cadrage", icon: "sliders" },
-        ModulePage { id: "webcam-info", label: "Ma C920", icon: "camera" },
     ],
     actions: &["settings", "preset", "reset", "lock", "refresh"],
 };
