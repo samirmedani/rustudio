@@ -45,6 +45,7 @@ pub struct Mixer {
     pub(crate) mouse: crate::mouse::MousePage,
     pub(crate) keyboard: crate::keyboard::KeyboardPage,
     pub(crate) webcam: crate::webcam::WebcamPage,
+    pub(crate) winmic: crate::winmic::WinMicPage,
     pub(crate) macros: crate::macros::Editor,
     pub(crate) mouse_focus: Vec<FocusHandle>,
     pub(crate) go: crate::goxlr::GoPage,
@@ -191,6 +192,7 @@ impl Mixer {
             mouse: crate::mouse::MousePage::default(),
             keyboard: crate::keyboard::KeyboardPage::default(),
             webcam: crate::webcam::WebcamPage::default(),
+            winmic: crate::winmic::WinMicPage::default(),
             macros: crate::macros::Editor::new(store.dir().join("macros"), cx),
             mouse_focus: (0..12).map(|_| cx.focus_handle()).collect(),
             go: crate::goxlr::GoPage::default(),
@@ -337,6 +339,7 @@ impl Mixer {
         }
         self.webcam_visibility(page.is_webcam());
         self.audio_visibility(page == Page::WindowsAudio, cx);
+        self.winmic_visibility(page == Page::WinMic, cx);
         if page != Page::KeyboardMacros { self.macros.stop(); }
         if page == Page::KeyboardMacros { self.macro_command("macros", json!({}), cx); }
         self.client.set_mixer_visible(page == Page::Mixer);
@@ -991,7 +994,7 @@ impl Render for Mixer {
                 .detach();
             }
         }
-        let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx));
+        let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx)).or_else(|| self.winmic_confirm_box(cx));
         self.sheet_tick(cx);
         self.step_scroll(window);
         if self.page == Page::Go(crate::goxlr::Section::Microphone) && self.go.step_level() {

@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/logitech-c920", "crates/engine", "crates/app", "crates/setup", "crates/windows-desktop"]
-default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/logitech-c920", "crates/engine", "crates/windows-desktop"]
+members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/logitech-c920", "crates/windows-mic", "crates/engine", "crates/app", "crates/setup", "crates/windows-desktop"]
+default-members = ["crates/core", "crates/goxlr", "crates/attack-shark", "crates/cooler-master", "crates/logitech-c920", "crates/windows-mic", "crates/engine", "crates/windows-desktop"]
 
 [workspace.package]
-version = "6.9.0"
+version = "6.10.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/samirmedani/rustudio"
@@ -19,6 +19,7 @@ rustudio-goxlr = { path = "crates/goxlr" }
 rustudio-attack-shark = { path = "crates/attack-shark" }
 rustudio-cooler-master = { path = "crates/cooler-master" }
 rustudio-logitech-c920 = { path = "crates/logitech-c920" }
+rustudio-windows-mic = { path = "crates/windows-mic" }
 
 # Développement en direct sur le PC (private/live-pc.mjs) : dépendances optimisées une fois, puis seule l'appli
 # se recompile, sans optimisation et en incrémental : environ 3 s, 5 s jusqu'à la fenêtre relancée.

@@ -119,6 +119,7 @@ fn module_page(id: &str) -> Option<Page> {
         "attack-shark-r5-ultra" => Some(Page::Mouse),
         "cooler-master-mk770" => Some(Page::Keyboard),
         "logitech-c920" => Some(Page::Webcam),
+        "windows-mic" => Some(Page::WinMic),
         _ => None,
     }
 }

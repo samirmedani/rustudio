@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 6.10.0 (28 novembre 2026)
+
+Rustudio 6.10.0 ajoute le module Micro : règle n’importe quel micro de ton PC (USB, jack, micro-casque ou webcam) depuis une seule page, pour toutes tes applis à la fois.
+
+**Nouveau**
+- **Module Micro pour tous tes micros** : choisis ton micro, vois son niveau en direct, règle son volume dans Windows, coupe-le ou fais-en le micro de Windows pour tes applis et tes appels en un clic.
+- **Ta voix réglée une fois pour toutes** : coupe-bas contre les grondements, gain et égaliseur 5 bandes (graves, bas-médiums, médiums, présence, air) avec cinq préréglages (Naturel, Voix chaude, Radio, Clair, Adoucir). Discord, OBS et tes jeux reçoivent la même voix, sans logiciel à garder ouvert.
+- **Suppression du bruit sur n’importe quel micro** : active l’anti-bruit par IA, le même filtre qu’OBS, directement sur le micro affiché.
+- **Te réécouter** : enregistre quelques secondes telles que tes applis les reçoivent, puis réécoute-toi pour comparer tes réglages.
+
 ## 6.9.0 (27 novembre 2026)
 
 Rustudio 6.9.0 transforme l’assistant micro en véritable espace studio pleine page (avec réglages complets, retour casque fiable et annulation intégrale) et réorganise toute la page Logitech C920 autour d’un aperçu vidéo en temps réel.

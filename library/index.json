@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "updated": "2026-10-30",
+  "updated": "2026-11-28",
   "modules": [
     {
       "id": "goxlr-mini",
@@ -95,8 +95,8 @@
         "Effets lumineux",
         "Luminosité",
         "Vitesse",
-          "Couleur par touche",
-          "Macros embarquées (validation matérielle en cours)"
+        "Couleur par touche",
+        "Macros embarquées (validation matérielle en cours)"
       ],
       "builtin": true,
       "author": "samirmedani",
@@ -132,6 +132,26 @@
         "LED et contrôles XU"
       ],
       "builtin": true,
+      "author": "samirmedani",
+      "review_pr": null
+    },
+    {
+      "id": "windows-mic",
+      "name": "Micro",
+      "vendor": "Windows",
+      "kind": "microphone",
+      "status": "official",
+      "builtin": true,
+      "usb": [],
+      "source": "crates/windows-mic",
+      "summary": "N’importe quel micro de Windows (USB, jack, micro-casque, webcam) : volume, micro par défaut, test en réécoute, suppression du bruit par IA, coupe-bas, gain et égaliseur 5 bandes avec préréglages.",
+      "features": [
+        "Volume Windows",
+        "Micro par défaut",
+        "Suppression du bruit",
+        "Égaliseur voix",
+        "Préréglages"
+      ],
       "author": "samirmedani",
       "review_pr": null
     },

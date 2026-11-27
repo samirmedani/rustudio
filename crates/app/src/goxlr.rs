@@ -1535,7 +1535,7 @@ impl Mixer {
 
 const ORANGE_SUN: u32 = 0xff9500;
 
-fn hz(f: f64) -> String {
+pub(crate) fn hz(f: f64) -> String {
     if f >= 1000. { format!("{} kHz", fmt_num(f / 1000.)) } else { format!("{} Hz", f.round()) }
 }
 

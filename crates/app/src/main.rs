@@ -20,6 +20,8 @@ mod mixer;
 mod mouse;
 #[cfg(any(windows, unix))]
 mod webcam;
+#[cfg(any(windows, unix))]
+mod winmic;
 #[cfg(any(windows, unix, test))]
 mod profiles;
 #[cfg(any(windows, unix))]

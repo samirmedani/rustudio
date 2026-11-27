@@ -16,6 +16,7 @@ pub mod modules;
 pub mod mouse;
 pub mod keyboard;
 pub mod webcam;
+pub mod winmic;
 mod mixer;
 pub mod net;
 #[cfg(windows)]

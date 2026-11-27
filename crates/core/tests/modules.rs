@@ -44,6 +44,9 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     let webcam = modules::find("logitech-c920").unwrap();
     assert_eq!(webcam.kind, "webcam");
     assert_eq!(webcam.actions, ["settings", "preset", "reset", "lock", "refresh"]);
+    let mic = modules::find("windows-mic").unwrap();
+    assert_eq!(mic.kind, "microphone");
+    assert_eq!(mic.actions, ["settings", "setup", "remove", "noise"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");
     }

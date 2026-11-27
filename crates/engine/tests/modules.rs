@@ -39,7 +39,7 @@ fn request(ctl: &Arc<Ctl>, path: &str, body: Option<Value>, authorized: bool, ho
 fn adaptateur_suit_connexion_erreur_et_simulation() {
     let ctl = controller(true);
     let installed = ctl.modules_snapshot()["installed"].clone();
-    assert_eq!(installed.as_array().unwrap().len(), 4);
+    assert_eq!(installed.as_array().unwrap().len(), 5);
     assert_eq!(installed[0]["id"], "goxlr-mini");
     let devices = || ctl.modules_snapshot()["devices"].clone();
     assert_eq!(devices()[0]["status"], "starting");
@@ -294,5 +294,76 @@ fn webcam_c920_independante_presets_verrouillage_et_relecture() {
     assert_eq!(ctl.snapshot()["state"], original_audio);
 
     let (code, _) = request(&ctl, "/api/modules/logitech-c920/settings", Some(json!({"brightness": 130})), false, None);
+    assert_eq!(code, 403);
+}
+
+/// Attend la fin d'une opération sur Equalizer APO (simulée) et renvoie l'état du module Micro.
+fn micro_after_setup(ctl: &Arc<Ctl>) -> Value {
+    for _ in 0..100 {
+        let (_, state) = request(ctl, "/api/modules/windows-mic/state", None, false, None);
+        if state["live"]["setup"]["running"] == false {
+            assert!(state["live"]["setup"]["error"].is_null(), "{state}");
+            return state;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("opération Equalizer APO sans fin");
+}
+
+#[test]
+fn micro_windows_reglages_branchement_suppression_du_bruit_et_retrait() {
+    const USB: &str = "{00000000-0000-0000-0000-0000000005b0}";
+    let ctl = controller(true);
+    let voice_file = ctl.cfg.data_dir.join("eqapo-sim/config/rustudio-micro-voix.txt");
+    let (code, initial) = request(&ctl, "/api/modules/windows-mic/state", None, false, None);
+    assert_eq!(code, 200, "{initial}");
+    assert_eq!(initial["module"]["name"], "Micro");
+    assert_eq!(initial["live"]["captures"].as_array().unwrap().len(), 2);
+    assert_eq!(initial["state"]["selected"], USB, "la GoXLR a sa propre page : le micro USB est affiché d'abord");
+    assert_eq!(initial["state"]["voice"]["enabled"], false, "la voix reste naturelle par défaut");
+    assert_eq!(initial["live"]["apo"], false);
+    assert_eq!(ctl.modules_snapshot()["devices"][4]["connected"], true);
+
+    let (code, tuned) = request(&ctl, "/api/modules/windows-mic/settings", Some(json!({"preset": "radio", "gain_db": 4})), true, None);
+    assert_eq!(code, 200, "{tuned}");
+    assert_eq!(tuned["state"]["voice"]["preset"], "radio");
+    assert_eq!(tuned["state"]["voice"]["gain_db"], 4);
+    assert_eq!(tuned["state"]["voice"]["enabled"], false, "un préréglage n'active rien");
+
+    // brancher Equalizer APO sur ce micro active sa voix et écrit son fichier
+    let (code, started) = request(&ctl, "/api/modules/windows-mic/setup", Some(json!({})), true, None);
+    assert_eq!((code, started["running"].clone()), (200, json!(true)), "{started}");
+    let on = micro_after_setup(&ctl);
+    assert_eq!(on["live"]["installed"], true, "{on}");
+    assert_eq!(on["state"]["voice"]["enabled"], true);
+    let text = std::fs::read_to_string(&voice_file).unwrap();
+    assert!(text.contains("Device: {00000000-0000-0000-0000-0000000005B0}\nPreamp: 4.0 dB"), "{text}");
+    assert!(text.contains("ON LSC Fc 120 Hz Gain 4.0 dB"), "{text}");
+    let cfg = std::fs::read_to_string(ctl.cfg.data_dir.join("eqapo-sim/config/config.txt")).unwrap();
+    assert!(cfg.find("Include: rustudio-micro.txt").unwrap() < cfg.find("Include: rustudio-micro-voix.txt").unwrap(), "{cfg}");
+
+    // suppression du bruit : RNNoise manque, il s'installe puis suit ce micro
+    let (code, _) = request(&ctl, "/api/modules/windows-mic/noise", Some(json!({"enabled": true})), true, None);
+    assert_eq!(code, 200);
+    let noisy = micro_after_setup(&ctl);
+    assert_eq!(noisy["live"]["ns"]["enabled"], true, "{noisy}");
+    assert_eq!(ctl.snapshot()["state"]["mic_ns"]["device"], USB);
+    let (code, softer) = request(&ctl, "/api/modules/windows-mic/noise", Some(json!({"strength": 95})), true, None);
+    assert_eq!((code, softer["live"]["ns"]["strength"].clone()), (200, json!(95)), "{softer}");
+
+    // retirer Equalizer APO de ce micro coupe tout ce qui tournait dessus
+    let (code, _) = request(&ctl, "/api/modules/windows-mic/remove", Some(json!({})), true, None);
+    assert_eq!(code, 200);
+    let off = micro_after_setup(&ctl);
+    assert_eq!(off["live"]["installed"], false, "{off}");
+    assert_eq!(off["state"]["voice"]["enabled"], false);
+    assert_eq!(off["live"]["ns"]["enabled"], false);
+    assert!(!std::fs::read_to_string(&voice_file).unwrap().contains("Device:"));
+
+    let (code, _) = request(&ctl, "/api/modules/windows-mic/settings", Some(json!({"selected": "Micro\nDevice: all"})), true, None);
+    assert_eq!(code, 400);
+    let (code, _) = request(&ctl, "/api/modules/windows-mic/volume", Some(json!({})), true, None);
+    assert_eq!(code, 404);
+    let (code, _) = request(&ctl, "/api/modules/windows-mic/settings", Some(json!({"gain_db": 2})), false, None);
     assert_eq!(code, 403);
 }

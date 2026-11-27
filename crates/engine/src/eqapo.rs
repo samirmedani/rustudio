@@ -36,6 +36,9 @@ const DISABLE_ENH: &str = "{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5";
 const CHILD_APOS: &str = r"SOFTWARE\EqualizerAPO\Child APOs";
 pub const NAME_PROP: &str = "{a45c254e-df1c-4efd-8020-67d146a850e0},2";
 pub const DEVICE_PROP: &str = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6";
+/// Entrées du mode simulé : le micro de la GoXLR et un micro USB quelconque (module Micro).
+pub const SIM_GOXLR_MIC: &str = "{00000000-0000-0000-0000-00000000c0de}";
+pub const SIM_USB_MIC: &str = "{00000000-0000-0000-0000-0000000005b0}";
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
@@ -67,7 +70,10 @@ struct Inner {
     pending_mic: Option<String>,
     /// Pause temporaire de RNNoise pendant la capture de l'empreinte vocale.
     mic_bypass: bool,
-    sim_capture: bool,
+    /// dernier rustudio-micro-voix.txt écrit (module Micro)
+    written_voice: Option<String>,
+    /// entrées simulées sur lesquelles Equalizer APO est branché
+    sim_captures: Vec<String>,
     sim_plugin: bool,
 }
 
@@ -105,7 +111,8 @@ impl EqApo {
                 written_mic: None,
                 pending_mic: None,
                 mic_bypass: false,
-                sim_capture: false,
+                written_voice: None,
+                sim_captures: vec![],
                 sim_plugin: false,
             }),
             changes: AtomicU64::new(0),
@@ -149,6 +156,7 @@ impl EqApo {
         let mut g = self.lock();
         g.written = None;
         g.written_mic = None;
+        g.written_voice = None;
     }
     pub fn auto_due(&self) -> bool {
         self.lock().last_auto.map(|t| t.elapsed().as_secs() > 600).unwrap_or(true)
@@ -231,17 +239,15 @@ impl EqApo {
         // fichier temporaire oublie par GoXLR Mini (inerte, mais trompeur)
         let _ = std::fs::remove_file(cfg_dir.join("goxlr-mini.txt.tmp"));
         let cur = std::fs::read(&cfg).map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string()).unwrap_or_default();
-        let mic = rustudio_core::micns::CONFIG_FILE;
-        let inc_hp = format!("Include: {CONFIG_FILE}");
-        let inc_mic = format!("Include: {mic}");
-        let has_hp = cur.lines().any(|l| l.trim() == inc_hp);
-        let has_mic = cur.lines().any(|l| l.trim() == inc_mic);
-        if has_hp && has_mic {
+        // casque, suppression du bruit puis voix du micro : le bruit part avant l'égaliseur, comme dans OBS
+        let includes = [CONFIG_FILE, rustudio_core::micns::CONFIG_FILE, rustudio_windows_mic::CONFIG_FILE].map(|f| format!("Include: {f}"));
+        let has = |inc: &str| cur.lines().any(|l| l.trim() == inc);
+        if includes.iter().all(|inc| has(inc)) {
             return;
         }
         let mut lines = vec!["# Gere par Rustudio (pages Casque et Micro de l'appli).".to_string()];
-        if has_hp {
-            // déjà à Rustudio : on garde ses lignes et on ajoute le fichier du micro
+        if includes.iter().any(|inc| has(inc)) {
+            // déjà à Rustudio : on garde ses lignes et on ajoute les fichiers manquants
             lines = cur.lines().filter(|l| !l.starts_with("# Gere par Rustudio")).map(String::from).collect();
             lines.insert(0, "# Gere par Rustudio (pages Casque et Micro de l'appli).".into());
         } else if !cur.trim().is_empty() {
@@ -249,11 +255,10 @@ impl EqApo {
             let _ = std::fs::write(cfg_dir.join(&backup), &cur);
             lines.push(format!("# Configuration precedente : {backup}"));
         }
-        if !lines.iter().any(|l| l.trim() == inc_hp) {
-            lines.push(inc_hp);
-        }
-        if !lines.iter().any(|l| l.trim() == inc_mic) {
-            lines.push(inc_mic);
+        for inc in includes {
+            if !lines.iter().any(|l| l.trim() == inc) {
+                lines.push(inc);
+            }
         }
         let content = lines.join("\n") + "\n";
         let _ = write_atomic(&cfg, &cfg_dir.join("config.txt.tmp"), &content);
@@ -297,6 +302,24 @@ impl EqApo {
             return false;
         }
         self.lock().written_mic = Some(text.into());
+        self.bump();
+        true
+    }
+
+    /// Écrit rustudio-micro-voix.txt (voix des micros, module Micro) s'il a changé.
+    pub fn write_voice(&self, text: &str) -> bool {
+        if self.lock().written_voice.as_deref() == Some(text) {
+            return false;
+        }
+        let cfg_dir = self.dir.join("config");
+        if !cfg_dir.is_dir() {
+            return false;
+        }
+        let name = rustudio_windows_mic::CONFIG_FILE;
+        if !write_atomic(&cfg_dir.join(name), &cfg_dir.join(format!("{name}.tmp")), text) {
+            return false;
+        }
+        self.lock().written_voice = Some(text.into());
         self.bump();
         true
     }
@@ -379,8 +402,11 @@ impl EqApo {
     /// Entrées micro de Windows actives.
     pub fn captures(&self) -> Vec<Capture> {
         if self.sim {
-            let installed = self.lock().sim_capture;
-            return vec![Capture { guid: "{00000000-0000-0000-0000-00000000c0de}".into(), name: "Chat Mic (simulé)".into(), channels: 1, installed, goxlr: true }];
+            let on = self.lock().sim_captures.clone();
+            return [(SIM_GOXLR_MIC, "Chat Mic (simulé)", true), (SIM_USB_MIC, "Micro USB (simulé)", false)]
+                .into_iter()
+                .map(|(guid, name, goxlr)| Capture { guid: guid.into(), name: name.into(), channels: 1, installed: on.iter().any(|g| g.eq_ignore_ascii_case(guid)), goxlr })
+                .collect();
         }
         #[cfg(windows)]
         {
@@ -394,7 +420,10 @@ impl EqApo {
     /// d'abord la propriété, comme le Device Selector d'Equalizer APO).
     pub fn install_capture(&self, guid: &str) -> Result<(), String> {
         if self.sim {
-            self.lock().sim_capture = true;
+            let mut g = self.lock();
+            if !g.sim_captures.iter().any(|c| c.eq_ignore_ascii_case(guid)) {
+                g.sim_captures.push(guid.to_lowercase());
+            }
             return Ok(());
         }
         #[cfg(windows)]
@@ -411,7 +440,7 @@ impl EqApo {
 
     pub fn uninstall_capture(&self, guid: &str) -> Result<(), String> {
         if self.sim {
-            self.lock().sim_capture = false;
+            self.lock().sim_captures.retain(|c| !c.eq_ignore_ascii_case(guid));
             return Ok(());
         }
         #[cfg(windows)]
@@ -488,6 +517,7 @@ impl EqApo {
             g.sim_apo = false;
             g.written = None;
             g.written_mic = None;
+            g.written_voice = None;
             return Ok(());
         }
         let un = self.dir.join("Uninstall.exe");
@@ -776,6 +806,7 @@ mod tests {
         let content = std::fs::read_to_string(&cfg_file).unwrap();
         assert!(content.lines().any(|l| l.trim() == "Include: rustudio.txt"), "{content}");
         assert!(content.lines().any(|l| l.trim() == "Include: rustudio-micro.txt"), "{content}");
+        assert!(content.lines().any(|l| l.trim() == "Include: rustudio-micro-voix.txt"), "{content}");
 
         let text = "Device: {A}\nVSTPlugin: test\nDevice: all\n";
         assert!(apo.write_mic(text));

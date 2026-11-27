@@ -5115,7 +5115,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-app"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",
@@ -5125,6 +5125,7 @@ dependencies = [
  "raw-window-handle",
  "rustudio-core",
  "rustudio-windows-desktop",
+ "rustudio-windows-mic",
  "serde",
  "serde_json",
  "tempfile",
@@ -5134,7 +5135,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-attack-shark"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "hidapi",
  "serde",
@@ -5143,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-cooler-master"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "hidapi",
  "rustudio-core",
@@ -5153,7 +5154,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-core"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "indexmap",
  "serde",
@@ -5162,7 +5163,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-engine"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "chrono",
  "indexmap",
@@ -5172,6 +5173,7 @@ dependencies = [
  "rustudio-core",
  "rustudio-goxlr",
  "rustudio-logitech-c920",
+ "rustudio-windows-mic",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5185,7 +5187,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-goxlr"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "indexmap",
  "libloading 0.9.0",
@@ -5197,7 +5199,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-logitech-c920"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5206,7 +5208,7 @@ dependencies = [
 
 [[package]]
 name = "rustudio-setup"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "async-channel 2.5.0",
  "embed-resource",
@@ -5220,12 +5222,21 @@ dependencies = [
 
 [[package]]
 name = "rustudio-windows-desktop"
-version = "6.9.0"
+version = "6.10.0"
 dependencies = [
  "serde_json",
  "windows 0.62.2",
  "windows-core 0.62.2",
  "winreg 0.55.0",
+]
+
+[[package]]
+name = "rustudio-windows-mic"
+version = "6.10.0"
+dependencies = [
+ "rustudio-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

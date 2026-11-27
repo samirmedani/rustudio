@@ -15,6 +15,7 @@ rustudio-goxlr.workspace = true
 rustudio-attack-shark.workspace = true
 rustudio-cooler-master.workspace = true
 rustudio-logitech-c920.workspace = true
+rustudio-windows-mic.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true

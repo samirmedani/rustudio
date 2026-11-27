@@ -76,6 +76,16 @@ pub(crate) fn is_pcm24_48k_header(wf: &[u8]) -> bool {
     ch == 2 && rate == 48_000 && bits == 24
 }
 
+/// Volume d'une entrée ou d'une sortie de Windows : niveau du curseur (0 à 1), valeur en dB et plage quand le
+/// pilote les donne, coupure.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Level {
+    pub scalar: f32,
+    pub db: Option<f32>,
+    pub range: Option<(f32, f32)>,
+    pub muted: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     pub id: String,
@@ -148,6 +158,49 @@ mod win {
         fn SetEndpointVisibility(&self, id: PCWSTR, visible: i32) -> HRESULT;
     }
     const CLSID_POLICY_CONFIG: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
+
+    unsafe fn endpoint_volume(id: &str) -> windows::core::Result<windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume> {
+        let e: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let w: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
+        e.GetDevice(PCWSTR(w.as_ptr()))?.Activate(CLSCTX_ALL, None)
+    }
+
+    pub fn level(id: String) -> Option<Level> {
+        com(move || unsafe {
+            let v = endpoint_volume(&id).ok()?;
+            let scalar = v.GetMasterVolumeLevelScalar().ok()?;
+            let (mut lo, mut hi, mut step) = (0f32, 0f32, 0f32);
+            let range = v.GetVolumeRange(&mut lo, &mut hi, &mut step).ok().filter(|_| hi > lo).map(|_| (lo, hi));
+            Some(Level { scalar, db: v.GetMasterVolumeLevel().ok(), range, muted: v.GetMute().map(|b| b.as_bool()).unwrap_or(false) })
+        })
+        .flatten()
+    }
+
+    pub fn set_level(id: String, scalar: f32) -> Result<(), String> {
+        com(move || unsafe { endpoint_volume(&id)?.SetMasterVolumeLevelScalar(scalar.clamp(0., 1.), std::ptr::null()) })
+            .unwrap_or_else(|| Err(windows::core::Error::empty()))
+            .map_err(|e| e.message())
+    }
+
+    pub fn set_mute(id: String, muted: bool) -> Result<(), String> {
+        com(move || unsafe { endpoint_volume(&id)?.SetMute(muted, std::ptr::null()) })
+            .unwrap_or_else(|| Err(windows::core::Error::empty()))
+            .map_err(|e| e.message())
+    }
+
+    /// Entrée par défaut de Windows pour tous les usages : applis, multimédia et appels.
+    pub fn set_default_input(id: String) -> Result<(), String> {
+        com(move || unsafe {
+            let p: IPolicyConfig = CoCreateInstance(&CLSID_POLICY_CONFIG, None, CLSCTX_ALL)?;
+            let w: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
+            for role in [0, 1, 2] {
+                p.SetDefaultEndpoint(PCWSTR(w.as_ptr()), ERole(role)).ok()?;
+            }
+            Ok(())
+        })
+        .unwrap_or_else(|| Err(windows::core::Error::empty()))
+        .map_err(|e: windows::core::Error| e.message())
+    }
 
     pub fn active(capture: bool) -> Vec<Endpoint> {
         let mut out = vec![];
@@ -418,6 +471,57 @@ pub fn default_input_guid() -> Option<String> {
     #[cfg(not(windows))]
     {
         None
+    }
+}
+
+/// Volume Windows d'une voie (identifiant IMMDevice complet), s'il se lit.
+pub fn level(id: &str) -> Option<Level> {
+    #[cfg(windows)]
+    {
+        win::level(id.to_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = id;
+        None
+    }
+}
+
+/// Règle le curseur de volume Windows d'une voie (0 à 1).
+pub fn set_level(id: &str, scalar: f32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        win::set_level(id.to_owned(), scalar)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (id, scalar);
+        Err("Volume Windows disponible sous Windows.".into())
+    }
+}
+
+pub fn set_mute(id: &str, muted: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        win::set_mute(id.to_owned(), muted)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (id, muted);
+        Err("Volume Windows disponible sous Windows.".into())
+    }
+}
+
+/// Fait de cette entrée le micro de Windows, pour les applis comme pour les appels.
+pub fn set_default_input(id: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        win::set_default_input(id.to_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = id;
+        Err("Micro par défaut réglable sous Windows.".into())
     }
 }
 

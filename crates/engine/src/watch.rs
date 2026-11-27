@@ -82,6 +82,7 @@ impl Ctl {
     pub fn app_watch_loop(self: &Arc<Self>, interval: Duration) {
         self.hp_apply();
         self.ns_apply();
+        self.winmic_apply();
         loop {
             std::thread::sleep(interval);
             let (auto, hp) = {
@@ -96,6 +97,7 @@ impl Ctl {
             }
             self.hp_tick(running.as_ref());
             self.ns_apply(); // micro débranché, rebranché, ou autre micro par défaut
+            self.winmic_apply();
         }
     }
 

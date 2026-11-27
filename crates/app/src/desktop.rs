@@ -55,6 +55,7 @@ pub enum Page {
     WebcamImage,
     WebcamOptics,
     WebcamInfo,
+    WinMic,
     WindowsAudio,
     Catalogue,
     Versions,
@@ -78,6 +79,7 @@ pub(crate) enum Space {
     Mouse,
     Keyboard,
     Webcam,
+    WinMic,
 }
 
 impl Page {
@@ -106,6 +108,7 @@ impl Page {
             "webcam-image" => Page::WebcamImage,
             "webcam-optics" => Page::WebcamOptics,
             "webcam-info" => Page::WebcamInfo,
+            "windows-mic" => Page::WinMic,
             "mic" => Page::Go(Section::Microphone),
             "headphones" => Page::Go(Section::Headphones),
             "routing" => Page::Go(Section::Routing),
@@ -117,11 +120,11 @@ impl Page {
     }
     /// Nom de la page pour `--page`, l'inverse de `from_name`.
     pub fn name(self) -> Option<&'static str> {
-        const NAMES: [&str; 28] = [
+        const NAMES: [&str; 29] = [
             "devices", "profiles", "modules", "versions", "help", "settings", "audio", "mixer", "mouse",
             "mouse-sensitivity", "mouse-sensor", "mouse-power", "keyboard", "keyboard-settings", "keyboard-paint",
             "keyboard-shortcuts", "keyboard-info", "keyboard-macros", "webcam", "webcam-image", "webcam-optics",
-            "webcam-info", "mic", "headphones", "routing", "lighting", "scenes", "diagnostic",
+            "webcam-info", "windows-mic", "mic", "headphones", "routing", "lighting", "scenes", "diagnostic",
         ];
         NAMES.into_iter().find(|n| Self::from_name(n) == Some(self))
     }
@@ -131,6 +134,7 @@ impl Page {
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => Some(Space::Mouse),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo | Page::KeyboardMacros => Some(Space::Keyboard),
             Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => Some(Space::Webcam),
+            Page::WinMic => Some(Space::WinMic),
             _ => None,
         }
     }
@@ -161,6 +165,7 @@ impl Page {
             Page::WebcamImage => "Image et couleur",
             Page::WebcamOptics => "Optique et cadrage",
             Page::WebcamInfo => "Ta C920",
+            Page::WinMic => "Mon micro",
             Page::Go(s) => s.label(),
         }
     }
@@ -188,6 +193,7 @@ impl Page {
             Page::WebcamImage => "Aperçu vidéo en direct, luminosité, contraste, saturation, netteté et balance des blancs.",
             Page::WebcamOptics => "Aperçu vidéo en direct, exposition manuelle, focus, zoom et cadrage.",
             Page::WebcamInfo => "Voyant LED, maintien anti-réinitialisation et fiche technique C920.",
+            Page::WinMic => "Volume, micro de Windows, suppression du bruit et égaliseur de ta voix, pour toutes tes applis.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",
@@ -226,6 +232,7 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
         Space::Webcam => &[
             (Page::Webcam, Icon::Camera, "Ma webcam"),
         ],
+        Space::WinMic => &[(Page::WinMic, Icon::Mic, "Mon micro")],
     }
 }
 
@@ -235,6 +242,7 @@ fn module_icon(id: &str) -> Icon {
         "attack-shark-r5-ultra" => Icon::Mouse,
         "cooler-master-mk770" => Icon::Keyboard,
         "logitech-c920" => Icon::Camera,
+        "windows-mic" => Icon::Mic,
         _ => Icon::Grid,
     }
 }
@@ -244,6 +252,7 @@ fn module_page(id: &str) -> Option<Page> {
         "attack-shark-r5-ultra" => Some(Page::Mouse),
         "cooler-master-mk770" => Some(Page::Keyboard),
         "logitech-c920" => Some(Page::Webcam),
+        "windows-mic" => Some(Page::WinMic),
         _ => None,
     }
 }
@@ -270,6 +279,9 @@ fn capability(id: &str) -> &str {
         "presets" => "Préréglages",
         "lock" => "Maintien",
         "led" => "LED / XU",
+        "mic-level" => "Volume",
+        "noise-suppression" => "Anti-bruit IA",
+        "voice-eq" => "Égaliseur voix",
         other => other,
     }
 }
@@ -961,6 +973,7 @@ impl Mixer {
             Some(Space::Mouse) => format!("R5 ULTRA · {}", suffix("attack-shark-r5-ultra").to_uppercase()),
             Some(Space::Keyboard) => format!("MK770 · {}", suffix("cooler-master-mk770").to_uppercase()),
             Some(Space::Webcam) => format!("LOGITECH C920 · {}", suffix("logitech-c920").to_uppercase()),
+            Some(Space::WinMic) => format!("MICRO · {}", suffix("windows-mic").to_uppercase()),
             None if matches!(self.page, Page::Devices | Page::Profiles) => "TON ESPACE PERSONNEL".into(),
             None if self.page == Page::WindowsAudio => "CE PC".into(),
             None => "RUSTUDIO".into(),
@@ -1040,6 +1053,7 @@ impl Mixer {
             Some(Space::Mouse) => self.module("attack-shark-r5-ultra"),
             Some(Space::Keyboard) => self.module("cooler-master-mk770"),
             Some(Space::Webcam) => self.module("logitech-c920"),
+            Some(Space::WinMic) => self.module("windows-mic"),
             None => None,
         };
         let back = self.history.last().copied().map(|previous| {
@@ -1158,6 +1172,7 @@ impl Mixer {
             Page::KeyboardMacros => self.macros_view(window, cx).into_any_element(),
             Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => self.webcam_view(window, cx).into_any_element(),
             Page::WindowsAudio => self.win_audio(window,cx).into_any_element(),
+            Page::WinMic => self.winmic_view(page_width(window), cx).into_any_element(),
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, window, cx).into_any_element(),
             Page::Go(section) => self.go_controls(section, page_width(window), cx).into_any_element(),
         };

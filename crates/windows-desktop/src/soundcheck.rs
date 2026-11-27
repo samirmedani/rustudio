@@ -738,10 +738,15 @@ pub(crate) mod win {
 
     pub fn record(secs: f64, stop: Arc<AtomicBool>) -> Result<(Vec<f32>, u32), String> {
         let input = goxlr(true, crate::audio::MIC).ok_or("Windows ne voit pas l’entrée Chat Mic de la GoXLR.")?;
+        record_from(input.id, secs, stop)
+    }
+
+    /// Enregistre une entrée de Windows en mode partagé : le son tel que les applis le reçoivent, effets compris.
+    pub fn record_from(id: String, secs: f64, stop: Arc<AtomicBool>) -> Result<(Vec<f32>, u32), String> {
         com(move || unsafe {
             let mut out = Vec::new();
             let mut rate = 48_000;
-            listen_until(&input.id, false, secs, &mut |packet, ch| {
+            listen_until(&id, false, secs, &mut |packet, ch| {
                 for fr in packet.chunks_exact(ch.max(1) as usize) {
                     out.push(fr.iter().sum::<f32>() / f32::from(ch.max(1)));
                 }
@@ -1004,6 +1009,12 @@ pub fn record_mic(secs: f64, stop: std::sync::Arc<std::sync::atomic::AtomicBool>
     win::record(secs, stop)
 }
 
+/// Enregistre une entrée de Windows (identifiant IMMDevice) telle que les applis la reçoivent, effets compris.
+#[cfg(windows)]
+pub fn record_input(id: &str, secs: f64, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
+    win::record_from(id.to_owned(), secs, stop)
+}
+
 /// Rejoue un enregistrement sur la sortie par défaut de Windows.
 #[cfg(windows)]
 pub fn play_default(samples: Vec<f32>, rate: u32) -> Result<(), String> {
@@ -1064,6 +1075,10 @@ pub fn loop_test(secs: f64, exclusive: bool) -> Value {
 // Aperçu de l'interface sur Mac (développement) : pas d'audio Windows.
 #[cfg(not(windows))]
 pub fn record_mic(_secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
+    Err("Disponible sous Windows.".into())
+}
+#[cfg(not(windows))]
+pub fn record_input(_id: &str, _secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
     Err("Disponible sous Windows.".into())
 }
 #[cfg(not(windows))]
