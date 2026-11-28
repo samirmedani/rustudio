@@ -3,7 +3,11 @@
 #[cfg(any(windows, unix))]
 mod backend;
 #[cfg(any(windows, unix))]
+mod app_profiles;
+#[cfg(any(windows, unix))]
 mod colour;
+#[cfg(any(windows, unix))]
+mod camera_profiles;
 #[cfg(any(windows, unix))]
 mod desktop;
 #[cfg(any(windows, unix))]
@@ -11,11 +15,17 @@ mod goxlr;
 #[cfg(any(windows, unix))]
 mod keyboard;
 #[cfg(any(windows, unix))]
+mod keyboard_paint;
+#[cfg(all(any(windows, unix), debug_assertions))]
+mod layout_check;
+#[cfg(any(windows, unix))]
 mod macros;
 #[cfg(any(windows, unix))]
 mod library;
 #[cfg(any(windows, unix))]
 mod mixer;
+#[cfg(any(windows, unix))]
+mod motion;
 #[cfg(any(windows, unix))]
 mod mouse;
 #[cfg(any(windows, unix))]
@@ -38,6 +48,8 @@ mod ui;
 mod update_sheet;
 mod live;
 mod window_place;
+mod mic_filters;
+#[cfg(any(windows, unix))]
 mod mic_wizard;
 #[cfg(any(windows, unix))]
 mod voice;
@@ -112,12 +124,18 @@ fn run() -> Result<(), String> {
     let mut start_demo = false;
     let mut native_osd = false;
     let mut tray_mode = false;
+    let mut dev_preview = false;
     let mut duration = None;
     let mut show = true;
     let mut self_test = false;
+    #[cfg(debug_assertions)]
+    let mut self_test_layout = false;
     let mut relaunch = None;
     let mut start_page = None;
     let mut start_wizard_step: Option<crate::mic_wizard::Step> = None;
+    let mut show_mic_filters = false;
+    let mut show_application_profiles = false;
+    let mut start_mic_filter = None;
     let mut theme = None;
     let mut hotkey = None;
     while let Some(arg) = args.next() {
@@ -140,18 +158,24 @@ fn run() -> Result<(), String> {
             "--mixer" => open_mixer = true,
             "--page" => {
                 let p = args.next().ok_or("Page manquante.")?;
-                if let Some(step_name) = p.strip_prefix("mic-wizard") {
+                if p == "app-profiles" {
+                    start_page = Some(desktop::Page::Profiles);
+                    show_application_profiles = true;
+                } else if p == "mic-filters" {
+                    start_page = Some(desktop::Page::WinMic);
+                    show_mic_filters = true;
+                } else if let Some(step_name) = p.strip_prefix("mic-wizard") {
+                    use crate::mic_filters::MicFilter;
                     start_page = Some(desktop::Page::Go(goxlr::Section::Microphone));
-                    start_wizard_step = Some(match step_name.trim_start_matches('-') {
-                        "measure" | "2" => mic_wizard::Step::Measure,
-                        "gain" | "3" => mic_wizard::Step::Gain,
-                        "noise" | "4" => mic_wizard::Step::Noise,
-                        "eq" | "5" => mic_wizard::Step::Eq,
-                        "radio" | "6" => mic_wizard::Step::Radio,
-                        "compare" | "7" => mic_wizard::Step::Compare,
-                        "done" | "8" => mic_wizard::Step::Done,
-                        _ => mic_wizard::Step::Mic,
-                    });
+                    match step_name.trim_start_matches('-') {
+                        "noise" | "4" => start_mic_filter = Some(MicFilter::Gate),
+                        "eq" | "5" => start_mic_filter = Some(MicFilter::Eq),
+                        "radio" | "6" => start_mic_filter = Some(MicFilter::Compressor),
+                        "measure" | "2" => start_wizard_step = Some(mic_wizard::Step::Measure),
+                        "compare" | "7" => start_wizard_step = Some(mic_wizard::Step::Compare),
+                        _ => start_wizard_step = Some(mic_wizard::Step::Gain),
+                    }
+                    show_mic_filters = start_mic_filter.is_some();
                 } else {
                     start_page = Some(desktop::Page::from_name(&p).ok_or("Page inconnue.")?);
                 }
@@ -170,11 +194,25 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
             "--self-test" => self_test = true,
+            #[cfg(debug_assertions)]
+            "--self-test-layout" => self_test_layout = true,
             "--dev-live" => live::enable(),
+            "--dev-preview" => {
+                dev_preview = true;
+                live::enable();
+            }
             // ouvre le panneau de l'icône dès le démarrage (captures et bancs de test)
             "--panel" => {}
             _ => return Err(format!("Option inconnue : {arg}")),
         }
+    }
+    #[cfg(debug_assertions)]
+    if self_test_layout {
+        show = false;
+        start_demo = true;
+        tray_mode = false;
+        native_osd = false;
+        hotkey = None;
     }
     // Sans option, Rustudio pilote le moteur installé. Les essais passent toujours par la démonstration.
     let live = force_live || !(demo || start_demo || self_test || port.is_some_and(|p| p != 14565));
@@ -216,14 +254,15 @@ fn run() -> Result<(), String> {
         keyboard::verify(&client)?;
         webcam::verify(&client)?;
         macros::verify(&client)?;
-        return goxlr::verify(&client);
+        goxlr::verify(&client)?;
+        return app_profiles::verify(&client);
     }
     if let Some(pid) = relaunch {
         session::wait_exit(pid, Duration::from_secs(20));
     }
     // Appli installée : une seule instance par session ; la seconde ouverture montre la fenêtre existante.
     // Après une mise à jour, l'ancienne instance peut mettre quelques secondes à se fermer : la nouvelle l'attend.
-    let instance = if live && duration.is_none() {
+    let instance = if live && duration.is_none() && !dev_preview {
         let deadline = Instant::now() + Duration::from_secs(if relaunch.is_some() { 30 } else { 0 });
         loop {
             match session::Instance::acquire("Rustudio") {
@@ -247,9 +286,13 @@ fn run() -> Result<(), String> {
         hotkey,
     );
     // Avec le moteur installé, l'icône près de l'horloge garde Rustudio ouvert, fenêtre fermée ou non.
-    let resident = live || tray_mode;
+    let resident = (live && !dev_preview) || tray_mode;
     let initial = start_page.unwrap_or(if open_mixer { desktop::Page::Mixer } else { desktop::Page::Devices });
     let start = Instant::now();
+    #[cfg(debug_assertions)]
+    let layout_result = std::rc::Rc::new(std::cell::RefCell::new(None));
+    #[cfg(debug_assertions)]
+    let result_slot = layout_result.clone();
     Application::new().with_assets(ui::Assets).run(move |cx: &mut App| {
         ui::load_fonts(cx);
         let window_client = client.clone();
@@ -259,7 +302,12 @@ fn run() -> Result<(), String> {
                     if let Some(page) = page {
                         mixer.go_to(page, cx);
                     }
-                    window.activate_window();
+                    if visible {
+                        let already_active = window.is_window_active();
+                        if !already_active { mixer.motion.window_opened(Instant::now()); }
+                        window.activate_window();
+                        cx.notify();
+                    }
                 });
                 return;
             }
@@ -284,7 +332,7 @@ fn run() -> Result<(), String> {
             let result = cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
-                        title: Some(if live { "Rustudio" } else { "Rustudio · Démonstration" }.into()),
+                        title: Some(if dev_preview { "Rustudio DEV" } else if live { "Rustudio" } else { "Rustudio · Démonstration" }.into()),
                         // barre de titre dessinée par Rustudio (boutons de fenêtre dans la page)
                         appears_transparent: true,
                         ..Default::default()
@@ -299,11 +347,19 @@ fn run() -> Result<(), String> {
                 |_window, cx| {
                     #[cfg(target_os = "macos")]
                     preview_float(_window, cx);
-                    cx.new(|cx| {
+                    cx.new(|cx: &mut gpui::Context<mixer::Mixer>| {
                         // Windows passe du clair au sombre : la fenêtre se redessine aussitôt
                         cx.observe_window_appearance(_window, |_, _, cx| cx.notify()).detach();
+                        if resident {
+                            let view = cx.entity().downgrade();
+                            _window.on_window_should_close(cx, move |window, cx| {
+                                view.update(cx, |m, cx| m.minimize_gently(window, cx)).is_err()
+                            });
+                        }
                         // chaque déplacement ou redimensionnement est retenu pour la prochaine ouverture
-                        cx.observe_window_bounds(_window, |_, window, _| window_place::save(window.window_bounds())).detach();
+                        if !dev_preview {
+                            cx.observe_window_bounds(_window, |_, window, _| window_place::save(window.window_bounds())).detach();
+                        }
                         let mut mixer = mixer::Mixer::new(
                             client,
                             profiles::Store::new(dir),
@@ -313,18 +369,34 @@ fn run() -> Result<(), String> {
                             start,
                             cx,
                         );
+                        if visible { mixer.motion.window_opened(Instant::now()); }
+                        mixer.load_application_icons(cx);
                         mixer.go_to(page.unwrap_or(initial), cx);
+                        mixer.application_profiles_tab = show_application_profiles;
+                        if show_mic_filters {
+                            mixer.mic_tab = crate::mic_filters::MicTab::Filters;
+                            mixer.mic_filters.select(start_mic_filter, std::time::Instant::now());
+                        }
                         if let Some(step) = start_wizard_step {
-                            mixer.open_mic_wizard(cx);
-                            if let Some(w) = mixer.wizard.as_mut() {
-                                w.step = step;
-                            }
+                            mixer.open_mic_wizard(step, cx);
                         }
                         mixer
                     })
                 },
             );
+            #[cfg(debug_assertions)]
+            if self_test_layout && let Ok(handle) = result.as_ref() {
+                let handle = *handle;
+                let client = window_client.clone();
+                let result_slot = result_slot.clone();
+                cx.spawn(async move |cx| {
+                    result_slot.replace(Some(layout_check::run(handle, client, (width, height), cx).await));
+                    let _ = cx.update(|cx| cx.quit());
+                }).detach();
+            }
             if let Err(err) = result {
+                #[cfg(debug_assertions)]
+                if self_test_layout { result_slot.replace(Some(Err(format!("Ouverture de la fenêtre : {err:#}")))); }
                 eprintln!("Ouverture de la fenêtre : {err:#}");
                 if !resident {
                     cx.quit();
@@ -368,6 +440,10 @@ fn run() -> Result<(), String> {
             .detach();
         }
     });
+    #[cfg(debug_assertions)]
+    if self_test_layout {
+        return layout_result.take().unwrap_or_else(|| Err("Le test de mise en page a été interrompu.".into()));
+    }
     Ok(())
 }
 #[cfg(any(windows, unix))]

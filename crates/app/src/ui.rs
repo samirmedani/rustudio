@@ -1,15 +1,16 @@
 //! Kit visuel de Rustudio : clair, verre dépoli, grands arrondis (direction validée sur les maquettes).
 //! Toutes les vues passent par ces briques ; aucune couleur ni taille n'est répétée ailleurs.
 use gpui::{
-    AnyElement, App, AssetSource, BoxShadow, CursorStyle, Div, ElementId, FocusHandle, FontWeight, Hsla, KeyDownEvent,
-    MouseButton, ObjectFit, SharedString, Stateful, Svg, div, img, linear_color_stop, linear_gradient, point, prelude::*,
-    px, svg,
+    AnyElement, App, AssetSource, Bounds, BoxShadow, CursorStyle, Div, Element, ElementId, FocusHandle, FontWeight,
+    GlobalElementId, Hsla, InspectorElementId, KeyDownEvent, LayoutId, MouseButton, ObjectFit, Pixels, SharedString,
+    Stateful, Svg, Window, div, img, linear_color_stop, linear_gradient, point, prelude::*, px, svg,
 };
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::time::Instant;
+use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 static LOGO: LazyLock<Arc<gpui::Image>> = LazyLock::new(|| png(include_bytes!("../assets/logo.png")));
 static AMBIENT: LazyLock<Arc<gpui::Image>> = LazyLock::new(|| png(include_bytes!("../assets/ambient.png")));
@@ -18,6 +19,9 @@ fn png(bytes: &[u8]) -> Arc<gpui::Image> {
 }
 
 pub const FONT: &str = "Inter";
+pub const BODY_TEXT: f32 = 15.;
+pub const DETAIL_TEXT: f32 = 13.;
+pub const SECTION_TEXT: f32 = 17.;
 pub const BG: u32 = 0xf5f5f7;
 pub const TEXT: u32 = 0x1d1d1f;
 pub const TEXT2: u32 = 0x6e6e73;
@@ -117,7 +121,7 @@ pub fn is_dark() -> bool {
 }
 
 /// Surface des cartes en sombre (PAPER translucide) ; un élément en relief, rgb(PAPER), est un peu plus clair.
-const DARK_SURFACE: u32 = 0x18181b;
+const DARK_SURFACE: u32 = 0x141417;
 
 /// Couleur réellement dessinée pour une couleur de la palette claire.
 fn themed(c: u32, dark: bool) -> u32 {
@@ -130,9 +134,9 @@ fn themed(c: u32, dark: bool) -> u32 {
     }
     match c {
         // presque noir, cartes et reliefs à peine plus clairs, comme les éditeurs sombres récents
-        PAPER => 0x26262a,
+        PAPER => 0x1e1e22,
         INK => 0xffffff,
-        BG => 0x0b0b0c,
+        BG => 0x0d0d0f,
         TEXT => 0xf5f5f7,
         0x3a3a3c => 0xd1d1d6,
         TEXT2 => 0xaeaeb2,
@@ -145,9 +149,9 @@ fn themed(c: u32, dark: bool) -> u32 {
         // rail des faders, panneau près de l'horloge, barres du graphique de voix, onglet actif de la barre latérale
         0xe3e3e8 => 0x222225,
         0xeeeef2 => 0x27272b,
-        0xf7f7f9 => 0x141416,
+        0xf7f7f9 => 0x101013,
         0xc7c7cc => 0x4a4a4f,
-        0xf3f8ff => 0x1b2433,
+        0xf3f8ff => 0x141d2b,
         other => other,
     }
 }
@@ -180,7 +184,7 @@ pub fn rgb(c: u32) -> Hsla {
 }
 /// Fond pastel d'une couleur : mélange vers la surface (t = 0 : couleur pure, t = 1 : surface).
 pub fn tint(c: u32, t: f32) -> Hsla {
-    if is_dark() { blend(c, 0x18181b, t) } else { blend(c, WHITE, t) }
+    if is_dark() { blend(c, DARK_SURFACE, t) } else { blend(c, WHITE, t) }
 }
 /// Couleur lisible sur son propre fond pastel : plus sombre en clair, plus claire en sombre.
 pub fn shade(c: u32, t: f32) -> Hsla {
@@ -255,6 +259,132 @@ impl AssetSource for Assets {
 // Chaque élément interactif garde son état de survol et l'instant du changement : couleurs, ombres et élévation
 // glissent vers leur nouvel état en 160 ms (courbe douce), dans les deux sens, même si on change d'avis en route.
 const HOVER_MS: f32 = 160.;
+
+/// Transition réversible, initialisée directement dans l'état affiché.
+pub(crate) struct Transition {
+    target: bool,
+    from: f32,
+    since: Instant,
+}
+
+impl Transition {
+    pub(crate) fn new(target: bool, now: Instant) -> Self {
+        Self { target, from: f32::from(u8::from(target)), since: now }
+    }
+
+    fn sample(&self, now: Instant, duration: Duration) -> (f32, bool) {
+        let end = f32::from(u8::from(self.target));
+        let progress = (now.duration_since(self.since).as_secs_f32() / duration.as_secs_f32()).min(1.);
+        let eased = progress * progress * (3. - 2. * progress);
+        (self.from + (end - self.from) * eased, progress < 1. && self.from != end)
+    }
+
+    pub(crate) fn update(&mut self, target: bool, now: Instant, duration: Duration) -> (f32, bool) {
+        let (value, moving) = self.sample(now, duration);
+        if target != self.target {
+            *self = Self { target, from: value, since: now };
+            return (value, value != f32::from(u8::from(target)));
+        }
+        (value, moving)
+    }
+}
+
+const DISCLOSURE_TIME: Duration = Duration::from_millis(190);
+
+/// Panneau repliable dont la hauteur suit le contenu à la largeur réelle.
+#[derive(Default)]
+pub(crate) struct Disclosure {
+    motion: Option<Transition>,
+    height: Rc<Cell<Pixels>>,
+}
+
+impl Disclosure {
+    pub(crate) fn is_open(&self) -> bool {
+        self.motion.as_ref().is_some_and(|motion| motion.target)
+    }
+
+    pub(crate) fn set(&mut self, open: bool, now: Instant) {
+        self.motion.get_or_insert_with(|| Transition::new(false, now)).update(open, now, DISCLOSURE_TIME);
+    }
+
+    fn frame(&self, now: Instant) -> (f32, bool) {
+        self.motion.as_ref().map_or((0., false), |motion| motion.sample(now, DISCLOSURE_TIME))
+    }
+
+    pub(crate) fn body(&self, build: impl FnOnce() -> Div) -> Option<Div> {
+        let (visible, moving) = self.frame(Instant::now());
+        if visible == 0. && !moving { return None; }
+        let height = self.height.clone();
+        Some(div().relative().w_full().min_w(px(0.)).flex().flex_col().flex_none().overflow_hidden()
+            .when(moving, |d| d.h(height.get() * visible))
+            .child(build().w_full().flex_none().opacity(visible))
+            .when(!self.is_open(), |d| d.child(div().absolute().inset_0().block_mouse_except_scroll()))
+            .on_children_prepainted(move |bounds, window, _| {
+                if let Some(content) = bounds.first() {
+                    height.set(content.size.height);
+                }
+                if moving { animation_frame(window); }
+            }))
+    }
+}
+
+/// L'état suit le contrôle dans GPUI et disparaît quand le contrôle est retiré.
+struct AnimatedState<F> {
+    id: &'static str,
+    target: bool,
+    draw: Option<F>,
+}
+
+impl<F: FnOnce(f32) -> Div + 'static> IntoElement for AnimatedState<F> {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl<F: FnOnce(f32) -> Div + 'static> Element for AnimatedState<F> {
+    type RequestLayoutState = AnyElement;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.into())
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self, id: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App,
+    ) -> (LayoutId, AnyElement) {
+        let now = Instant::now();
+        let target = self.target;
+        let (value, moving) = window.with_element_state(id.expect("transition avec identifiant"), |state, _| {
+            let mut state = state.unwrap_or_else(|| Transition::new(target, now));
+            (state.update(target, now, Duration::from_millis(150)), state)
+        });
+        if moving {
+            animation_frame(window);
+        }
+        let mut element = self.draw.take().expect("transition mise en page une fois")(value).into_any_element();
+        (element.request_layout(window, cx), element)
+    }
+
+    fn prepaint(
+        &mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>,
+        element: &mut AnyElement, window: &mut Window, cx: &mut App,
+    ) {
+        element.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>,
+        element: &mut AnyElement, _: &mut (), window: &mut Window, cx: &mut App,
+    ) {
+        element.paint(window, cx);
+    }
+}
 
 struct Fade {
     on: bool,
@@ -422,8 +552,9 @@ pub fn icon(name: Icon, size: f32, colour: impl Into<Hsla>) -> Svg {
 
 /// Fond de l'appli : lumière douce et halos pastel, sous toutes les cartes.
 pub fn ambient() -> impl IntoElement {
-    // en sombre, l'image claire ne laisse qu'un halo coloré discret sur le fond
-    img(AMBIENT.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover).opacity(if is_dark() { 0.035 } else { 1. })
+    div().when(!is_dark(), |d| {
+        d.child(img(AMBIENT.clone()).absolute().top_0().left_0().size_full().object_fit(ObjectFit::Cover))
+    })
 }
 pub fn logo(size: f32) -> impl IntoElement {
     img(LOGO.clone()).flex_none().size(px(size))
@@ -466,27 +597,32 @@ pub fn card() -> Div {
 pub fn card_title(glyph: Option<(Icon, u32)>, title: impl Into<SharedString>, aside: Option<SharedString>) -> Div {
     div()
         .flex()
+        .flex_wrap()
         .items_center()
-        .gap(px(9.))
-        .when_some(glyph, |d, (i, c)| d.child(icon(i, 18., rgb(c))))
-        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(title.into()))
-        .when_some(aside, |d, a| d.child(div().flex_1().flex().justify_end().text_size(px(12.5)).text_color(rgb(TEXT3)).child(a)))
+        .gap_x(px(12.))
+        .gap_y(px(4.))
+        .child(
+            div().flex().min_w(px(0.)).items_center().gap(px(9.))
+                .when_some(glyph, |d, (i, c)| d.child(icon(i, 18., rgb(c)).flex_none()))
+                .child(self::title(title, SECTION_TEXT)),
+        )
+        .when_some(aside, |d, a| d.child(caption(a).flex_1().min_w(px(120.)).text_right()))
 }
 
 pub fn hint(text: impl Into<SharedString>) -> Div {
-    div().text_size(px(13.)).line_height(px(19.)).text_color(rgb(TEXT2)).child(text.into())
+    div().text_size(px(BODY_TEXT - 1.)).line_height(px(20.)).text_color(rgb(TEXT2)).child(text.into())
 }
 pub fn caption(text: impl Into<SharedString>) -> Div {
-    div().text_size(px(12.)).text_color(rgb(TEXT3)).child(text.into())
+    div().text_size(px(DETAIL_TEXT)).line_height(px(18.)).text_color(rgb(TEXT3)).child(text.into())
 }
 pub fn label(text: impl Into<SharedString>) -> Div {
-    div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(TEXT2)).child(text.into())
+    div().text_size(px(BODY_TEXT - 1.)).font_weight(FontWeight::MEDIUM).text_color(rgb(TEXT2)).child(text.into())
 }
 pub fn eyebrow(text: impl Into<SharedString>) -> Div {
-    div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT3)).child(text.into())
+    caption(text).font_weight(FontWeight::SEMIBOLD)
 }
 pub fn title(text: impl Into<SharedString>, size: f32) -> Div {
-    div().text_size(px(size)).font_weight(FontWeight::SEMIBOLD).child(text.into())
+    div().text_size(px(size)).line_height(px(size + 5.)).font_weight(FontWeight::SEMIBOLD).child(text.into())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -525,7 +661,7 @@ pub fn pill(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<Share
         .rounded(px(8.))
         .bg(lerp(bg, hover, t))
         .text_color(fg)
-        .text_size(px(13.5))
+        .text_size(px(BODY_TEXT - 1.))
         .font_weight(if tone == Tone::Primary { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
         .cursor(CursorStyle::PointingHand)
         .when_some(glyph, move |d, i| d.child(icon(i, 16., if tone == Tone::Plain { rgb(TEXT2) } else { fg })))
@@ -546,19 +682,24 @@ pub fn choice(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<Sha
     let fg = if selected { rgb(ACCENT) } else { lerp(rgb(TEXT2), rgb(TEXT), t) };
     let el = div()
         .id(id)
+        .relative()
         .flex()
         .flex_none()
         .items_center()
         .gap(px(6.))
         .h(px(30.))
-        .border_b_2()
-        .border_color(if selected { rgb(ACCENT) } else { alpha(ACCENT, 0.) })
+        .pb(px(2.))
         .text_color(fg)
-        .text_size(px(13.5))
+        .text_size(px(BODY_TEXT - 1.))
         .font_weight(if selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
         .cursor(CursorStyle::PointingHand)
         .when_some(glyph, move |d, i| d.child(icon(i, 15., fg)))
-        .child(text.into());
+        .child(text.into())
+        .child(AnimatedState {
+            id: "choice-underline",
+            target: selected,
+            draw: Some(|value| div().absolute().bottom_0().left_0().right_0().h(px(2.)).bg(alpha(ACCENT, value))),
+        });
     hoverable(el, key)
 }
 
@@ -590,20 +731,24 @@ pub fn toggle(id: impl Into<ElementId>, on: bool, enabled: bool) -> Stateful<Div
     let id: ElementId = id.into();
     let key = key_of(&id);
     let t = if enabled { hover_t(&key) } else { 0. };
-    let track = if on { lerp(rgb(GREEN), rgb(0x2fb850), t) } else { lerp(alpha(0x787880, 0.2), alpha(0x787880, 0.3), t) };
+    let off = lerp(alpha(0x787880, 0.2), alpha(0x787880, 0.3), t);
+    let active = lerp(rgb(GREEN), rgb(0x2fb850), t);
     let el = div()
         .id(id)
-        .flex()
         .flex_none()
         .w(px(46.))
         .h(px(28.))
-        .p(px(2.))
-        .rounded_full()
-        .when(on, |d| d.justify_end())
-        .bg(track)
         .when(enabled, |d| d.cursor(CursorStyle::PointingHand))
         .when(!enabled, |d| d.opacity(0.5))
-        .child(div().size(px(24.)).rounded_full().bg(rgb(WHITE)).shadow(vec![shadow(2. + t, 6. + 3. * t, 0.2 + 0.06 * t)]));
+        .child(AnimatedState {
+            id: "toggle-track",
+            target: on,
+            draw: Some(move |value| {
+                div().relative().size_full().rounded_full().bg(lerp(off, active, value))
+                    .child(div().absolute().top(px(2.)).left(px(2. + 18. * value)).size(px(24.)).rounded_full()
+                        .bg(rgb(WHITE)).shadow(vec![shadow(2. + t, 6. + 3. * t, 0.2 + 0.06 * t)]))
+            }),
+        });
     hoverable(el, key)
 }
 
@@ -666,10 +811,19 @@ pub fn status(text: impl Into<SharedString>, state: State) -> Div {
 }
 /// Message de résultat : vert si tout va bien, orange sinon.
 pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
-    let (bg, fg, glyph) = if ok { (GREEN, GREEN_TEXT, Icon::Check) } else { (ORANGE, ORANGE_TEXT, Icon::Alert) };
+    notice_state(if ok { State::Ok } else { State::Warn }, text)
+}
+
+pub fn notice_state(state: State, text: impl Into<SharedString>) -> Div {
+    let (bg, fg) = state.colours();
+    let glyph = match state {
+        State::Ok => Icon::Check,
+        State::Warn | State::Error => Icon::Alert,
+        _ => Icon::Sparkles,
+    };
     div()
         .flex()
-        .items_center()
+        .items_start()
         .gap(px(9.))
         .px(px(14.))
         .py(px(9.))
@@ -677,7 +831,7 @@ pub fn notice(ok: bool, text: impl Into<SharedString>) -> Div {
         .bg(alpha(bg, 0.12))
         .text_color(rgb(fg))
         .text_size(px(13.))
-        .child(icon(glyph, 16., rgb(fg)).flex_none())
+        .child(div().flex_none().mt(px(2.)).child(icon(glyph, 16., rgb(fg))))
         // un message long passe à la ligne au lieu de sortir de la carte
         .child(div().flex_1().min_w(px(0.)).line_height(px(19.)).child(text.into()))
 }
@@ -947,15 +1101,7 @@ pub fn menu_item(id: impl Into<ElementId>, glyph: Option<Icon>, text: impl Into<
 
 /// Carte de réglages avec son en-tête (pastille, titre, mention à droite).
 pub fn section(glyph: Icon, colour: u32, title_text: impl Into<SharedString>, aside: Option<SharedString>) -> Div {
-    card().child(
-        div()
-            .flex()
-            .items_center()
-            .gap(px(9.))
-            .child(icon(glyph, 17., rgb(colour)))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(title_text.into()))
-            .when_some(aside, |d, a| d.child(div().flex_1().flex().justify_end().text_size(px(12.5)).text_color(rgb(TEXT3)).child(a))),
-    )
+    card().child(card_title(Some((glyph, colour)), title_text, aside))
 }
 
 /// Ligne d'une liste groupée : icône, titre, sous-titre, contrôle à droite. Filet au-dessus sauf pour la première.
@@ -974,8 +1120,8 @@ pub fn list_row(glyph: Option<(Icon, u32)>, title_text: impl Into<SharedString>,
                 .flex_col()
                 .flex_1()
                 .min_w(px(0.))
-                .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(title_text.into()))
-                .when_some(sub, |d, s| d.child(div().text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s))),
+                .child(title(title_text, BODY_TEXT))
+                .when_some(sub, |d, s| d.child(caption(s).text_color(rgb(TEXT2)))),
         )
         .child(div().flex_none().flex().items_center().gap(px(8.)).child(trailing))
 }
@@ -986,12 +1132,21 @@ pub fn tabs() -> Div {
     div().flex().flex_wrap().w_full().gap(px(28.))
 }
 pub fn tab(id: impl Into<ElementId>, glyph: Icon, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
-    choice(id, Some(glyph), text, selected).h(px(40.)).text_size(px(15.)).mb(px(-1.))
+    choice(id, Some(glyph), text, selected).h(px(42.)).text_size(px(BODY_TEXT)).mb(px(-1.))
+}
+
+pub(crate) fn motion_tab(id: impl Into<ElementId>, glyph: Icon, text: impl Into<SharedString>, selected: bool) -> Stateful<Div> {
+    let id = id.into();
+    let key = key_of(&id);
+    let colour = if selected { rgb(ACCENT) } else { lerp(rgb(TEXT2), rgb(TEXT), hover_t(&key)) };
+    hoverable(div().id(id).flex().flex_none().items_center().gap(px(6.)).h(px(42.))
+        .cursor(CursorStyle::PointingHand).text_size(px(BODY_TEXT)).text_color(colour)
+        .font_weight(FontWeight::SEMIBOLD).child(icon(glyph, 15., colour)).child(text.into()), key)
 }
 
 /// Petit titre d'un groupe de réglages dans un bloc (« Noise gate », « Compresseur »…).
 pub fn subhead(text: impl Into<SharedString>) -> Div {
-    div().pt(px(6.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT3)).child(text.into())
+    eyebrow(text).pt(px(6.))
 }
 
 /// Fait mesuré, en deux lignes : valeur en gros, libellé dessous (empreinte vocale, diagnostic).
@@ -1000,8 +1155,8 @@ pub fn fact(value: impl Into<SharedString>, label: impl Into<SharedString>) -> D
         .flex()
         .flex_col()
         .gap(px(2.))
-        .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(TEXT)).child(value.into()))
-        .child(div().text_size(px(12.)).text_color(rgb(TEXT3)).child(label.into()))
+        .child(title(value, SECTION_TEXT).text_color(rgb(TEXT)))
+        .child(caption(label))
 }
 
 pub fn segmented() -> Div {
@@ -1033,25 +1188,24 @@ pub fn tile(id: impl Into<ElementId>, glyph: Option<(Icon, u32)>, title_text: im
                 .items_center()
                 .gap(px(8.))
                 .when_some(glyph, |d, (i, c)| d.child(icon(i, 16., rgb(if selected { ACCENT } else { c }))))
-                .child(div().flex_1().min_w(px(0.)).truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(title_colour).child(title_text.into()))
+                .child(title(title_text, BODY_TEXT).flex_1().min_w(px(0.)).truncate().text_color(title_colour))
                 .when_some(badge_text, |d, (b, c)| d.child(badge(b, c)))
                 .when(selected, |d| d.child(icon(Icon::Check, 15., rgb(ACCENT)))),
         )
-        .when_some(desc, |d, s| d.child(div().mt(px(4.)).text_size(px(12.)).line_height(px(17.)).text_color(rgb(TEXT2)).child(s)));
+        .when_some(desc, |d, s| d.child(caption(s).mt(px(4.)).text_color(rgb(TEXT2))));
     hoverable(el, key)
 }
 
 /// Répartit les cartes sur le moins de rangées possible, puis équilibre leur taille.
-fn device_columns(viewport_width: f32, card_count: usize) -> u16 {
-    // Barre latérale et marges : 320 px ; au moins 280 px par carte.
-    let width = viewport_width - 320.;
-    let available_columns = ((width + 18.) / 298.).floor().clamp(1., 4.) as usize;
+fn device_columns(width: f32, card_count: usize) -> u16 {
+    // La largeur est celle du contenu, une fois la navigation et les marges retirées.
+    let available_columns = columns_that_fit(width, 280., 16., 4);
     let rows = card_count.div_ceil(available_columns).max(1);
     card_count.div_ceil(rows).max(1) as u16
 }
 
 pub fn device_grid(items: Vec<AnyElement>, window: &gpui::Window) -> Div {
-    let columns = device_columns(window.viewport_size().width.into(), items.len());
+    let columns = device_columns(crate::desktop::page_width(window), items.len());
     div().grid().grid_cols(columns).gap(px(16.)).children(items)
 }
 
@@ -1079,24 +1233,6 @@ pub fn badge(text: impl Into<SharedString>, colour: u32) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
         .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(colour)))
         .child(text.into())
-}
-
-/// Valeur réglable par pas : bouton −, valeur centrée de largeur fixe, bouton +.
-pub fn stepper(less: Stateful<Div>, value: impl Into<SharedString>, more: Stateful<Div>) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(2.))
-        .p(px(3.))
-        .rounded_full()
-        .bg(alpha(0x767680, 0.1))
-        .child(less)
-        .child(div().w(px(70.)).flex().justify_center().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(value.into()))
-        .child(more)
-}
-pub fn step_button(id: impl Into<ElementId>, glyph: Icon) -> Stateful<Div> {
-    round(id, glyph, 28., rgb(PAPER), rgb(TEXT)).shadow(vec![shadow(1., 2., 0.08)])
 }
 
 /// Case d'une matrice (routage) : cercle plein coché, ou anneau vide.
@@ -1186,15 +1322,22 @@ pub fn stack_cards(items: impl IntoIterator<Item = AnyElement>) -> Div {
     }))
 }
 
+const SETTINGS_GAP: f32 = 16.;
+const SETTINGS_TWO_COLUMNS_WIDTH: f32 = 2. * 420. + SETTINGS_GAP;
+
+pub fn settings_column_width(width: f32) -> f32 {
+    if width < SETTINGS_TWO_COLUMNS_WIDTH { width } else { (width - SETTINGS_GAP) / 2. }
+}
+
 /// Les deux groupes de réglages s'empilent quand une carte serait trop étroite.
 pub fn settings_columns(width: f32, left: Vec<AnyElement>, right: Vec<AnyElement>) -> Div {
-    if columns_that_fit(width, 420., 16., 2) == 1 {
+    if width < SETTINGS_TWO_COLUMNS_WIDTH {
         return stack_cards(left.into_iter().chain(right));
     }
     div()
         .flex()
         .items_start()
-        .gap(px(16.))
+        .gap(px(SETTINGS_GAP))
         .child(stack_cards(left).flex_1().min_w(px(0.)))
         .child(stack_cards(right).flex_1().min_w(px(0.)))
 }
@@ -1204,12 +1347,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn les_transitions_se_renversent_sans_saut_et_s_arretent() {
+        let start = Instant::now();
+        let duration = Duration::from_millis(200);
+        let mut fold = Transition::new(true, start);
+        assert_eq!(fold.update(true, start, duration), (1., false));
+        assert_eq!(fold.update(false, start, duration), (1., true));
+
+        let halfway = start + duration / 2;
+        assert_eq!(fold.update(false, halfway, duration), (0.5, true));
+        assert_eq!(fold.update(true, halfway, duration), (0.5, true));
+        assert_eq!(fold.update(true, halfway + duration / 2, duration), (0.75, true));
+        assert_eq!(fold.update(true, halfway + duration, duration), (1., false));
+
+        let close = halfway + duration;
+        assert_eq!(fold.update(false, close, duration), (1., true));
+        assert_eq!(fold.update(false, close + duration, duration), (0., false));
+    }
+
+    #[test]
+    fn le_panneau_mesure_et_fond_dans_les_deux_sens() {
+        let now = Instant::now();
+        let mut panel = Disclosure::default();
+        assert_eq!(panel.frame(now), (0., false));
+        panel.set(true, now);
+        let halfway = now + DISCLOSURE_TIME / 2;
+        assert_eq!(panel.frame(halfway), (0.5, true));
+        panel.set(false, halfway);
+        assert_eq!(panel.frame(halfway), (0.5, true));
+        assert_eq!(panel.frame(halfway + DISCLOSURE_TIME / 2), (0.25, true));
+        assert_eq!(panel.frame(halfway + DISCLOSURE_TIME), (0., false));
+    }
+
+    #[test]
     fn grilles_equilibrees_selon_la_largeur_et_le_nombre_de_cartes() {
-        assert_eq!(device_columns(1600., 5), 3);
-        assert_eq!(device_columns(1050., 5), 2);
-        assert_eq!(device_columns(1600., 3), 3);
-        assert_eq!(device_columns(1600., 2), 2);
-        assert_eq!(device_columns(1600., 0), 1);
+        assert_eq!(device_columns(1240., 5), 3);
+        assert_eq!(device_columns(730., 5), 2);
+        assert_eq!(device_columns(575., 3), 1);
+        assert_eq!(device_columns(576., 3), 2);
+        assert_eq!(device_columns(1240., 3), 3);
+        assert_eq!(device_columns(1240., 2), 2);
+        assert_eq!(device_columns(1240., 0), 1);
     }
 
     #[test]

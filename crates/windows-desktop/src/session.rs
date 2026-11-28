@@ -1,6 +1,31 @@
 //! Session Windows de l'appli : une seule instance, démarrage avec Windows, relance du service.
 use std::time::Duration;
 
+/// Dimensionne la surface de vérification sans l'afficher ni l'activer.
+#[cfg(all(windows, debug_assertions))]
+pub fn resize_hidden_test_window(handle: isize, width: i32, height: i32) -> Result<(), String> {
+    use windows::Win32::{
+        Foundation::{HWND, RECT},
+        UI::WindowsAndMessaging::{
+            GetClientRect, GetWindowRect, IsWindowVisible, SetWindowPos,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+        },
+    };
+    let hwnd = HWND(handle as *mut _);
+    let (mut client, mut frame) = (RECT::default(), RECT::default());
+    unsafe {
+        if IsWindowVisible(hwnd).as_bool() {
+            return Err("Le redimensionnement de test exige une fenêtre masquée.".into());
+        }
+        GetClientRect(hwnd, &mut client).map_err(|e| e.to_string())?;
+        GetWindowRect(hwnd, &mut frame).map_err(|e| e.to_string())?;
+        let w = width + (frame.right - frame.left) - (client.right - client.left);
+        let h = height + (frame.bottom - frame.top) - (client.bottom - client.top);
+        SetWindowPos(hwnd, None, 0, 0, w, h, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER)
+            .map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 

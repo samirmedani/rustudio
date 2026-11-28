@@ -1,5 +1,32 @@
 # Nouveautés
 
+## 6.12.0 (28 novembre 2026)
+
+Rustudio 6.12.0 permet de retrouver tes réglages selon l’application ouverte et rend les pages de tes appareils plus faciles à utiliser.
+
+**Nouveau**
+
+- **Profils par application**. Dans « Profils », associe les filtres du micro, l’égaliseur du casque et l’effet lumineux du MK770 à une application Windows. Rustudio applique ces réglages quand elle passe au premier plan.
+- **Profils caméra**. Choisis la résolution de l’aperçu et enregistre les réglages d’image et de cadrage depuis la page de ta C920. Associe tes réglages d’image à une application, comme OBS ou Discord.
+
+**Amélioré**
+
+- **Navigation**. Les pages et les onglets apparaissent en fondu et les sous-menus se replient progressivement. Les pages utilisent des marges communes qui s’adaptent à la fenêtre. Micro, Casque et Caméra ont leurs propres accès directs.
+- **Mon micro**. Retrouve l’entrée, les filtres, les préréglages et l’écoute dans quatre onglets. Chaque filtre a sa ligne. La page indique le préréglage actif ou en cours d’envoi.
+- **Écoute et analyse du micro**. Compare la même prise brute et filtrée à volume égal. Les préréglages adaptés à ta voix limitent la remontée du souffle, et le bilan signale plus clairement la saturation et le ronflement.
+- **Retour casque GoXLR**. Il démarre à 5 %, se règle au curseur et continue quand tu passes de « Mon micro » au Mixeur. Rustudio le réduit ou le coupe si un sifflement fort persiste.
+- **Éclairage du MK770**. Peins plusieurs touches d’un geste, prélève une couleur, crée un dégradé et compare avec le motif enregistré. L’aperçu suit les curseurs de luminosité et de vitesse.
+- **Macros du MK770**. L’éditeur, les macros enregistrées et les affectations du clavier ont chacun leur onglet.
+- **Diagnostic GoXLR Mini**. Le verdict et les points à vérifier sont visibles en premier. Les mesures et le rapport restent accessibles dans « Détails et outils ».
+- **Interface**. Le thème sombre est plus foncé, les curseurs suivent le pointeur et l’état du micro s’affiche brièvement en bas à droite.
+
+**Corrigé**
+
+- **Préréglages GoXLR en direct**. Le dernier choix est pris en compte même après plusieurs clics rapides. Choisir un préréglage quitte la comparaison « Voix brute ».
+- **Antibruit sur le bon micro**. La suppression du bruit suit l’entrée sélectionnée. La confirmation affiche le nom du micro avant d’appliquer le changement.
+- **Logitech C920**. L’aperçu démarre sur demande. Rustudio écarte le mode 2304 × 1536 qui peut bloquer la caméra, et la sélection du voyant clignotant envoie la commande attendue.
+- **Mixeur**. La mention « Son de Windows et appels » tient sous le nom de la voie. Le curseur garde sa place.
+
 ## 6.11.0 (28 novembre 2026)
 
 Rustudio 6.11.0 te permet de régler la dynamique de ton micro Windows dans la page **Mon micro**.

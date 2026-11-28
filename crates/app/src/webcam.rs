@@ -1,6 +1,5 @@
 //! Page « Ma webcam » : espace studio unifié pour la Logitech C920 avec aperçu vidéo en temps réel,
-//! préréglages en un clic, réglages organisés par onglets (Image & Couleur, Optique & Cadrage, Appareil & LED)
-//! et maintien anti-réinitialisation.
+//! préréglages et profils, réglages d’image et de cadrage, voyant et maintien anti-réinitialisation.
 use crate::{
     backend::Client,
     mixer::Mixer,
@@ -8,7 +7,9 @@ use crate::{
 };
 use gpui::{AnyElement, Context, Div, FontWeight, IntoElement, ObjectFit, RenderImage, SharedString, Window, div, img, prelude::*, px};
 use image::{Frame as ImgFrame, ImageBuffer, Rgba};
-use rustudio_windows_desktop::webcam_preview::{Status as PreviewStatus, WebcamPreview, flip_horizontal_bgra};
+use rustudio_windows_desktop::webcam_preview::{
+    Resolution, Status as PreviewStatus, WebcamPreview, flip_horizontal_bgra, supports_preview_resolution,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use std::time::Duration;
 pub const MODULE: &str = "/api/modules/logitech-c920";
 /// Rythme de rafraîchissement de l'aperçu vidéo (~30 ips).
 pub(crate) const PREVIEW_FRAME: Duration = Duration::from_millis(33);
+const LED_BLINK: &str = "blink";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 pub struct ControlRange {
@@ -143,7 +145,7 @@ pub enum WebcamTab {
     #[default]
     Image,
     Optics,
-    Device,
+    Profiles,
 }
 
 pub struct WebcamPage {
@@ -154,8 +156,9 @@ pub struct WebcamPage {
     pending_cmd: Option<(&'static str, Value, &'static str)>,
     notice: Option<(bool, String)>,
     pub(crate) tab: WebcamTab,
-    /// Aperçu vidéo activé (vrai par défaut : se coupe automatiquement dès qu'on quitte la page).
+    /// Aperçu explicitement activé, remis en pause en quittant la page.
     pub(crate) preview_on: bool,
+    resolution: Option<Resolution>,
     /// Effet miroir local de l'aperçu (pratique pour se cadrer, ne change pas OBS).
     pub(crate) mirror: bool,
     preview: WebcamPreview,
@@ -175,7 +178,8 @@ impl Default for WebcamPage {
             pending_cmd: None,
             notice: None,
             tab: WebcamTab::Image,
-            preview_on: true,
+            preview_on: false,
+            resolution: None,
             mirror: true,
             preview: WebcamPreview::new(),
             preview_status: PreviewStatus::Idle,
@@ -204,10 +208,11 @@ struct DemoSig {
     focus: i32,
     backlight: bool,
     mirror: bool,
+    resolution: Option<Resolution>,
 }
 
 impl DemoSig {
-    fn of(s: &Settings, mirror: bool) -> Self {
+    fn of(s: &Settings, mirror: bool, resolution: Option<Resolution>) -> Self {
         Self {
             brightness: s.brightness,
             contrast: s.contrast,
@@ -224,6 +229,7 @@ impl DemoSig {
             focus: s.focus,
             backlight: s.backlight_comp,
             mirror,
+            resolution,
         }
     }
 }
@@ -254,6 +260,20 @@ impl WebcamPage {
     pub(crate) fn preview_running(&self) -> bool {
         self.preview.is_active()
     }
+
+    fn preview_resolution(&self) -> Option<Resolution> {
+        self.resolution.filter(|&mode| supports_preview_resolution(mode))
+    }
+}
+
+fn preview_resolutions(formats: &[VideoFormat]) -> Vec<Option<Resolution>> {
+    let mut resolutions: Vec<_> = formats.iter()
+        .map(|f| (f.width, f.height))
+        .filter(|&mode| supports_preview_resolution(mode))
+        .collect();
+    resolutions.sort_unstable_by_key(|&(w, h)| std::cmp::Reverse((u64::from(w) * u64::from(h), w, h)));
+    resolutions.dedup();
+    std::iter::once(None).chain(resolutions.into_iter().map(Some)).collect()
 }
 
 fn preset_label(id: Option<&str>) -> &'static str {
@@ -325,7 +345,7 @@ fn safe_range(r: ControlRange) -> ((f64, f64), f64) {
     ((min, max), step)
 }
 
-fn make_render_image(width: u32, height: u32, bgra: Vec<u8>) -> Option<Arc<RenderImage>> {
+pub(crate) fn make_render_image(width: u32, height: u32, bgra: Vec<u8>) -> Option<Arc<RenderImage>> {
     let buf = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, bgra)?;
     Some(Arc::new(RenderImage::new(vec![ImgFrame::new(buf)])))
 }
@@ -333,7 +353,7 @@ fn make_render_image(width: u32, height: u32, bgra: Vec<u8>) -> Option<Arc<Rende
 /// Synthétise une scène 16:9 de studio en temps réel pour le mode démonstration :
 /// réagit visiblement à la luminosité, au contraste, à la saturation, à la balance (Kelvin),
 /// à l'exposition, au zoom, au panoramique, à l'inclinaison et à la mise au point.
-fn render_demo_frame(s: &Settings, mirror: bool) -> Option<Arc<RenderImage>> {
+fn render_demo_frame(s: &Settings, mirror: bool, resolution: Option<Resolution>) -> Option<Arc<RenderImage>> {
     const W: usize = 480;
     const H: usize = 270;
     let mut bgra = vec![0u8; W * H * 4];
@@ -459,6 +479,11 @@ fn render_demo_frame(s: &Settings, mirror: bool) -> Option<Arc<RenderImage>> {
             bgra[idx + 3] = 255;
         }
     }
+    if let Some((w, h)) = resolution {
+        let buf = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(W as u32, H as u32, bgra)?;
+        let demo = image::imageops::resize(&buf, w, h, image::imageops::FilterType::Triangle);
+        return make_render_image(w, h, demo.into_raw());
+    }
     make_render_image(W as u32, H as u32, bgra)
 }
 
@@ -466,8 +491,10 @@ impl Mixer {
     /// Active ou libère la capture vidéo live de la C920 selon la visibilité de la page.
     pub(crate) fn webcam_visibility(&mut self, visible: bool) {
         if visible && self.webcam.preview_on && self.client.is_live() {
-            self.webcam.preview.start();
+            let resolution = self.webcam.preview_resolution();
+            self.webcam.preview.start(resolution);
         } else {
+            if !visible { self.webcam.preview_on = false; }
             self.webcam.preview.stop();
         }
     }
@@ -475,7 +502,7 @@ impl Mixer {
     /// Synchronise la dernière image vidéo (live Windows ou scène simulée démo) et libère proprement
     /// la texture GPU précédente pour garder une mémoire vidéo constante à 30 ips.
     pub(crate) fn sync_webcam_preview(&mut self, window: &mut Window) {
-        if !self.page.is_webcam() {
+        if !self.page.has_webcam_preview() {
             if let Some(prev) = self.webcam.rendered_image.take() {
                 let _ = window.drop_image(prev);
                 self.webcam.rendered_seq = 0;
@@ -497,15 +524,17 @@ impl Mixer {
         if !self.client.is_live() {
             // Mode démonstration : aperçu synthétique réactif en temps réel à chaque curseur.
             if let Some(s) = self.webcam.live().or(self.webcam.last.as_ref()).cloned() {
-                let sig = DemoSig::of(&s, self.webcam.mirror);
+                let resolution = self.webcam.preview_resolution();
+                let sig = DemoSig::of(&s, self.webcam.mirror, resolution);
                 if self.webcam.rendered_demo_sig != Some(sig) {
-                    let next = render_demo_frame(&s, self.webcam.mirror);
+                    let next = render_demo_frame(&s, self.webcam.mirror, resolution);
                     if let Some(prev) = self.webcam.rendered_image.replace_if(next) {
                         let _ = window.drop_image(prev);
                     }
                     self.webcam.rendered_demo_sig = Some(sig);
                 }
-                self.webcam.preview_status = PreviewStatus::Live { width: 480, height: 270, fps: 30 };
+                let (width, height) = resolution.unwrap_or((480, 270));
+                self.webcam.preview_status = PreviewStatus::Live { width, height, fps: 30 };
             }
             return;
         }
@@ -539,14 +568,15 @@ impl Mixer {
 
     fn toggle_webcam_preview(&mut self, cx: &mut Context<Self>) {
         self.webcam.preview_on = !self.webcam.preview_on;
-        self.webcam_visibility(self.page.is_webcam());
+        self.webcam_visibility(self.page.has_webcam_preview());
         cx.notify();
     }
 
     fn retry_webcam_preview(&mut self, cx: &mut Context<Self>) {
         self.webcam.preview_on = true;
         if self.client.is_live() {
-            self.webcam.preview.restart();
+            let resolution = self.webcam.preview_resolution();
+            self.webcam.preview.restart(resolution);
         }
         cx.notify();
     }
@@ -630,7 +660,7 @@ impl Mixer {
         .detach();
     }
 
-    /// En-tête de la page webcam : état du dernier envoi, réinitialisation usine et actualisation.
+    /// En-tête de la page webcam : état du dernier envoi et actualisation.
     pub(crate) fn webcam_actions(&self, cx: &mut Context<Self>) -> Div {
         let w = &self.webcam;
         let (colour, text) = if w.busy {
@@ -642,21 +672,11 @@ impl Mixer {
                 None => (ui::TEXT3, None),
             }
         };
-        let editable = w.live().is_some();
         div()
             .flex()
             .items_center()
             .gap(px(10.))
             .child(div().max_w(px(280.)).truncate().text_size(px(13.)).text_color(rgb(colour)).children(text))
-            .when(editable, |d| {
-                d.child(
-                    ui::pill("c920-reset", Some(Icon::History), "Défaut usine", Tone::Plain)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.param_held.clear();
-                            this.webcam_send("reset", json!({}), "Réglages d’usine restaurés", cx);
-                        })),
-                )
-            })
             .child(
                 ui::pill("c920-refresh", Some(Icon::Refresh), "Actualiser", Tone::Plain)
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -680,36 +700,19 @@ impl Mixer {
         commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
-        let value = self.param_value(&format!("param-{key}"), actual);
-        let fraction = ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
-        let hover = ui::hover_t(&format!("param-{key}"));
-        div()
-            .w_full()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_size(px(13.)).text_color(rgb(ui::TEXT)).child(label.into()))
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format(value))),
-            )
-            .child(
-                self.param_area_with(key, range, step, false, enabled, true, commit, cx)
-                    .mt(px(4.))
-                    .h(px(22.))
-                    .w_full()
-                    .child(ui::hslider(fraction, rgb(ui::ACCENT), hover)),
-            )
+        self.slider_row_with(key, label, actual, range, step, format, enabled, true, commit, cx)
     }
 
     /// Panneau aperçu vidéo en temps réel (toujours visible pendant qu'on ajuste les réglages).
     fn webcam_preview_card(&self, s: &Settings, preview_h: f32, stale: bool, cx: &mut Context<Self>) -> Div {
         let w = &self.webcam;
         let demo = !self.client.is_live();
+        let resolution = w.preview_resolution();
         let (badge_colour, badge_text) = if !w.preview_on {
             (ui::TEXT3, "Aperçu en pause".to_owned())
         } else if demo {
-            (ui::ACCENT, "Aperçu simulé · en direct".to_owned())
+            let (w, h) = resolution.unwrap_or((480, 270));
+            (ui::ACCENT, format!("Aperçu simulé · {w} × {h}"))
         } else {
             match &w.preview_status {
                 PreviewStatus::Live { width, height, fps } => (ui::GREEN, format!("En direct · {width}×{height} · {fps} ips")),
@@ -739,14 +742,14 @@ impl Mixer {
                 img(frame_img.clone())
                     .w_full()
                     .h_full()
-                    .object_fit(ObjectFit::Cover),
+                    .object_fit(ObjectFit::Contain),
             );
         } else {
             let (icon_c, title, msg, can_retry) = if !w.preview_on {
                 (
                     ui::TEXT3,
                     "Aperçu vidéo en pause",
-                    "La caméra est libre pour OBS ou Discord. Clique sur « Reprendre » pour voir tes réglages en direct.",
+                    "Clique sur « Afficher l’aperçu » pour voir tes réglages en direct.",
                     false,
                 )
             } else {
@@ -804,6 +807,21 @@ impl Mixer {
             "Libre".into()
         };
 
+        let formats = preview_resolutions(&s.device.formats);
+        let label = |r: Option<Resolution>| match r {
+            Some((w, h)) => format!("{w} × {h}"),
+            None => "Automatique".into(),
+        };
+        let options = formats.iter().map(|&mode| (label(mode), mode == resolution)).collect();
+        let picker = self.dropdown("c920-preview-resolution", label(resolution), options, !stale, move |this, i, cx| {
+            if this.webcam.resolution == formats[i] { return; }
+            this.webcam.resolution = formats[i];
+            if this.webcam.preview_on {
+                this.webcam.rendered_seq = 0;
+                this.retry_webcam_preview(cx);
+            }
+            cx.notify();
+        }, cx);
         let controls_bar = div()
             .flex()
             .flex_wrap()
@@ -854,6 +872,7 @@ impl Mixer {
             .gap(px(12.))
             .child(viewport)
             .child(controls_bar)
+            .child(div().flex().items_center().gap(px(10.)).child(ui::caption("Résolution de l’aperçu")).child(div().w(px(180.)).child(picker)))
             .child(telemetry)
     }
 
@@ -1152,12 +1171,12 @@ impl Mixer {
         div().flex().flex_col().gap(px(16.)).child(exposure).child(focus).child(framing)
     }
 
-    /// Onglet 3 : Appareil & LED (LED bleue XU, fiche technique C920, réinitialisation usine).
+    /// Voyant, identité de la C920 et réinitialisation.
     fn webcam_device_tab(&self, s: &Settings, enabled: bool, cx: &mut Context<Self>) -> Div {
         let mut col = div().flex().flex_col().gap(px(16.));
         if let Some(current) = s.led_mode.as_deref() {
             let mut led = ui::segmented();
-            for (val, label) in [("auto", "Automatique"), ("on", "Allumée"), ("off", "Éteinte"), ("blinking", "Clignotante")] {
+            for (val, label) in [("auto", "Automatique"), ("on", "Allumée"), ("off", "Éteinte"), (LED_BLINK, "Clignotante")] {
                 let selected = current == val;
                 led = led.child(
                     ui::seg(SharedString::from(format!("c920-led-{val}")), label, selected).when(enabled && !selected, |d| {
@@ -1168,9 +1187,14 @@ impl Mixer {
                 );
             }
             col = col.child(
-                ui::section(Icon::Sparkles, ui::ACCENT, "Voyant LED bleu (contrôle Logitech XU)", Some("Spécifique C920".into()))
+                ui::section(Icon::Sparkles, ui::ACCENT, "Voyant de la caméra", None)
                     .child(led)
-                    .child(ui::caption("Contrôle matériel de la LED autour de la lentille (utile si la lumière bleue se reflète dans tes lunettes).")),
+                    .child(ui::caption(match current {
+                        "auto" => "Le voyant suit l’utilisation de la caméra.",
+                        "on" => "Le voyant reste allumé.",
+                        "off" => "Le voyant reste éteint.",
+                        _ => "Le voyant clignote.",
+                    })),
             );
         }
 
@@ -1238,7 +1262,7 @@ impl Mixer {
         let mut content = div().flex().flex_col().gap(px(16.));
         let state = w.status.as_ref().map(|v| v.device.status.as_str());
         let waiting = match state {
-            Some("disconnected") => Some(("Logitech C920 introuvable", "Branche ta webcam C920 en USB. Ses réglages et son aperçu apparaissent tout seuls.")),
+            Some("disconnected") => Some(("Logitech C920 introuvable", "Branche ta webcam C920 en USB pour retrouver ses réglages.")),
             Some("error" | "blocked") => Some(("Lecture de la C920 impossible", "Rustudio réessaie tout seul dès que le pilote répond.")),
             Some("ready") => None,
             _ => Some(("En attente de la C920…", "Les réglages apparaissent après la première lecture.")),
@@ -1260,45 +1284,56 @@ impl Mixer {
         };
         let stale = w.live().is_none();
         let enabled = !stale;
+        if self.page == crate::desktop::Page::WebcamInfo {
+            return content.child(ui::settings_columns(
+                width,
+                vec![self.webcam_device_tab(s, enabled, cx).into_any_element()],
+                vec![self.webcam_guard_card(s, enabled, cx).into_any_element()],
+            ));
+        }
 
         let tab = w.tab;
-        let mut tabs = ui::tabs();
-        for (target, glyph, label) in [
-            (WebcamTab::Image, Icon::Sun, "Image et couleur"),
-            (WebcamTab::Optics, Icon::Sliders, "Optique et cadrage"),
-            (WebcamTab::Device, Icon::Settings, "Appareil et LED"),
-        ] {
-            tabs = tabs.child(
-                ui::tab(SharedString::from(format!("c920-tab-{label}")), glyph, label, tab == target)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.webcam.tab = target;
-                        cx.notify();
-                    })),
+        let preferred = match self.motion.target() {
+            Some(crate::motion::Destination::Camera(tab)) => tab,
+            _ => tab,
+        };
+        let mut tabs = Vec::with_capacity(3);
+        let mut selected_tab = 0;
+        for (index, (target, glyph, label)) in [
+            (WebcamTab::Image, Icon::Sun, "Image"),
+            (WebcamTab::Optics, Icon::Sliders, "Cadrage"),
+            (WebcamTab::Profiles, Icon::Bookmark, "Profils"),
+        ].into_iter().enumerate() {
+            if target == preferred { selected_tab = index; }
+            tabs.push(
+                ui::motion_tab(SharedString::from(format!("c920-tab-{label}")), glyph, label, preferred == target)
+                    .on_click(cx.listener(move |this, _, _, cx| this.navigate_to(crate::motion::Destination::Camera(target), cx)))
+                    .into_any_element(),
             );
         }
+        let tabs = self.motion.tabs(crate::motion::Surface::Camera, selected_tab, tabs);
         let tab_body = match tab {
             WebcamTab::Image => self.webcam_image_tab(s, enabled, cx),
             WebcamTab::Optics => self.webcam_optics_tab(s, enabled, cx),
-            WebcamTab::Device => self.webcam_device_tab(s, enabled, cx),
+            WebcamTab::Profiles => self.camera_profiles_card(window, enabled && !w.busy, cx),
         };
 
         let left_w = if width >= 920. { (width * 0.46).clamp(400., 540.) } else { width.min(640.) };
-        let preview_h = (left_w * 9. / 16.).round().clamp(210., 320.);
+        let preview_h = if w.preview_on { (left_w * 9. / 16.).round().clamp(210., 320.) } else { 138. };
 
         let left_col = div()
             .flex()
             .flex_col()
             .gap(px(16.))
             .child(self.webcam_preview_card(s, preview_h, stale, cx))
-            .child(self.webcam_presets_card(s, enabled, cx))
-            .child(self.webcam_guard_card(s, enabled, cx));
+            .child(self.webcam_presets_card(s, enabled, cx));
 
         let right_col = div()
             .flex()
             .flex_col()
             .gap(px(10.))
             .child(tabs)
-            .child(tab_body);
+            .child(tab_body.opacity(self.surface_opacity(crate::motion::Surface::Camera, window)));
 
         if width >= 920. {
             content.child(
@@ -1370,6 +1405,16 @@ pub fn verify(client: &Client) -> Result<(), String> {
     let s = client.webcam_command("settings", &json!({"brightness": 144, "zoom": 135, "focus_auto": false, "focus": 40, "led_mode": "off"}))?;
     if s.brightness != 144 || s.zoom != 135 || s.focus_auto || s.focus != 40 || s.led_mode.as_deref() != Some("off") {
         return Err("Réglages manuels C920 non relus.".into());
+    }
+    let s = client.webcam_command("settings", &json!({"led_mode": LED_BLINK}))?;
+    if s.led_mode.as_deref() != Some(LED_BLINK) {
+        return Err("Le mode clignotant de la C920 n’a pas été relu.".into());
+    }
+    let profile = crate::camera_profiles::profile_settings(&s);
+    client.webcam_command("settings", &json!({"brightness": 100}))?;
+    let restored = client.webcam_command("settings", &profile)?;
+    if restored.brightness != s.brightness || restored.zoom != s.zoom || restored.led_mode != s.led_mode {
+        return Err("Le profil Caméra n’a pas restauré ses réglages.".into());
     }
     let s = client.webcam_command("lock", &json!({"enabled": true}))?;
     if !s.locked {
@@ -1451,16 +1496,46 @@ mod tests {
     #[test]
     fn apercu_demo_reagit_aux_reglages_sans_tiret_cadratin() {
         let mut s = sample_settings();
-        let img_a = render_demo_frame(&s, false).expect("image demo");
+        let img_a = render_demo_frame(&s, false, None).expect("image demo");
         assert_eq!(img_a.size(0).width.0, 480);
         assert_eq!(img_a.size(0).height.0, 270);
         s.brightness = 210;
         s.zoom = 180;
-        let img_b = render_demo_frame(&s, false).expect("image modifiee");
+        let img_b = render_demo_frame(&s, false, None).expect("image modifiee");
         assert_ne!(img_a.as_bytes(0), img_b.as_bytes(0), "l'apercu doit reagir en temps reel aux curseurs");
         for p in default_presets() {
             assert!(!p.label.contains('\u{2014}') && !p.summary.contains('\u{2014}'));
             assert!(!p.label.contains('\u{2013}') && !p.summary.contains('\u{2013}'));
         }
+    }
+
+    #[test]
+    fn apercu_de_demonstration_sur_demande_et_a_la_resolution_choisie() {
+        assert!(!WebcamPage::default().preview_on);
+        let s = sample_settings();
+        let image = render_demo_frame(&s, true, Some((800, 448))).unwrap();
+        assert_eq!((image.size(0).width.0, image.size(0).height.0), (800, 448));
+    }
+
+    #[test]
+    fn le_menu_c920_filtre_le_mode_instable_et_les_doublons() {
+        let format = |width, height, codec: &str| VideoFormat { width, height, codec: codec.into(), max_fps: 30 };
+        let formats = [
+            format(1280, 720, "MJPEG"),
+            format(2304, 1536, "YUY2"),
+            format(1920, 1080, "MJPEG"),
+            format(1920, 1080, "YUY2"),
+            format(160, 120, "YUY2"),
+        ];
+        assert_eq!(preview_resolutions(&formats), vec![None, Some((1920, 1080)), Some((1280, 720))]);
+    }
+
+    #[test]
+    fn une_ancienne_selection_instable_bascule_en_automatique() {
+        let page = WebcamPage { resolution: Some((2304, 1536)), ..Default::default() };
+        let resolution = page.preview_resolution();
+        assert_eq!(resolution, None);
+        let image = render_demo_frame(&sample_settings(), true, resolution).unwrap();
+        assert_eq!((image.size(0).width.0, image.size(0).height.0), (480, 270));
     }
 }

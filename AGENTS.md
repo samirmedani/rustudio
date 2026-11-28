@@ -21,6 +21,10 @@ pour ajouter un appareil.
 
 ## Développement
 
+- **Une seule fenêtre Rustudio dans la barre des tâches Windows, toutes versions confondues.**
+  La version stable, la version DEV et les aperçus comptent ensemble. Compile et teste sans ouvrir de fenêtre
+  de démonstration. Pour livrer un nouveau build, remplace la fenêtre en cours. Ferme ou masque les anciennes
+  fenêtres Rustudio avant d’afficher la nouvelle, puis vérifie qu’une seule apparaît dans la barre des tâches.
 - Rust stable, `cargo test` ; fausse GoXLR (`--simulate`) pour tout ce qui touche l'appareil.
 - `scripts/check.sh` avant une pull request ; `scripts/leakscan.py` doit passer.
 - Aucune donnée personnelle dans le dépôt (voir [CONTRIBUTING.md](CONTRIBUTING.md)).

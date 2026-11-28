@@ -1,5 +1,5 @@
 use crate::backend::{self, Channel, Client, Command, Event, Fader, Snapshot};
-use crate::desktop::{Confirm, Page};
+use crate::desktop::{Confirm, Page, Space};
 use crate::profiles::{Profile, Store};
 use crate::ui::{self, Icon, alpha, rgb};
 use gpui::{
@@ -25,12 +25,14 @@ const TRAVEL: f32 = 160.;
 const FADER_W: f32 = 68.;
 const FADER_R: f32 = 22.;
 const VOLUME_INTERVAL: Duration = Duration::from_millis(45);
+const SLIDER_SETTLE: Duration = Duration::from_millis(90);
+const PARAM_HOLD: Duration = Duration::from_millis(1800);
 
 struct Gesture {
     channel: String,
     bounds: Bounds<Pixels>,
     vertical: bool,
-    value: u8,
+    fraction: f32,
     sent_at: Option<Instant>,
 }
 
@@ -42,10 +44,16 @@ pub struct Mixer {
     /// Une mesure par seconde : processeur (%), mémoire (Mo), réponse du moteur (ms) ; NaN si absente.
     pub(crate) perf: std::collections::VecDeque<[f64; 3]>,
     pub(crate) page: Page,
+    pub(crate) motion: crate::motion::Motion,
+    pub(crate) application_profiles_tab: bool,
+    pub(crate) application_profiles: crate::app_profiles::ApplicationProfiles,
     pub(crate) mouse: crate::mouse::MousePage,
     pub(crate) keyboard: crate::keyboard::KeyboardPage,
+    pub(crate) camera_profiles: crate::camera_profiles::CameraProfiles,
     pub(crate) webcam: crate::webcam::WebcamPage,
     pub(crate) winmic: crate::winmic::WinMicPage,
+    pub(crate) mic_filters: crate::mic_filters::FilterPanels,
+    pub(crate) mic_tab: crate::mic_filters::MicTab,
     pub(crate) macros: crate::macros::Editor,
     pub(crate) mouse_focus: Vec<FocusHandle>,
     pub(crate) go: crate::goxlr::GoPage,
@@ -72,7 +80,7 @@ pub struct Mixer {
     pub(crate) notice: Option<String>,
     toast_key: String,
     pub(crate) param_drag: Option<ParamDrag>,
-    pub(crate) param_held: HashMap<String, (f64, Instant)>,
+    pub(crate) param_held: HashMap<String, HeldParameter>,
     pub(crate) history: Vec<Page>,
     pub(crate) nav_count: u64,
     /// Défilement de la page : la molette vise une position, chaque image s'en rapproche.
@@ -81,6 +89,7 @@ pub struct Mixer {
     scroll_tick: Instant,
     /// Appareils dont les pages sont repliées dans la barre latérale.
     pub(crate) collapsed: HashSet<String>,
+    pub(crate) device_folds: HashMap<Space, ui::Transition>,
     pub(crate) last_space: Option<crate::desktop::Space>,
     pub(crate) update: Option<Value>,
     /// recherche demandée à la main : roue dans la barre latérale jusqu'à la réponse
@@ -113,6 +122,7 @@ impl Mixer {
     ) -> Self {
         let (sender, events) = backend::start(client.clone(), None, native_osd);
         let (profiles, ignored) = store.list();
+        Self::watch_foreground_profiles(cx);
         cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -153,8 +163,9 @@ impl Mixer {
         }).detach();
         // Sortie Windows par défaut, signalée au moteur quand elle change : l'égaliseur du casque la couvre
         // toujours (sinon un style ne change rien à ce qu'on entend). Le moteur, en compte système, ne la voit pas.
-        let follow = client.clone();
-        let _ = std::thread::Builder::new().name("sortie-defaut".into()).spawn(move || {
+        if client.is_live() {
+            let follow = client.clone();
+            let _ = std::thread::Builder::new().name("sortie-defaut".into()).spawn(move || {
             let mut sent: Option<Option<String>> = None;
             let mut sent_mic: Option<Option<String>> = None;
             loop {
@@ -171,7 +182,8 @@ impl Mixer {
                 }
                 std::thread::sleep(Duration::from_secs(3));
             }
-        });
+            });
+        }
         if let Some(duration) = duration {
             let exec = cx.background_executor().clone();
             cx.spawn(async move |this, cx| {
@@ -192,7 +204,10 @@ impl Mixer {
             mouse: crate::mouse::MousePage::default(),
             keyboard: crate::keyboard::KeyboardPage::default(),
             webcam: crate::webcam::WebcamPage::default(),
+            camera_profiles: crate::camera_profiles::CameraProfiles::new(store.dir().join("camera.json"), cx.focus_handle()),
             winmic: crate::winmic::WinMicPage::default(),
+            mic_filters: Default::default(),
+            mic_tab: crate::mic_filters::MicTab::Input,
             macros: crate::macros::Editor::new(store.dir().join("macros"), cx),
             mouse_focus: (0..12).map(|_| cx.focus_handle()).collect(),
             go: crate::goxlr::GoPage::default(),
@@ -201,6 +216,9 @@ impl Mixer {
             library: crate::library::Library::default(),
             go_focus: (0..3).map(|_| cx.focus_handle()).collect(),
             page: initial.destination(),
+            motion: crate::motion::Motion::new(),
+            application_profiles_tab: false,
+            application_profiles: crate::app_profiles::ApplicationProfiles::new(store.dir().join("applications.json")),
             store,
             profiles,
             profile_name: String::new(),
@@ -231,6 +249,7 @@ impl Mixer {
             scroll_goal: None,
             scroll_tick: started,
             collapsed: HashSet::new(),
+            device_folds: HashMap::new(),
             last_space: None,
             update: None,
             update_then_open: false,
@@ -249,6 +268,7 @@ impl Mixer {
 
     /// Change de page et règle les lectures en direct de la page visible.
     pub fn go_to(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.motion.cancel_pending();
         if page == Page::Go(crate::goxlr::Section::Microphone) {
             self.winmic.prefer_goxlr = true;
         }
@@ -264,6 +284,7 @@ impl Mixer {
 
     /// Page précédente (bouton Retour, bouton « précédent » de la souris).
     pub fn go_back(&mut self, cx: &mut Context<Self>) {
+        self.motion.cancel_pending();
         if let Some(page) = self.history.pop() {
             self.show(page, cx);
         }
@@ -311,7 +332,13 @@ impl Mixer {
         cx.notify();
     }
 
+    pub(crate) fn reset_page_scroll(&mut self) {
+        self.page_scroll.set_offset(gpui::point(px(0.), px(0.)));
+        self.scroll_goal = None;
+    }
+
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        let was_goxlr = self.page.is_goxlr();
         // autre appareil : la barre latérale repart de son pli normal (seul l'appareil ouvert est déplié)
         if page.space() != self.page.space() {
             self.collapsed.clear();
@@ -323,8 +350,8 @@ impl Mixer {
         }
         if page != self.page {
             self.nav_count += 1;
-            self.page_scroll.set_offset(gpui::point(px(0.), px(0.)));
-            self.scroll_goal = None;
+            self.reset_page_scroll();
+            self.param_drag = None;
         }
         match page.space() {
             Some(space) => self.last_space = Some(space),
@@ -335,15 +362,18 @@ impl Mixer {
         match page {
             Page::WebcamImage => self.webcam.tab = crate::webcam::WebcamTab::Image,
             Page::WebcamOptics => self.webcam.tab = crate::webcam::WebcamTab::Optics,
-            Page::WebcamInfo => self.webcam.tab = crate::webcam::WebcamTab::Device,
             _ => {}
         }
-        self.webcam_visibility(page.is_webcam());
+        self.webcam_visibility(page.has_webcam_preview());
         self.audio_visibility(page == Page::WindowsAudio, cx);
         self.winmic_visibility(page == Page::WinMic, cx);
         self.winmic_sync_source(cx);
+        if was_goxlr && !page.is_goxlr() && !self.winmic.hardware_active && self.go.owns_monitor() {
+            self.cut_monitor(cx);
+        }
+        if page != Page::KeyboardPaint { self.keyboard.paint.finish(); }
         if page != Page::KeyboardMacros { self.macros.stop(); }
-        if page == Page::KeyboardMacros { self.macro_command("macros", json!({}), cx); }
+        if page == Page::KeyboardMacros { self.macro_page_opened(cx); }
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page.is_mouse());
         self.client.set_keyboard_visible(page.is_keyboard());
@@ -421,11 +451,11 @@ impl Mixer {
             }
             Event::MicLevel(level) => {
                 // vumètre déjà en mouvement : sa prochaine image prend la nouvelle mesure, sans redessin en plus
-                force_render = self.winmic.hardware_active && !self.go.level_moving();
+                force_render = self.mic_level_visible() && !self.go.level_moving();
                 self.go.level = level;
             }
             Event::VoiceMeters(meters) => {
-                force_render = self.winmic.hardware_active;
+                force_render = self.winmic.hardware_active && self.wizard.is_some();
                 self.go.voice_meters = meters;
             }
             Event::Latency(value) => {
@@ -473,6 +503,11 @@ impl Mixer {
         if force_render || was_enabled != self.enabled() {
             cx.notify();
         }
+    }
+
+    fn mic_level_visible(&self) -> bool {
+        self.winmic.hardware_active
+            && (self.wizard.is_some() || self.mic_tab == crate::mic_filters::MicTab::Input)
     }
 
     pub(crate) fn enabled(&self) -> bool {
@@ -525,28 +560,32 @@ impl Mixer {
         self.gesture
             .as_ref()
             .filter(|g| g.channel == channel.id)
-            .map(|g| g.value)
+            .map(|g| volume_at(g.fraction))
             .or_else(|| self.pending.get(&channel.id).map(|(_, value)| *value))
             .unwrap_or(channel.volume)
     }
 
+    fn volume_fraction(&self, channel: &Channel, value: u8) -> f32 {
+        self.gesture.as_ref()
+            .filter(|g| g.channel == channel.id)
+            .map_or(f32::from(value) / 255., |g| g.fraction)
+    }
+
     fn drag_to(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(g) = &mut self.gesture {
-            let next = position_value(g.bounds, position, g.vertical);
-            if g.value != next {
-                g.value = next;
-                let now = Instant::now();
-                let update = if g.sent_at.is_none_or(|last| now - last >= VOLUME_INTERVAL) {
-                    g.sent_at = Some(now);
-                    Some(g.channel.clone())
-                } else {
-                    None
-                };
-                if let Some(channel) = update {
-                    self.set_volume(channel, next, cx);
-                }
-                cx.notify();
+            let fraction = position_fraction(g.bounds, position, g.vertical);
+            if g.fraction == fraction {
+                return;
             }
+            let changed = volume_at(g.fraction) != volume_at(fraction);
+            g.fraction = fraction;
+            let now = Instant::now();
+            if changed && g.sent_at.is_none_or(|last| now - last >= VOLUME_INTERVAL) {
+                g.sent_at = Some(now);
+                let channel = g.channel.clone();
+                self.set_volume(channel, volume_at(fraction), cx);
+            }
+            cx.notify();
         }
     }
 
@@ -612,21 +651,25 @@ impl Mixer {
         cx.notify();
     }
 
-    fn finish_param(&mut self, cx: &mut Context<Self>) {
-        if let Some(d) = self.param_drag.take() {
-            self.param_held.insert(d.key.to_string(), (d.value, Instant::now()));
-            (d.commit)(self, d.value, cx);
+    fn finish_param(&mut self, position: Option<gpui::Point<Pixels>>, cx: &mut Context<Self>) {
+        if let Some(mut drag) = self.param_drag.take() {
+            if let Some(position) = position {
+                drag.fraction = position_fraction(drag.bounds, position, drag.vertical);
+            }
+            let value = drag.value();
+            self.param_held.insert(drag.key.to_string(), HeldParameter {
+                value,
+                from: drag.fraction,
+                at: Instant::now(),
+            });
+            (drag.commit)(self, value, cx);
             cx.notify();
         }
     }
 
     fn commit_drag(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(g) = self.gesture.take() {
-            self.set_volume(
-                g.channel,
-                position_value(g.bounds, position, g.vertical),
-                cx,
-            );
+            self.set_volume(g.channel, volume_at(position_fraction(g.bounds, position, g.vertical)), cx);
             cx.notify();
         }
     }
@@ -644,7 +687,7 @@ impl Mixer {
             if this.enabled()
                 && let Some(bounds) = rect.get() {
                     press_focus.focus(window);
-                    this.gesture = Some(Gesture { channel: id.clone(), bounds, vertical, value: position_value(bounds, event.position, vertical), sent_at: None });
+                    this.gesture = Some(Gesture { channel: id.clone(), bounds, vertical, fraction: position_fraction(bounds, event.position, vertical), sent_at: None });
                     cx.notify();
                 }
         });
@@ -685,7 +728,7 @@ impl Mixer {
         let colour = channel_colour(channel);
         let target = if channel.input { fader.mode.as_str() } else { "all" }.to_owned();
         let value = self.volume(channel);
-        let fraction = f32::from(value) / 255.;
+        let fraction = self.volume_fraction(channel, value);
         let muted = channel.mute.is_some();
         let partial = channel.mute.as_deref().is_some_and(|m| m != "all");
         let caption = self.mute_caption(channel, &target);
@@ -849,17 +892,19 @@ impl Mixer {
             .gap(px(14.))
             .py(px(7.))
             .when(!first, |d| d.border_t_1().border_color(alpha(ui::INK, 0.07)))
-            .child(ui::chip(channel_icon(&ch.id), colour, 32.))
+            .child(ui::chip(channel_icon(&ch.id), colour, 32.).flex_none())
             .child(
                 div()
                     .w(px(210.))
+                    .min_w(px(0.))
                     .flex()
                     .flex_col()
-                    .child(div().flex().items_center().gap(px(8.)).child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(ch.label.clone())).when_some(used, |d, u| d.child(ui::badge(u, ui::ACCENT))))
-                    .child(div().text_size(px(12.)).text_color(rgb(ui::TEXT2)).child(channel_hint(&ch.id))),
+                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(ch.label.clone()))
+                    .child(div().text_size(px(12.)).text_color(rgb(ui::TEXT2)).child(channel_hint(&ch.id)))
+                    .when_some(used, |d, label| d.child(ui::badge(label, ui::ACCENT).mt(px(3.)))),
             )
-            .child(self.rail(ch, false, 4 + i, cx).flex_1().h(px(22.)).child(ui::hslider(f32::from(value) / 255., if muted { alpha(colour, 0.35) } else { rgb(colour) }, if self.enabled() { ui::hover_t(&format!("volume-{}", 4 + i)) } else { 0. })))
-            .child(div().w(px(48.)).flex().justify_end().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format!("{} %", percent(value))))
+            .child(self.rail(ch, false, 4 + i, cx).flex_1().h(px(22.)).child(ui::hslider(self.volume_fraction(ch, value), if muted { alpha(colour, 0.35) } else { rgb(colour) }, if self.enabled() { ui::hover_t(&format!("volume-{}", 4 + i)) } else { 0. })))
+            .child(div().w(px(48.)).flex_none().flex().justify_end().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format!("{} %", percent(value))))
             .child(
                 ui::round(SharedString::from(format!("mute-other-{}", ch.id)), if muted { Icon::VolumeOff } else { Icon::Volume }, 32., if muted { rgb(ui::RED) } else { alpha(0x767680, 0.) }, if muted { rgb(ui::WHITE) } else { rgb(ui::TEXT2) })
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle(&channel, "all", cx))),
@@ -997,14 +1042,21 @@ impl Render for Mixer {
         let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx)).or_else(|| self.winmic_confirm_box(cx));
         self.sheet_tick(cx);
         self.step_scroll(window);
-        if self.winmic.hardware_active && self.go.step_level() {
+        let mic_level_visible = self.mic_level_visible();
+        self.client.set_level_visible(mic_level_visible);
+        if !mic_level_visible {
+            self.go.clear_level_display();
+        } else if self.go.step_level() {
             ui::animation_frame_every(window, crate::goxlr::LEVEL_FRAME);
         }
-        if self.page == Page::Keyboard && self.keyboard.shows_previews() {
+        if self.keyboard.shows_previews(self.page) {
             ui::animation_frame_every(window, crate::keyboard::PREVIEW_FRAME);
         }
+        if self.page == Page::KeyboardPaint && self.keyboard.paint.animating() {
+            ui::animation_frame_every(window, Duration::from_micros(16_000));
+        }
         self.sync_webcam_preview(window);
-        if self.page.is_webcam() && self.webcam.preview_running() {
+        if self.page.has_webcam_preview() && self.webcam.preview_running() {
             ui::animation_frame_every(window, crate::webcam::PREVIEW_FRAME);
         }
         let sheet = self.update_sheet_view(cx);
@@ -1013,25 +1065,32 @@ impl Render for Mixer {
             .children(toast.map(|(ok, text)| ui::toast(ok, text)))
             .children(sheet.map(|s| ui::modal_sized_id("modal-sheet", s, 640.)))
             .children(dialog.map(|d| ui::modal_sized_id("modal-dialog", d, 560.)));
+        self.param_held.retain(|_, held| held.at.elapsed() < PARAM_HOLD);
+        if self.param_held.values().any(|held| held.at.elapsed() < SLIDER_SETTLE) {
+            ui::animation_frame(window);
+        }
         ui::keep_animating(window);
         shell
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
+                this.move_keyboard_paint(ev, cx);
                 if this.move_colour_picker(ev.position, ev.pressed_button, cx) {
                     return;
                 }
                 if let Some(d) = this.param_drag.as_mut() {
                     if ev.pressed_button == Some(MouseButton::Left) {
-                        let next = d.at(ev.position);
-                        if (next - d.value).abs() > 1e-9 {
-                            d.value = next;
-                            if d.live {
+                        let fraction = position_fraction(d.bounds, ev.position, d.vertical);
+                        if fraction != d.fraction {
+                            let previous = d.value();
+                            d.fraction = fraction;
+                            let next = d.value();
+                            if d.live && next != previous {
                                 let commit = d.commit.clone();
                                 commit(this, next, cx);
                             }
                             cx.notify();
                         }
                     } else {
-                        this.finish_param(cx);
+                        this.finish_param(None, cx);
                     }
                     return;
                 }
@@ -1042,26 +1101,23 @@ impl Render for Mixer {
                 }
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                this.finish_keyboard_paint(ev.position, cx);
                 this.finish_colour_picker();
-                this.finish_param(cx);
+                this.finish_param(Some(ev.position), cx);
                 this.commit_drag(ev.position, cx)
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                this.finish_keyboard_paint(ev.position, cx);
                 this.finish_colour_picker();
-                this.finish_param(cx);
+                this.finish_param(Some(ev.position), cx);
                 this.commit_drag(ev.position, cx)
             }))
-            .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Back), cx.listener(|this, _, _, cx| this.go_back(cx)))
+            .on_mouse_down(MouseButton::Navigate(gpui::NavigationDirection::Back), cx.listener(|this, _, _, cx| this.navigate_to(crate::motion::Destination::Back, cx)))
     }
 }
 
-fn position_value(bounds: Bounds<Pixels>, at: gpui::Point<Pixels>, vertical: bool) -> u8 {
-    let fraction = if vertical {
-        1. - f32::from(at.y - bounds.origin.y) / f32::from(bounds.size.height).max(1.)
-    } else {
-        f32::from(at.x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
-    };
-    (fraction.clamp(0., 1.) * 255.).round() as u8
+fn volume_at(fraction: f32) -> u8 {
+    (fraction * 255.).round() as u8
 }
 
 fn percent(volume: u8) -> u16 {
@@ -1117,30 +1173,52 @@ pub(crate) struct ParamDrag {
     min: f64,
     max: f64,
     step: f64,
-    value: f64,
+    fraction: f32,
     commit: Rc<dyn Fn(&mut Mixer, f64, &mut Context<Mixer>)>,
     /// envoie aussi pendant le glissement (on entend le réglage bouger), pas seulement au relâchement
     live: bool,
 }
 
 impl ParamDrag {
-    fn at(&self, position: gpui::Point<Pixels>) -> f64 {
-        let fraction = position_fraction(self.bounds, position, self.vertical) as f64;
-        let raw = self.min + fraction * (self.max - self.min);
-        ((raw / self.step).round() * self.step).clamp(self.min, self.max)
+    fn value(&self) -> f64 {
+        stepped_parameter(self.fraction, (self.min, self.max), self.step)
     }
 }
 
+fn stepped_parameter(fraction: f32, range: (f64, f64), step: f64) -> f64 {
+    let raw = range.0 + f64::from(fraction) * (range.1 - range.0);
+    ((raw / step).round() * step).clamp(range.0, range.1)
+}
+
+fn parameter_fraction(value: f64, range: (f64, f64)) -> f32 {
+    ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32
+}
+
+pub(crate) struct HeldParameter {
+    value: f64,
+    from: f32,
+    at: Instant,
+}
+
+fn settle_fraction(from: f32, target: f32, elapsed: Duration) -> f32 {
+    let t = (elapsed.as_secs_f32() / SLIDER_SETTLE.as_secs_f32()).min(1.);
+    from + (target - from) * (1. - (1. - t).powi(3))
+}
+
 impl Mixer {
-    /// Valeur affichée d'un réglage : celle du geste en cours, puis celle envoyée tant que le moteur ne l'a pas relue.
-    pub(crate) fn param_value(&self, key: &str, actual: f64) -> f64 {
-        if let Some(d) = self.param_drag.as_ref().filter(|d| d.key.as_ref() == key) {
-            return d.value;
+    /// Le nombre suit le cran applicable, la poignée suit la position réelle du pointeur.
+    pub(crate) fn parameter_view(&self, key: &str, actual: f64, range: (f64, f64)) -> (f64, f32) {
+        if let Some(drag) = self.param_drag.as_ref().filter(|d| d.key.as_ref() == key) {
+            return (drag.value(), drag.fraction);
         }
-        match self.param_held.get(key) {
-            Some((v, at)) if at.elapsed() < Duration::from_millis(1800) => *v,
-            _ => actual,
+        if let Some(held) = self.param_held.get(key) {
+            let age = held.at.elapsed();
+            if age < PARAM_HOLD {
+                let target = parameter_fraction(held.value, range);
+                return (held.value, settle_fraction(held.from, target, age));
+            }
         }
+        (actual, parameter_fraction(actual, range))
     }
 
     /// Zone cliquable d'un curseur ; le dessin (horizontal ou vertical) est ajouté par l'appelant.
@@ -1185,9 +1263,14 @@ impl Mixer {
                 if !enabled {
                     return;
                 }
-                let mut drag = ParamDrag { key: id.clone(), bounds, vertical, min: range.0, max: range.1, step, value: range.0, commit: commit.clone(), live };
-                drag.value = drag.at(event.position);
+                let drag = ParamDrag {
+                    key: id.clone(), bounds, vertical, min: range.0, max: range.1, step,
+                    fraction: position_fraction(bounds, event.position, vertical),
+                    commit: commit.clone(), live,
+                };
+                let value = drag.value();
                 this.param_drag = Some(drag);
+                if live { commit(this, value, cx); }
                 cx.stop_propagation();
                 cx.notify();
             }))
@@ -1208,8 +1291,24 @@ impl Mixer {
         commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
-        let value = self.param_value(&format!("param-{key}"), actual);
-        let fraction = ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
+        self.slider_row_with(key, label, actual, range, step, format, enabled, false, commit, cx)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn slider_row_with(
+        &self,
+        key: &str,
+        label: impl Into<SharedString>,
+        actual: f64,
+        range: (f64, f64),
+        step: f64,
+        format: impl Fn(f64) -> String,
+        enabled: bool,
+        live: bool,
+        commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (value, fraction) = self.parameter_view(&format!("param-{key}"), actual, range);
         let hover = ui::hover_t(&format!("param-{key}"));
         // bloc simple plutôt qu'une colonne flexbox : la mise en page mesure ses textes une fois au lieu de trois
         div()
@@ -1222,7 +1321,7 @@ impl Mixer {
                     .child(div().text_size(px(13.)).text_color(rgb(ui::TEXT)).child(label.into()))
                     .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(format(value))),
             )
-            .child(self.param_area(key, range, step, false, enabled, commit, cx).mt(px(4.)).h(px(22.)).w_full().child(ui::hslider(fraction, rgb(ui::ACCENT), hover)))
+            .child(self.param_area_with(key, range, step, false, enabled, live, commit, cx).mt(px(4.)).h(px(22.)).w_full().child(ui::hslider(fraction, rgb(ui::ACCENT), hover)))
     }
 
     /// Colonne d'égaliseur : valeur en dB au-dessus, curseur vertical, libellé dessous.
@@ -1237,8 +1336,7 @@ impl Mixer {
         commit: impl Fn(&mut Mixer, f64, &mut Context<Mixer>) + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
-        let value = self.param_value(&format!("param-{key}"), actual);
-        let fraction = ((value - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
+        let (value, fraction) = self.parameter_view(&format!("param-{key}"), actual, range);
         let zero = ((0. - range.0) / (range.1 - range.0)).clamp(0., 1.) as f32;
         let hover = ui::hover_t(&format!("param-{key}"));
         let shown = if value > 0. { format!("+{}", fmt_num(value)) } else { fmt_num(value) };
@@ -1272,4 +1370,31 @@ fn position_fraction(bounds: Bounds<Pixels>, at: gpui::Point<Pixels>, vertical: 
 /// Line In ni Console.
 pub(crate) fn firmware_ignores(channel: &str) -> bool {
     matches!(channel, "LineIn" | "Console")
+}
+
+#[cfg(test)]
+mod slider_tests {
+    use super::*;
+
+    #[test]
+    fn le_pointeur_bouge_a_l_interieur_d_un_meme_cran() {
+        let bounds = Bounds::new(gpui::point(px(0.), px(0.)), gpui::size(px(1000.), px(200.)));
+        let first = position_fraction(bounds, gpui::point(px(480.), px(30.)), false);
+        let next = position_fraction(bounds, gpui::point(px(485.), px(30.)), false);
+        assert!(next > first);
+        assert_eq!(stepped_parameter(first, (0., 100.), 5.), 50.);
+        assert_eq!(stepped_parameter(next, (0., 100.), 5.), 50.);
+        assert_eq!(position_fraction(bounds, gpui::point(px(480.), px(50.)), true), 0.75);
+        assert_eq!(volume_at(0.5), 128);
+    }
+
+    #[test]
+    fn le_curseur_rejoint_le_cran_apres_le_relachement() {
+        let from = 0.48;
+        let target = 0.50;
+        assert_eq!(settle_fraction(from, target, Duration::ZERO), from);
+        let middle = settle_fraction(from, target, SLIDER_SETTLE / 2);
+        assert!(middle > from && middle < target);
+        assert_eq!(settle_fraction(from, target, SLIDER_SETTLE), target);
+    }
 }

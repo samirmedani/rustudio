@@ -29,6 +29,16 @@ fn effet_vitesse_sens_luminosite_et_couleur() {
 }
 
 #[test]
+fn une_luminosite_intermediaire_est_ecrite_et_relue_a_l_identique() {
+    let mut keyboard = Keyboard::new(Sim::default());
+    for brightness in [0, 1, 93, 172, 254, 255] {
+        let settings = keyboard.apply_json(&json!({"active_effect": 0, "brightness": brightness})).unwrap();
+        assert_eq!(settings.effects[0].brightness, brightness);
+        assert_eq!(keyboard.read().unwrap().effects[0].brightness, brightness);
+    }
+}
+
+#[test]
 fn couleurs_des_touches_en_trame_continue() {
     let frames = key_frames(&[[1, 2, 3]; 104]);
     assert_eq!(frames.len(), 7);

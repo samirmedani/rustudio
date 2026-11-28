@@ -720,7 +720,7 @@ pub fn fit_with_print(p: &Profile, v: &VoicePrint, cal: Option<&MicCal>, gain_db
             let out = thr + (loud - thr).max(0.0) / ratio;
             makeup = makeup.min(-3.0 - out);
         }
-        comp.makeup = makeup.round().clamp(0.0, 12.0) as i32;
+        comp.makeup = cal_noise.map_or(makeup.round().clamp(0.0, 12.0) as i32, |noise| dsp::preset_makeup(makeup, noise));
     }
     d.comp = comp;
     let (thr_off, max_red, gate_rel) = p.gate;
@@ -730,7 +730,7 @@ pub fn fit_with_print(p: &Profile, v: &VoicePrint, cal: Option<&MicCal>, gain_db
         _ => v.levels.speech_p50_db - v.levels.noise_peak_db,
     };
     if let (Some(noise), Some(low)) = (cal_noise, cal_low) {
-        gate.threshold = (dsp::gate_threshold(noise, low) + thr_off).round().clamp(-59.0, -10.0) as i32;
+        gate.threshold = dsp::preset_gate_threshold(noise, low, thr_off);
         gate.attenuation = match max_red {
             None => 100,
             Some(m) => dsp::gate_att_percent(m.min(GATE_SOFT_DB).min(noise.max(-72.2) + d.comp.makeup as f64 - RESIDUAL_NOISE_DB), 12.0),
@@ -854,7 +854,7 @@ pub fn summary(v: &VoicePrint, cal: Option<&MicCal>) -> Value {
 pub fn print_notes(v: &VoicePrint, model: Option<&MicModel>, gain_db: i32) -> Vec<Note> {
     let mut n = vec![];
     if let Some(h) = &v.hum {
-        n.push(note("warn", format!("Ronflement à {} Hz : éloigne le câble du micro des alimentations et des multiprises. L’égaliseur l’atténue en attendant.", h.hz.round())));
+        n.push(note("warn", format!("Ronflement à {} Hz. Éloigne le câble du micro des alimentations et des multiprises.", h.hz.round())));
     }
     if v.plosives.count >= 2 {
         n.push(note("tip", format!("{} « p » ou « b » ont soufflé dans le micro : place le filtre anti-pop à 5 cm de la grille, ou tourne légèrement le micro.", v.plosives.count)));
@@ -865,7 +865,7 @@ pub fn print_notes(v: &VoicePrint, model: Option<&MicModel>, gain_db: i32) -> Ve
         _ => {}
     }
     if v.clipped {
-        n.push(note("warn", "Ta voix a saturé pendant l’enregistrement : le gain a été baissé, refais l’empreinte pour une mesure parfaite."));
+        n.push(note("warn", "Ta voix a saturé pendant la mesure. Vérifie le gain, puis relance la mesure si nécessaire."));
     }
     if let Some(m) = model.filter(|m| m.kind == "condenser" && !m.generic) {
         if gain_db >= 45 {

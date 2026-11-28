@@ -58,6 +58,15 @@ pub struct Fx {
     pub deesser: bool,
 }
 
+/// Réglages de la voix indépendants du préampli et du retour casque.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MicProfile {
+    pub dsp: Dsp,
+    pub fx: Fx,
+    pub mic_preset: String,
+}
+
 impl Fx {
     pub fn any(&self) -> bool {
         self.eq || self.gate || self.comp || self.deesser
@@ -131,7 +140,7 @@ pub const MIC_PRESETS: [Preset; 8] = [
              dsp: || make_dsp([1, -1, -1, 1, 2, 2], (true, -45, 80, 0, 19), [-18, 8, 1, 9, 4], 20) },
     Preset { key: "podcast", label: "Podcast", desc: "Chaleureuse et posée pour les longues discussions.",
              dsp: || make_dsp([2, 0, -1, 0, 1, 1], (true, -50, 50, 0, 19), [-20, 7, 1, 9, 4], 15) },
-    Preset { key: "anti-bruit", label: "Anti-clavier", desc: "Coupe le clavier, le ventilo et le bruit de la pièce entre tes phrases.",
+    Preset { key: "anti-bruit", label: "Anti-clavier", desc: "Atténue le clavier et le bruit de fond entre tes phrases.",
              dsp: || make_dsp([-3, -1, 0, 1, 2, 1], (true, -35, 100, 0, 15), [-18, 8, 1, 9, 4], 25) },
 ];
 
@@ -193,6 +202,18 @@ pub fn gate_threshold(noise_peak: f64, voice_low: f64) -> f64 {
     (noise_peak + 6.0_f64.max(12.0_f64.min(0.4 * (voice_low - noise_peak)))).min(hi)
 }
 
+/// Garde une marge sous les fins de phrase, même avec un préréglage antibruit.
+pub(crate) fn preset_gate_threshold(noise_peak: f64, voice_low: f64, offset: f64) -> i32 {
+    let margin = ((voice_low - noise_peak) * 0.5).clamp(2.0, 6.0);
+    clamp_f((gate_threshold(noise_peak, voice_low) + offset).min(voice_low - margin), -59, -10)
+}
+
+/// Évite que la compensation rende le souffle plus audible quand la porte s'ouvre.
+pub(crate) fn preset_makeup(makeup: f64, noise_peak: f64) -> i32 {
+    let headroom = (-48.0 - noise_peak).clamp(0.0, 12.0);
+    makeup.round().clamp(0.0, headroom.floor()) as i32
+}
+
 /// Plus douce attenuation (en % GoXLR) qui retire au moins need_db.
 pub fn gate_att_percent(need_db: f64, least_db: f64) -> i32 {
     let need = least_db.max(need_db);
@@ -213,14 +234,14 @@ pub fn fit_dsp(name: &str, cal: Option<&MicCal>, gain_db: Option<i32>) -> Dsp {
     let shift = (gain - cal.gain_db) as f64;
     let (noise, low, med, peak) =
         (cal.noise_peak_db + shift, cal.voice_low_db + shift, cal.voice_db + shift, cal.voice_peak_db + shift);
-    d.gate.threshold = clamp_f(gate_threshold(noise, low) + fit.gate, -59, -10);
+    d.gate.threshold = preset_gate_threshold(noise, low, fit.gate);
     let thr = clamp_f(med - 4.0 + fit.comp, -40, -6);
     d.comp.threshold = thr;
     let ratio = RATIOS[d.comp.ratio.clamp(0, 14) as usize];
     let mut makeup = (peak - thr as f64).max(0.0) * (1.0 - 1.0 / ratio) * fit.makeup;
     let peak_out = thr as f64 + (peak - thr as f64).max(0.0) / ratio;
     makeup = makeup.min(-3.0 - peak_out);
-    d.comp.makeup = clamp_f(makeup, 0, 12);
+    d.comp.makeup = preset_makeup(makeup, noise);
     d.gate.attenuation = match fit.att {
         Some(a) => a,
         None => gate_att_percent(
@@ -352,3 +373,12 @@ mod tests {
         assert!(peak_out <= -2.5, "compensation excessive sur voix forte : {peak_out} dBFS ({:?})", d.comp);
     }
 }
+    #[test]
+    fn les_profils_mesures_gardent_une_marge_sur_le_souffle_et_la_fin_des_phrases() {
+        assert_eq!(preset_makeup(7., -65.), 7);
+        assert_eq!(preset_makeup(7., -49.1), 1);
+        assert_eq!(preset_makeup(7., -44.), 0);
+        assert_eq!(preset_makeup(-4., -75.), 0);
+        assert!(preset_gate_threshold(-46., -39., 3.) <= -42);
+        assert!(preset_gate_threshold(-58., -32., 3.) < -38);
+    }

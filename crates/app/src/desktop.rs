@@ -7,11 +7,12 @@ use crate::{
     ui::{self, Icon, State, Tone, alpha, rgb},
 };
 use gpui::{
-    AnimationExt, AnyElement, Context, Div, ElementId, FontWeight, KeyDownEvent, PathPromptOptions, Stateful,
+    AnyElement, Context, Div, ElementId, FontWeight, KeyDownEvent, PathPromptOptions, Stateful,
     Window, WindowControlArea, canvas, deferred, div, prelude::*, px,
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub(crate) use crate::ui::hint;
 
@@ -22,15 +23,59 @@ const STATUS_BAR_H: f32 = 42.;
 /// Bande du haut, réservée au déplacement de la fenêtre et à ses trois boutons.
 const TITLE_BAR_H: f32 = 36.;
 /// Barre latérale : largeur et écart avec les bords de la fenêtre.
-const SIDEBAR_W: f32 = 240.;
 const SIDEBAR_MARGIN: f32 = 16.;
-const PAGE_LEFT: f32 = 28.;
-const PAGE_RIGHT: f32 = 36.;
+const SUBNAV_GAP: f32 = 2.;
+const DEVICE_FOLD_TIME: Duration = Duration::from_millis(190);
+
+fn sidebar_width(viewport: f32) -> f32 {
+    (viewport * 0.15).clamp(256., 292.)
+}
+
+#[derive(Clone, Copy)]
+struct SidebarLayout {
+    width: f32,
+    roomy: bool,
+}
+
+impl SidebarLayout {
+    fn row_height(self) -> f32 {
+        if self.roomy { 44. } else { 37. }
+    }
+
+    fn label_size(self) -> f32 {
+        if self.roomy { 16.5 } else { ui::BODY_TEXT }
+    }
+
+    fn subrow_height(self) -> f32 {
+        if self.roomy { 36. } else { 31. }
+    }
+}
 /// Largeur maximale du contenu : sur un grand écran, la page reste lisible au centre au lieu de s'étirer.
 const PAGE_MAX: f32 = 1240.;
+const MIC_PAGE_MAX: f32 = 1160.;
 
 pub(crate) fn page_width(window: &Window) -> f32 {
-    (f32::from(window.viewport_size().width) - SIDEBAR_W - SIDEBAR_MARGIN - PAGE_LEFT - PAGE_RIGHT).min(PAGE_MAX)
+    let width = f32::from(window.viewport_size().width);
+    page_content_width(width, PAGE_MAX, 2. * page_gutter(width))
+}
+
+fn page_content_width(viewport_width: f32, maximum: f32, gutters: f32) -> f32 {
+    (viewport_width - sidebar_width(viewport_width) - gutters).clamp(0., maximum)
+}
+
+fn page_gutter(viewport_width: f32) -> f32 {
+    ((viewport_width - sidebar_width(viewport_width)) * 0.03).clamp(18., 40.)
+}
+
+fn page_limit(page: Page) -> f32 {
+    match page {
+        Page::KeyboardShortcuts | Page::KeyboardInfo => 720.,
+        Page::KeyboardMacros => 880.,
+        Page::Profiles | Page::Help | Page::Settings | Page::Go(Section::Diagnostic) => 980.,
+        Page::WinMic | Page::Go(Section::Headphones) => MIC_PAGE_MAX,
+        p if p.is_keyboard() || p.is_webcam() => MIC_PAGE_MAX,
+        _ => PAGE_MAX,
+    }
 }
 /// Listes déroulantes : hauteur bornée, écart avec le bouton et marge gardée avec les bords de la page.
 const MENU_MAX_H: f32 = 260.;
@@ -73,12 +118,14 @@ pub enum Confirm {
 }
 
 /// Espace d'un appareil dans la barre latérale.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Space {
     GoXlr,
+    Headphones,
     Mouse,
     Keyboard,
     Webcam,
+    WebcamDevice,
     WinMic,
 }
 
@@ -133,17 +180,21 @@ impl Page {
     }
     pub(crate) fn space(self) -> Option<Space> {
         match self {
+            Page::Go(Section::Headphones) => Some(Space::Headphones),
             Page::Mixer | Page::Go(_) => Some(Space::GoXlr),
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => Some(Space::Mouse),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo | Page::KeyboardMacros => Some(Space::Keyboard),
-            Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => Some(Space::Webcam),
+            Page::Webcam | Page::WebcamImage | Page::WebcamOptics => Some(Space::Webcam),
+            Page::WebcamInfo => Some(Space::WebcamDevice),
             Page::WinMic => Some(Space::WinMic),
             _ => None,
         }
     }
     pub(crate) fn is_mouse(self) -> bool { self.space() == Some(Space::Mouse) }
     pub(crate) fn is_keyboard(self) -> bool { self.space() == Some(Space::Keyboard) }
-    pub(crate) fn is_webcam(self) -> bool { self.space() == Some(Space::Webcam) }
+    pub(crate) fn is_webcam(self) -> bool { self.has_webcam_preview() || self == Page::WebcamInfo }
+    pub(crate) fn has_webcam_preview(self) -> bool { self.space() == Some(Space::Webcam) }
+    pub(crate) fn is_goxlr(self) -> bool { matches!(self, Page::Mixer | Page::Go(_)) }
     fn title(self) -> &'static str {
         match self {
             Page::Devices => "Mes appareils",
@@ -175,7 +226,7 @@ impl Page {
     fn subtitle(self) -> &'static str {
         match self {
             Page::Devices => "Ton matériel et ses réglages, réunis au même endroit.",
-            Page::Profiles => "Tes réglages du mixeur pour chaque usage, à partager en JSON.",
+            Page::Profiles => "Retrouve tes réglages du mixeur et ceux associés à tes applications.",
             Page::Catalogue => "Les appareils pris en charge et ceux que la communauté peut ajouter.",
             Page::Versions => "Mises à jour vérifiées depuis GitHub, notes et retour à une version précédente.",
             Page::Help => "Signaler un problème, poser une question ou contribuer.",
@@ -187,11 +238,11 @@ impl Page {
             Page::MouseSensor => "Fréquence, hauteur de décrochage et suivi des mouvements.",
             Page::MousePower => "Niveau de batterie, charge et délai de mise en veille.",
             Page::Keyboard => "Effets lumineux, luminosité et couleur de chaque touche.",
-            Page::KeyboardSettings => "Luminosité, vitesse, sens et couleur de l’effet affiché.",
-            Page::KeyboardPaint => "Choisis ton pinceau et les couleurs de chaque touche.",
+            Page::KeyboardSettings => "Ajuste la luminosité, la vitesse, le sens et les couleurs de l’effet choisi.",
+            Page::KeyboardPaint => "Compose ton éclairage touche par touche.",
             Page::KeyboardShortcuts => "Raccourcis Fn et aide pour le mode Windows ou macOS.",
             Page::KeyboardInfo => "Connexion, firmware et caractéristiques du clavier.",
-            Page::KeyboardMacros => "Expérimental · Crée tes séquences de touches et enregistre-les dans ton clavier.",
+            Page::KeyboardMacros => "",
             Page::Webcam => "Aperçu vidéo en direct, préréglages et réglages complets de ta C920.",
             Page::WebcamImage => "Aperçu vidéo en direct, luminosité, contraste, saturation, netteté et balance des blancs.",
             Page::WebcamOptics => "Aperçu vidéo en direct, exposition manuelle, focus, zoom et cadrage.",
@@ -211,7 +262,6 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
     match space {
         Space::GoXlr => &[
             (Page::Mixer, Icon::Sliders, "Mixeur"),
-            (Page::Go(Section::Headphones), Icon::Headphones, "Casque"),
             (Page::Go(Section::Routing), Icon::Route, "Routage"),
             (Page::Go(Section::Light), Icon::Sun, "Éclairage"),
             (Page::Go(Section::Scenes), Icon::Layers, "Scènes"),
@@ -231,10 +281,7 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
             (Page::KeyboardShortcuts, Icon::Help, "Raccourcis et mode"),
             (Page::KeyboardInfo, Icon::Keyboard, "Informations"),
         ],
-        Space::Webcam => &[
-            (Page::Webcam, Icon::Camera, "Ma webcam"),
-        ],
-        Space::WinMic => &[(Page::WinMic, Icon::Mic, "Mon micro")],
+        Space::Headphones | Space::Webcam | Space::WebcamDevice | Space::WinMic => &[],
     }
 }
 
@@ -253,15 +300,17 @@ fn module_page(id: &str) -> Option<Page> {
         "goxlr-mini" => Some(Page::Mixer),
         "attack-shark-r5-ultra" => Some(Page::Mouse),
         "cooler-master-mk770" => Some(Page::Keyboard),
-        "logitech-c920" => Some(Page::Webcam),
+        "logitech-c920" => Some(Page::WebcamInfo),
         "windows-mic" => Some(Page::WinMic),
         _ => None,
     }
 }
 /// Espace de la barre latérale propre à un module.
-fn module_space(id: &str) -> Option<Space> {
-    module_page(id).and_then(Page::space)
-}
+const DIRECT_PAGES: [(&str, Page, Icon, &str); 3] = [
+    ("windows-mic", Page::WinMic, Icon::Mic, "Micro"),
+    ("goxlr-mini", Page::Go(Section::Headphones), Icon::Headphones, "Casque"),
+    ("logitech-c920", Page::Webcam, Icon::Camera, "Caméra"),
+];
 fn capability(id: &str) -> &str {
     match id {
         "mixer" => "Mixeur",
@@ -333,7 +382,7 @@ fn nav_battery(level: u8, charging: bool) -> Div {
         .whitespace_nowrap()
         .child(div().flex().items_center().child(body).child(nub))
         .when(charging, |d| d.child(ui::icon(Icon::Bolt, 11., rgb(ui::GREEN_TEXT))))
-        .child(div().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::TEXT2)).child(format!("{level} %")))
+        .child(div().text_size(px(ui::DETAIL_TEXT)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::TEXT2)).child(format!("{level} %")))
 }
 
 /// État en direct d'un appareil sur sa carte : micro et scène de la GoXLR, batterie de la souris.
@@ -403,7 +452,7 @@ impl Mixer {
         self.inventory.as_ref()?.installed.iter().find(|m| m.id == id)
     }
 
-    fn nav(&self, page: Page, glyph: Icon, label: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn nav(&self, page: Page, glyph: Icon, label: &'static str, layout: SidebarLayout, cx: &mut Context<Self>) -> Stateful<Div> {
         let on = self.page == page;
         let fg = if on { ui::ACCENT } else { ui::TEXT };
         let key = format!("nav-{label}");
@@ -413,11 +462,11 @@ impl Mixer {
             .flex()
             .items_center()
             .gap(px(12.))
-            .h(px(40.))
+            .h(px(layout.row_height()))
             .px(px(12.))
             .rounded(px(13.))
-            .text_size(px(14.5))
-            .font_weight(FontWeight::MEDIUM)
+            .text_size(px(layout.label_size()))
+            .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
             .text_color(rgb(fg))
             .cursor(gpui::CursorStyle::PointingHand)
             .when(on, |d| {
@@ -428,18 +477,21 @@ impl Mixer {
             })
             .when(!on, |d| d.bg(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.75), t)).border_1().border_color(ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::INK, 0.04), t)))
             .child(ui::icon(glyph, 19., if on { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
-            .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)));
+            .child(div().min_w(px(0.)).truncate().child(label))
+            .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)));
         ui::hoverable(el, key)
     }
 
     /// Un appareil dans la barre latérale : icône, nom, pastille d'état et flèche qui replie ses pages.
     /// Un clic sur le nom ouvre l'appareil ; sur l'appareil déjà ouvert, il replie ou déplie ses pages.
-    fn device_nav(&self, module: &Descriptor, open: bool, collapsed: bool, cx: &mut Context<Self>) -> Stateful<Div> {
-        let target = module_page(&module.id);
-        let foldable = module_space(&module.id).is_some_and(|s| space_pages(s).len() > 1);
+    fn device_nav(&self, module: &Descriptor, direct: Option<(Page, Icon, &str)>, open: bool, collapsed: bool, layout: SidebarLayout, cx: &mut Context<Self>) -> Stateful<Div> {
+        let (target, glyph, label, nav_id) = match direct {
+            Some((page, icon, text)) => (Some(page), icon, text, page.name().unwrap_or(&module.id)),
+            None => (module_page(&module.id), module_icon(&module.id), module.name.as_str(), module.id.as_str()),
+        };
+        let foldable = target.and_then(Page::space).is_some_and(|s| space_pages(s).len() > 1);
         let on = open && !foldable;
-        let key = format!("devnav-{}", module.id);
+        let key = format!("devnav-{nav_id}");
         let t = if on { 0. } else { ui::hover_t(&key) };
         let (_, state) = device_state(self.device(&module.id));
         let battery = self.inventory.as_ref().filter(|_| module.id == "attack-shark-r5-ultra").and_then(|i| i.glance.battery);
@@ -452,7 +504,7 @@ impl Mixer {
         };
         let id = module.id.clone();
         let title = div()
-            .id(ElementId::Name(format!("devnav-open-{}", module.id).into()))
+            .id(ElementId::Name(format!("devnav-open-{nav_id}").into()))
             .flex()
             .flex_1()
             .min_w(px(0.))
@@ -460,8 +512,8 @@ impl Mixer {
             .items_center()
             .gap(px(11.))
             .when(target.is_some() || foldable, |d| d.cursor(gpui::CursorStyle::PointingHand))
-            .child(ui::icon(module_icon(&module.id), 18., if on || open { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
-            .child(div().flex_1().min_w(px(0.)).truncate().child(module.name.clone()))
+            .child(ui::icon(glyph, 18., if on || open { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT2), rgb(ui::TEXT), t) }))
+            .child(div().flex_1().min_w(px(0.)).truncate().child(label.to_owned()))
             // la batterie prend la place de la pastille : sa couleur dit déjà que la souris répond
             .map(|d| match battery {
                 Some((level, charging)) => d.child(nav_battery(level, charging)),
@@ -472,7 +524,7 @@ impl Mixer {
                     this.toggle_device(&id, cx);
                 } else if let Some(page) = target {
                     this.collapsed.remove(&id);
-                    this.go_to(page, cx);
+                    this.navigate(page, cx);
                 }
             }));
         let fold_key = format!("devfold-{}", module.id);
@@ -500,11 +552,11 @@ impl Mixer {
             .flex()
             .items_center()
             .gap(px(6.))
-            .h(px(38.))
+            .h(px(layout.row_height()))
             .pl(px(12.))
             .pr(px(if foldable { 7. } else { 12. }))
             .rounded(px(12.))
-            .text_size(px(14.))
+            .text_size(px(layout.label_size()))
             .font_weight(if open { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
             .text_color(rgb(if on { ui::ACCENT } else { ui::TEXT }))
             .when(on, |d| d.bg(rgb(ui::PAPER)).border_1().border_color(alpha(ui::ACCENT, 0.14)).shadow(ui::soft_shadow()))
@@ -515,126 +567,132 @@ impl Mixer {
     }
 
     /// Page d'un appareil ouvert, en retrait sous son nom.
-    fn sub_nav(&self, page: Page, glyph: Icon, label: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn sub_nav(&self, page: Page, glyph: Icon, label: &'static str, layout: SidebarLayout, interactive: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let on = self.page == page;
         let key = format!("subnav-{label}");
-        let t = if on { 0. } else { ui::hover_t(&key) };
+        let t = if on || !interactive { 0. } else { ui::hover_t(&key) };
         let el = div()
             .id(ElementId::Name(key.clone().into()))
             .flex()
             .items_center()
             .gap(px(10.))
             .flex_none()
-            .h(px(32.))
+            .h(px(layout.subrow_height()))
             .pl(px(12.))
             .pr(px(10.))
             .rounded(px(10.))
-            .text_size(px(13.5))
+            .text_size(px(if layout.roomy { ui::BODY_TEXT } else { ui::DETAIL_TEXT }))
             .font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
             .text_color(rgb(if on { ui::TEXT } else { ui::TEXT2 }))
-            .cursor(gpui::CursorStyle::PointingHand)
             .bg(if on { alpha(ui::ACCENT, 0.16) } else { ui::lerp(alpha(ui::PAPER, 0.), alpha(ui::PAPER, 0.7), t) })
             .child(ui::icon(glyph, 16., if on { rgb(ui::ACCENT) } else { ui::lerp(rgb(ui::TEXT3), rgb(ui::TEXT), t) }))
             .child(div().flex_1().min_w(px(0.)).truncate().child(label))
-            .when(on, |d| d.child(ui::icon(Icon::Check, 14., rgb(ui::ACCENT))))
-            .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)));
-        ui::hoverable(el, key)
+            .when(on, |d| d.child(ui::icon(Icon::Check, 14., rgb(ui::ACCENT))));
+        el.when(interactive, |d| {
+            ui::hoverable(
+                d.cursor(gpui::CursorStyle::PointingHand)
+                    .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx))),
+                key,
+            )
+        })
     }
 
-    fn sidebar(&self, cx: &mut Context<Self>) -> Div {
-        let mut side = div()
+    fn sidebar(&mut self, layout: SidebarLayout, window: &Window, cx: &mut Context<Self>) -> Div {
+        let brand = div()
             .flex()
-            .flex_col()
-            // position absolue, comme la page : la fenêtre se met en page sans mesurer le contenu de la barre latérale
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .gap(px(12.))
+            .pb(px(if layout.roomy { 24. } else { 14. }))
+            .child(ui::sidebar_logo(if layout.roomy { 42. } else { 36. }))
+            .child(
+                div().flex().flex_col().gap(px(2.))
+                    .child(ui::title("Rustudio", if layout.roomy { 24. } else { 21. })
+                        .font_weight(FontWeight::BOLD))
+                    .child(ui::caption("Ton matériel, ton espace")),
+            );
+        let group = |label| {
+            div().mt(px(if layout.roomy { 18. } else { 10. }))
+                .pt(px(if layout.roomy { 12. } else { 8. }))
+                .pb(px(4.))
+                .px(px(12.))
+                .border_t_1()
+                .border_color(alpha(ui::INK, 0.07))
+                .child(ui::eyebrow(label))
+        };
+        let mut routes = div().flex().flex_col().gap(px(2.))
+            .child(self.nav(Page::Devices, Icon::Plug, "Mes appareils", layout, cx))
+            .child(self.nav(Page::Profiles, Icon::Bookmark, "Profils", layout, cx))
+            .child(self.nav(Page::Catalogue, Icon::Grid, "Modules", layout, cx));
+
+        if let Some(inventory) = self.inventory.as_ref().filter(|i| !i.installed.is_empty()) {
+            let current = self.page.space();
+            let now = Instant::now();
+            routes = routes.child(group("Accès directs"));
+            for (id, page, icon, label) in DIRECT_PAGES {
+                if let Some(module) = self.module(id) {
+                    routes = routes.child(self.device_nav(module, Some((page, icon, label)), page.space() == current, true, layout, cx));
+                }
+            }
+            routes = routes.child(group("Mes appareils"));
+            for module in inventory.installed.iter().filter(|m| m.id != "windows-mic") {
+                let space = module_page(&module.id).and_then(Page::space);
+                let open = space.is_some() && space == current;
+                let shown = open != self.collapsed.contains(&module.id);
+                let mut group = div().flex().flex_none().flex_col()
+                    .child(self.device_nav(module, None, open, !shown, layout, cx));
+                if let Some(space) = space {
+                    let pages = space_pages(space);
+                    if pages.len() > 1 {
+                        let transition = self.device_folds.entry(space)
+                            .or_insert_with(|| ui::Transition::new(shown, now));
+                        let (visible, moving) = transition.update(shown, now, DEVICE_FOLD_TIME);
+                        if moving {
+                            ui::animation_frame(window);
+                        }
+                        if visible > 0. {
+                            let full_height = pages.len() as f32 * (layout.subrow_height() + SUBNAV_GAP);
+                            group = group.child(div().h(px(full_height * visible)).overflow_hidden().child(
+                                div().flex().flex_col().gap(px(SUBNAV_GAP)).ml(px(24.)).pt(px(SUBNAV_GAP))
+                                    .opacity(visible)
+                                    .children(pages.iter().map(|(page, glyph, label)| {
+                                        self.sub_nav(*page, *glyph, label, layout, shown, cx)
+                                    })),
+                            ));
+                        }
+                    }
+                }
+                routes = routes.child(group);
+            }
+        }
+
+        // La marque et l’aide restent visibles, même quand les sous-pages d’un appareil débordent.
+        div()
             .absolute()
             .top(px(SIDEBAR_MARGIN))
-            .left(px(SIDEBAR_MARGIN))
+            .left_0()
             .bottom(px(SIDEBAR_MARGIN))
-            .w(px(SIDEBAR_W))
-            .p(px(12.))
-            .pt(px(18.))
-            // sans boîte : un simple filet sépare la navigation de la page
+            .w(px(layout.width))
+            .px(px(if layout.roomy { 22. } else { 16. }))
+            .pt(px(if layout.roomy { 22. } else { 16. }))
             .border_r_1()
             .border_color(alpha(ui::INK, 0.07))
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(11.))
-                    .px(px(8.))
-                    .child(ui::sidebar_logo(38.))
+                div().size_full().max_w(px(248.)).mx_auto().flex().flex_col()
+                    .child(brand)
+                    .child(div().id("side-devices").flex_1().min_h(px(0.)).overflow_y_scroll().child(routes))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(div().text_size(px(19.)).font_weight(FontWeight::BOLD).child("Rustudio"))
-                            .child(ui::caption("Ton matériel, ton espace")),
+                        div().flex_none().pt(px(if layout.roomy { 12. } else { 6. }))
+                            .border_t_1().border_color(alpha(ui::INK, 0.07))
+                            .flex().flex_col().gap(px(2.))
+                            .child(ui::menu_item("sidebar-help", Some(Icon::Help), "Aide et retours", self.page == Page::Help)
+                                .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Help, cx))))
+                            .child(ui::menu_item("sidebar-github-star", Some(Icon::Star), "Étoile sur GitHub", false)
+                                .child(ui::icon(Icon::External, 13., rgb(ui::TEXT3)))
+                                .on_click(cx.listener(|_, _, _, cx| cx.open_url("https://github.com/samirmedani/rustudio")))),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .mt(px(22.))
-                    .child(self.nav(Page::Devices, Icon::Plug, "Mes appareils", cx))
-                    .child(self.nav(Page::Profiles, Icon::Bookmark, "Profils", cx))
-                    .child(self.nav(Page::Catalogue, Icon::Grid, "Modules", cx)),
-            );
-        // tous les appareils, toujours : on passe de l'un à l'autre sans revenir à l'accueil
-        if let Some(inventory) = self.inventory.as_ref().filter(|i| !i.installed.is_empty()) {
-            let current = self.page.space();
-            let mut list = div().flex().flex_col().gap(px(2.)).mt(px(6.));
-            for module in &inventory.installed {
-                let space = module_space(&module.id);
-                let open = space.is_some() && space == current;
-                // Seules les pages de l'appareil ouvert sont dépliées : la barre reste courte et on voit où on est.
-                // La flèche inverse ce choix (replier l'appareil ouvert, déplier un autre pour y aller vite).
-                let shown = open != self.collapsed.contains(&module.id);
-                list = list.child(self.device_nav(module, open, !shown, cx));
-                if let Some(space) = space.filter(|_| shown) {
-                    let pages = space_pages(space);
-                    if pages.len() > 1 {
-                        let mut subpages = div().flex().flex_col().gap(px(2.)).ml(px(28.));
-                        for (page, glyph, label) in pages {
-                            subpages = subpages.child(self.sub_nav(*page, *glyph, label, cx));
-                        }
-                        list = list.child(subpages);
-                    }
-                }
-            }
-            side = side.child(
-                div()
-                    .id("side-devices")
-                    .flex_1()
-                    .min_h(px(0.))
-                    .overflow_y_scroll()
-                    .mt(px(14.))
-                    .pt(px(12.))
-                    .border_t_1()
-                    .border_color(alpha(ui::INK, 0.07))
-                    .child(div().px(px(12.)).child(ui::caption("MES APPAREILS")))
-                    .child(list),
-            );
-        }
-        side.child(
-            div()
-                .flex_none()
-                .mt_auto()
-                .pt(px(12.))
-                .px(px(6.))
-                .border_t_1()
-                .border_color(alpha(ui::INK, 0.07))
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(ui::menu_item("sidebar-help", Some(Icon::Help), "Aide et retours", self.page == Page::Help)
-                    .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Help, cx))))
-                .child(ui::menu_item("sidebar-github-star", Some(Icon::Star), "Étoile sur GitHub", false)
-                    .child(div().flex_1())
-                    .child(ui::icon(Icon::External, 13., rgb(ui::TEXT3)))
-                    .on_click(cx.listener(|_, _, _, cx| cx.open_url("https://github.com/samirmedani/rustudio")))),
-        )
     }
 
     /// Barre d'état en bas de la fenêtre : appareils, mesures et version.
@@ -904,7 +962,7 @@ impl Mixer {
             .cursor(gpui::CursorStyle::PointingHand)
             .text_color(ui::lerp(rgb(ui::TEXT), rgb(ui::ACCENT), ui::hover_t("version-label")))
             .child(format!("v{}", crate::VERSION))
-            .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Versions, cx)));
+            .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Versions, cx)));
         let version = ui::hoverable(version, "version-label".to_owned());
         let root = div().flex().flex_none().items_center().gap(px(8.));
         if preview.is_none() && (!self.client.is_live() || u["release_build"] == false) {
@@ -970,11 +1028,11 @@ impl Mixer {
             if self.device(id).is_some_and(|d| d.simulated) { format!("{text} · Simulation") } else { text.to_owned() }
         };
         match self.page.space() {
-            None if self.page == Page::Profiles && self.last_space == Some(Space::GoXlr) => "GOXLR MINI · PROFILS DU MIXEUR".into(),
-            Some(Space::GoXlr) => format!("GOXLR MINI · {}", suffix("goxlr-mini").to_uppercase()),
+            None if self.page == Page::Profiles && matches!(self.last_space, Some(Space::GoXlr | Space::Headphones)) => "GOXLR MINI · PROFILS DU MIXEUR".into(),
+            Some(Space::GoXlr | Space::Headphones) => format!("GOXLR MINI · {}", suffix("goxlr-mini").to_uppercase()),
             Some(Space::Mouse) => format!("R5 ULTRA · {}", suffix("attack-shark-r5-ultra").to_uppercase()),
             Some(Space::Keyboard) => format!("MK770 · {}", suffix("cooler-master-mk770").to_uppercase()),
-            Some(Space::Webcam) => format!("LOGITECH C920 · {}", suffix("logitech-c920").to_uppercase()),
+            Some(Space::Webcam | Space::WebcamDevice) => format!("LOGITECH C920 · {}", suffix("logitech-c920").to_uppercase()),
             Some(Space::WinMic) => format!("MICRO · {}", suffix("windows-mic").to_uppercase()),
             None if matches!(self.page, Page::Devices | Page::Profiles) => "TON ESPACE PERSONNEL".into(),
             None if self.page == Page::WindowsAudio => "CE PC".into(),
@@ -992,17 +1050,17 @@ impl Mixer {
         let mut acts = div().relative().flex().items_center().gap(px(10.));
         match self.page {
             Page::Devices => {
-                acts = acts.child(ui::pill("add-device", Some(Icon::Plus), "Ajouter un appareil", Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Catalogue, cx))));
+                acts = acts.child(ui::pill("add-device", Some(Icon::Plus), "Ajouter un appareil", Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Catalogue, cx))));
             }
             Page::Mixer => {
-                acts = acts.child(ui::pill("open-profiles", Some(Icon::Bookmark), "Profils", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Profiles, cx))));
+                acts = acts.child(ui::pill("open-profiles", Some(Icon::Bookmark), "Profils", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Profiles, cx))));
             }
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => acts = acts.child(self.mouse_actions(cx)),
             Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => acts = acts.child(self.keyboard_actions(cx)),
             Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => acts = acts.child(self.webcam_actions(cx)),
             _ => {}
         }
-        if (self.page.space() == Some(Space::GoXlr) || self.winmic.hardware_active)
+        if (self.page.is_goxlr() || self.winmic.hardware_active)
             && let Some((muted, partial)) = self.mic_state() {
                 let (text, glyph, tone) = if !muted {
                     ("Micro actif", Icon::Mic, Tone::Soft)
@@ -1028,7 +1086,7 @@ impl Mixer {
                 ui::menu_item(id, Some(glyph), text, self.page == page).on_click(cx.listener(move |this, _, _, cx| {
                     this.menu_open = false;
                     ui::reset_hover();
-                    this.go_to(page, cx);
+                    this.navigate(page, cx);
                 }))
             };
             acts = acts.child(deferred(
@@ -1049,12 +1107,12 @@ impl Mixer {
         acts
     }
 
-    fn header(&self, cx: &mut Context<Self>) -> Div {
+    fn header(&self, width: f32, cx: &mut Context<Self>) -> Div {
         let module = match self.page.space() {
-            Some(Space::GoXlr) => self.module("goxlr-mini"),
+            Some(Space::GoXlr | Space::Headphones) => self.module("goxlr-mini"),
             Some(Space::Mouse) => self.module("attack-shark-r5-ultra"),
             Some(Space::Keyboard) => self.module("cooler-master-mk770"),
-            Some(Space::Webcam) => self.module("logitech-c920"),
+            Some(Space::Webcam | Space::WebcamDevice) => self.module("logitech-c920"),
             Some(Space::WinMic) => self.module("windows-mic"),
             None => None,
         };
@@ -1078,7 +1136,7 @@ impl Mixer {
                     .text_color(rgb(ui::ACCENT))
                     .child(div().relative().left(px(-2. * t)).child(ui::icon(Icon::ChevronLeft, 16., rgb(ui::ACCENT))))
                     .child(previous.title())
-                    .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate_to(crate::motion::Destination::Back, cx))),
                 "back".to_owned(),
             )
         });
@@ -1087,7 +1145,7 @@ impl Mixer {
             .flex_col()
             .items_start()
             .when_some(back, |d, b| d.child(b))
-            .child(self.header_main(module, cx))
+            .child(self.header_main(module, width, cx))
             .when_some(self.firmware_notice(), |d, notice| d.child(notice.w_full().mb(px(18.))))
     }
 
@@ -1098,7 +1156,7 @@ impl Mixer {
 
     /// Explique les limitations des firmwares alternatifs sur les pages GoXLR.
     fn firmware_notice(&self) -> Option<Div> {
-        if self.page.space() != Some(Space::GoXlr) && !self.winmic.hardware_active {
+        if !self.page.is_goxlr() && !self.winmic.hardware_active {
             return None;
         }
         let device = self.device("goxlr-mini")?;
@@ -1111,30 +1169,32 @@ impl Mixer {
         Some(ui::notice(false, message))
     }
 
-    fn header_main(&self, module: Option<&Descriptor>, cx: &mut Context<Self>) -> Div {
+    fn header_main(&self, module: Option<&Descriptor>, width: f32, cx: &mut Context<Self>) -> Div {
+        let microphone = self.page == Page::WinMic;
+        let title_size = if width < 900. { 32. } else { 38. };
         div()
             .w_full()
             .flex()
             .items_end()
             .justify_between()
             .gap(px(20.))
-            .mb(px(18.))
+            .mb(px(if microphone { 12. } else { 18. }))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_w(px(0.))
-                    .child(ui::eyebrow(self.eyebrow()))
-                    .child(div().mt(px(4.)).text_size(px(40.)).line_height(px(44.)).font_weight(FontWeight::BOLD).child(self.page.title()))
-                    .child(div().mt(px(6.)).text_size(px(15.)).text_color(rgb(ui::TEXT2)).child(self.page.subtitle()))
+                    .when(!microphone, |d| d.child(ui::eyebrow(self.eyebrow())))
+                    .child(ui::title(self.page.title(), title_size).mt(px(4.)).font_weight(FontWeight::BOLD))
+                    .when(!microphone && !self.page.subtitle().is_empty(), |d| d.child(ui::hint(self.page.subtitle()).mt(px(6.))))
                     // l'origine n'est rappelée que pour un module communautaire : sur les modules officiels, c'est du bruit
                     .when_some(module.filter(|m| m.origin == "community"), |d, m| d.child(credit(m).mt(px(8.)))),
             )
             .child(self.header_actions(cx).flex_none().pb(px(4.)))
     }
 
-    fn caption_buttons() -> Div {
+    fn caption_buttons(cx: &mut Context<Self>) -> Div {
         let button = |id: &'static str, glyph: Icon, area: Option<WindowControlArea>, close: bool| {
             let t = ui::hover_t(id);
             let hover = if close { rgb(0xe81123) } else { alpha(ui::INK, 0.06) };
@@ -1160,34 +1220,42 @@ impl Mixer {
             .child(button("win-max", Icon::Square, Some(WindowControlArea::Max), false))
             // la croix range Rustudio dans la barre des tâches au lieu de le fermer : il continue de piloter tes
             // appareils (pour quitter vraiment : l'icône près de l'horloge)
-            .child(button("win-close", Icon::Close, None, true).cursor(gpui::CursorStyle::Arrow).on_click(|_, window, _| window.minimize_window()))
+            .child(button("win-close", Icon::Close, None, true).cursor(gpui::CursorStyle::Arrow)
+                .on_click(cx.listener(|this, _, window, cx| this.minimize_gently(window, cx))))
     }
 
     /// Fenêtre complète : fond, barre latérale, en-tête et page.
-    pub fn shell(&self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub fn shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let viewport = window.viewport_size();
+        let viewport_width = f32::from(viewport.width);
+        let sidebar = SidebarLayout {
+            width: sidebar_width(viewport_width),
+            roomy: f32::from(viewport.height) >= 780.,
+        };
+        let maximum = page_limit(self.page);
+        let gutter = page_gutter(viewport_width);
+        let width = page_content_width(viewport_width, maximum, 2. * gutter);
         let page: AnyElement = match self.page {
             Page::Devices => self.devices_view(window, cx).into_any_element(),
             Page::Profiles => self.profiles_view(window, cx).into_any_element(),
             Page::Mixer => self.mixer_view(cx).into_any_element(),
             Page::Mouse | Page::MouseSensitivity | Page::MouseSensor | Page::MousePower => self.mouse_view(window, cx).into_any_element(),
-            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(page_width(window), cx).into_any_element(),
+            Page::Keyboard | Page::KeyboardSettings | Page::KeyboardPaint | Page::KeyboardShortcuts | Page::KeyboardInfo => self.keyboard_view(width, cx).into_any_element(),
             Page::KeyboardMacros => self.macros_view(window, cx).into_any_element(),
             Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => self.webcam_view(window, cx).into_any_element(),
             Page::WindowsAudio => self.win_audio(window,cx).into_any_element(),
-            Page::WinMic => self.winmic_view(page_width(window), cx).into_any_element(),
+            Page::WinMic => self.winmic_view(width, window, cx).into_any_element(),
             Page::Catalogue | Page::Versions | Page::Help | Page::Settings => self.library_view(self.page, window, cx).into_any_element(),
-            Page::Go(section) => self.go_controls(section, page_width(window), cx).into_any_element(),
+            Page::Go(section) => self.go_controls(section, width, cx).into_any_element(),
         };
-        // Changement de page : le contenu glisse et apparaît en douceur.
+        // Le contenu sort avant le changement, sans monter deux écrans à la fois.
         let content = div()
-            .relative()
-            .child(self.header(cx))
-            .child(page)
-            .with_animation(
-                ElementId::NamedInteger("page-in".into(), self.nav_count),
-                gpui::Animation::new(std::time::Duration::from_millis(260)).with_easing(gpui::ease_out_quint()),
-                |d, t| d.opacity(0.2 + 0.8 * t).top(px(14. * (1. - t))),
-            );
+            .opacity(self.surface_opacity(crate::motion::Surface::Page, window))
+            .child(self.header(width, cx))
+            .child(page);
+        #[cfg(debug_assertions)]
+        let content = content.on_children_prepainted(|bounds, _, _| crate::layout_check::content(&bounds));
+        let window_opacity = self.motion.window_opacity(window);
         div()
             .id("rustudio")
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -1200,23 +1268,24 @@ impl Mixer {
             .size_full()
             .font_family(ui::FONT)
             .text_color(rgb(ui::TEXT))
-            .text_size(px(14.))
+            .text_size(px(ui::BODY_TEXT))
             .bg(rgb(ui::BG))
             .child(ui::ambient())
             .child(
                 div()
+                    .opacity(window_opacity)
                     .absolute()
                     .top_0()
                     .left_0()
                     .right_0()
                     .bottom(px(STATUS_BAR_H))
-                    .child(self.sidebar(cx))
+                    .child(self.sidebar(sidebar, window, cx))
                     .child(
                         div()
                             .absolute()
                             .top_0()
                             .bottom_0()
-                            .left(px(SIDEBAR_MARGIN + SIDEBAR_W))
+                            .left(px(sidebar.width))
                             .right_0()
                             // zone de déplacement : elle s'arrête avant les trois boutons, sinon Windows y voit la barre de titre
                             .child(div().absolute().top_0().left_0().right(px(3. * 46.)).h(px(TITLE_BAR_H)).window_control_area(WindowControlArea::Drag))
@@ -1237,12 +1306,11 @@ impl Mixer {
                                     .child(
                                         // la molette passe ici avant le défilement de la page : elle glisse au lieu de sauter
                                         div()
-                                            .pt(px(14.))
+                                            .pt(px(if width >= 900. { 24. } else { 14. }))
                                             .pb(px(28.))
-                                            .pl(px(PAGE_LEFT))
-                                            .pr(px(PAGE_RIGHT))
+                                            .px(px(gutter))
                                             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| this.wheel(event, cx)))
-                                            .child(div().mt(px(-preview_scroll())).w_full().max_w(px(PAGE_MAX)).mx_auto().child(content)),
+                                            .child(div().mt(px(-preview_scroll())).w_full().max_w(px(maximum)).mx_auto().child(content)),
                                     ),
                             ),
                     ),
@@ -1250,7 +1318,7 @@ impl Mixer {
             .child(
                 div().absolute().left_0().right_0().bottom_0().child(self.status_bar(cx)),
             )
-            .child(Self::caption_buttons())
+            .child(Self::caption_buttons(cx))
     }
 
     /// Liste déroulante : bouton, puis choix affichés au-dessus du reste de la page.
@@ -1458,6 +1526,29 @@ impl Mixer {
     }
 
     fn profiles_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        use crate::motion::{Destination, Surface};
+        let selected = match self.motion.target() {
+            Some(Destination::Profiles(apps)) => apps,
+            _ => self.application_profiles_tab,
+        };
+        let tabs = self.motion.tabs(Surface::Profiles, selected as usize, [
+            (false, Icon::Sliders, "Mixeur"),
+            (true, Icon::Grid, "Par application"),
+        ].into_iter().map(|(apps, icon, label)| {
+            ui::motion_tab(("profile-tab", usize::from(apps)), icon, label, selected == apps)
+                .on_click(cx.listener(move |this, _, _, cx| this.navigate_to(Destination::Profiles(apps), cx)))
+                .into_any_element()
+        }).collect());
+        let body = if self.application_profiles_tab {
+            self.application_profiles_view(cx)
+        } else {
+            self.mixer_profiles_view(window, cx)
+        };
+        div().flex().flex_col().gap(px(16.)).child(tabs)
+            .child(body.opacity(self.surface_opacity(Surface::Profiles, window)))
+    }
+
+    fn mixer_profiles_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let enabled = self.enabled();
         let editing = self.profile_focus.is_focused(window);
         let input = ui::field("profile-name", &self.profile_focus, &self.profile_name, "Nom du profil (facultatif)", editing, true)
@@ -1589,14 +1680,14 @@ impl Mixer {
                                 .h(px(38.))
                                 .px(px(18.))
                                 .child(ui::icon(Icon::ChevronRight, 15., rgb(ui::WHITE)))
-                                .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx))),
+                                .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx))),
                         )
                     })
                     .when(target.is_none(), |d| d.child(ui::caption("Réglages à venir"))),
             );
         match target {
             Some(page) => ui::lift(card, ElementId::Name(format!("card-{}", module.id).into()))
-                .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)))
                 .into_any_element(),
             None => card.into_any_element(),
         }
@@ -1626,13 +1717,13 @@ impl Mixer {
                 .flex_row()
                 .items_center()
                 .gap(px(16.)), "card-audio")
-                .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::WindowsAudio, cx)))
+                .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::WindowsAudio, cx)))
                 .child(ui::chip(Icon::Volume, ui::ACCENT, 34.))
                 .child(div().flex().flex_col().flex_1().min_w(px(0.)).child(ui::title("Son Windows", 15.)).child(hint("Micros, casques et sorties actives, avec ceux que Windows utilise par défaut.")))
                 .child(
                     ui::pill("open-audio", None, "Afficher", Tone::Plain)
                         .child(ui::icon(Icon::ChevronRight, 15., rgb(ui::TEXT)))
-                        .on_click(cx.listener(|this, _, _, cx| this.go_to(Page::WindowsAudio, cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::WindowsAudio, cx))),
                 ),
         )
     }
@@ -1736,14 +1827,43 @@ fn grade_text(grade: Option<Grade>) -> u32 {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn la_navigation_garde_de_la_place_aux_pages_sur_une_petite_fenetre() {
+        assert_eq!(sidebar_width(960.), 256.);
+        assert_eq!(sidebar_width(1280.), sidebar_width(960.));
+        assert!(sidebar_width(1920.) > sidebar_width(1280.));
+        assert_eq!(sidebar_width(3840.), 292.);
+        assert!((page_content_width(960., PAGE_MAX, 2. * page_gutter(960.)) - 661.76).abs() < 0.1);
+    }
+
+    #[test]
+    fn le_micro_remplit_la_fenetre_et_garde_une_largeur_lisible() {
+        let width = |viewport| page_content_width(viewport, MIC_PAGE_MAX, 2. * page_gutter(viewport));
+        assert!(width(960.) > 650. && width(960.) < 700.);
+        assert!(width(1280.) > width(960.));
+        assert_eq!(width(1920.), MIC_PAGE_MAX);
+        assert_eq!(width(2560.), width(1920.));
+    }
+
+    #[test]
     fn une_destination_micro_dans_la_navigation_et_les_anciens_liens() {
         use super::{Page, Space, space_pages};
         let windows = Page::from_name("windows-mic").unwrap();
         let ancienne = Page::from_name("mic").unwrap();
         assert_eq!(windows.destination(), Page::WinMic);
         assert_eq!(ancienne.destination(), Page::WinMic);
-        assert_eq!(space_pages(Space::WinMic).len(), 1);
+        assert_eq!(DIRECT_PAGES.iter().filter(|(_, page, _, _)| *page == Page::WinMic).count(), 1);
         assert!(!space_pages(Space::GoXlr).iter().any(|(p, _, _)| p.destination() == Page::WinMic));
+    }
+
+    #[test]
+    fn acces_directs_et_details_du_materiel_ont_des_destinations_distinctes() {
+        let casque = Page::from_name("headphones").unwrap();
+        assert_eq!(DIRECT_PAGES.map(|(_, page, _, _)| page), [Page::WinMic, casque, Page::Webcam]);
+        assert!(!space_pages(Space::GoXlr).iter().any(|(page, _, _)| *page == casque));
+        assert_eq!(module_page("logitech-c920"), Some(Page::WebcamInfo));
+        assert!(Page::Webcam.has_webcam_preview());
+        assert!(!Page::WebcamInfo.has_webcam_preview());
+        assert_ne!(Page::Webcam.space(), Page::WebcamInfo.space());
     }
     use super::*;
 

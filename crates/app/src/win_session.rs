@@ -257,19 +257,10 @@ pub fn latency_test(client: &Client) -> Result<Value, String> {
 }
 
 pub fn show_mic(state: &str) {
-    let muted = !state.is_empty();
-    let subtitle = match state {
-        "stream" => "Coupé du stream",
-        "chat" => "Coupé de Discord",
-        "phones" => "Coupé du casque",
-        "lineout" => "Coupé des enceintes",
-        "all" => "Toutes les sorties",
-        _ => "Micro ouvert",
+    let (title, rgb) = match state {
+        "" => ("Micro actif", 0x65b982),
+        "all" => ("Micro coupé", 0xe97b80),
+        _ => ("Micro coupé en partie", 0xdeae6a),
     };
-    osd::show(osd::Notice {
-        title: if muted { "Micro coupé" } else { "Micro actif" }.into(),
-        subtitle: subtitle.into(),
-        rgb: if muted { 0xff3b30 } else { 0x34c759 },
-        icon: if muted { "mic-off" } else { "mic" },
-    });
+    osd::show(osd::Notice { title, rgb });
 }

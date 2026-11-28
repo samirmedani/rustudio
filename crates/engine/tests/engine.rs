@@ -257,6 +257,79 @@ fn chaine_de_la_voix_sous_firmware_rustudio() {
 }
 
 #[test]
+fn changer_de_prereglage_sort_de_la_voix_brute_sans_couper_le_retour() {
+    use rustudio_core::{micchain, micdsp::Params};
+    let b = Bench::with_fw([1, 2, 99, 1]);
+    let chain = || Params::decode(b.sim.lock().dev.mic_chain.as_deref().unwrap()).unwrap();
+    b.act("mic-listen", json!({"seconds": 10, "level": 12}));
+    b.act("mic-ab", json!({"bypass": true}));
+    b.settle();
+    assert!(!chain().active());
+    assert!(b.ctl.act("mic-preset", &json!({"name": "inconnu"})).is_err());
+    assert!(b.ctl.lock().dsp_bypassed());
+
+    b.act("mic-preset", json!({"name": "podcast"}));
+    b.settle();
+    let podcast = chain();
+    assert!(podcast.active());
+    assert!(!b.ctl.lock().dsp_bypassed());
+    b.act("mic-preset", json!({"name": "anti-bruit"}));
+    b.settle();
+    let anti_clavier = chain();
+    assert!(anti_clavier.active());
+    assert_ne!(podcast, anti_clavier);
+    assert!(b.ctl.lock().listening());
+    assert!(b.sim.lock().dev.route_on("Microphone", "Headphones"));
+    assert_eq!(b.sim.lock().dev.volume("MicMonitor"), 12);
+
+    // La porte reste ouverte au début d'une pause. Mesurer la voix puis le fond une fois la porte refermée.
+    let voice_end = 12_000;
+    let samples: Vec<f32> = (0..60_000).map(|i| {
+        let amp = if i < voice_end { 0.08 } else { 0.005 };
+        amp * (i as f32 * 0.13).sin()
+    }).collect();
+    let podcast_audio = micchain::render(&podcast, &samples);
+    let anti_audio = micchain::render(&anti_clavier, &samples);
+    let peak = |audio: &[f32]| audio.iter().fold(0.0_f32, |p, y| p.max(y.abs()));
+    assert!(peak(&anti_audio[voice_end / 2..voice_end]) > 0.025);
+    assert!(peak(&podcast_audio[voice_end / 2..voice_end]) > 0.025);
+    let end = samples.len() - 4800;
+    assert!(peak(&anti_audio[end..]) < peak(&podcast_audio[end..]) * 0.25);
+
+    // Le contournement nécessaire à l’analyse vocale reste prioritaire.
+    b.ctl.lock().voice_capture = true;
+    b.act("mic-preset", json!({"name": "podcast"}));
+    b.settle();
+    assert!(!chain().active());
+}
+
+#[test]
+fn profil_par_application_retablit_les_filtres_sans_modifier_le_preampli_ni_le_retour() {
+    let b = Bench::with_fw([1, 2, 99, 1]);
+    b.act("mic", json!({"type":"condenser","gain_db":25}));
+    b.act("mic-listen", json!({"seconds":20,"level":12}));
+    b.act("mic-preset", json!({"name":"podcast"}));
+    let before = b.ctl.lock().state.clone();
+    b.act("mic-preset", json!({"name":"brut"}));
+    let profile = json!({"dsp":before.dsp,"fx":before.fx,"mic_preset":"podcast"});
+    b.act("mic-profile", profile.clone());
+    b.settle();
+    let g = b.ctl.lock();
+    assert_eq!(g.state.dsp, before.dsp);
+    assert_eq!(g.state.fx, before.fx);
+    assert_eq!(g.state.mic.gain_db, 25);
+    assert_eq!(g.state.mic.kind, "condenser");
+    assert!(g.listening());
+    drop(g);
+    assert_eq!(b.sim.lock().dev.volume("MicMonitor"),12);
+    let mut extra = profile.clone();
+    extra["gain_db"] = json!(70);
+    assert!(b.ctl.act("mic-profile", &extra).is_err());
+    b.ctl.lock().voice_capture = true;
+    assert!(b.ctl.act("mic-profile", &profile).is_err());
+}
+
+#[test]
 fn api_repond_pendant_un_blocage_usb() {
     let b = Bench::new();
     b.sim.hang(1.5);

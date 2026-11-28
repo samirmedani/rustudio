@@ -7,6 +7,18 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+pub type Resolution = (u32, u32);
+
+/// Modes utilisables dans l’aperçu C920. Le 2304 × 1536 YUY2 peut faire décrocher le flux sous Windows.
+pub fn supports_preview_resolution((width, height): Resolution) -> bool {
+    width >= 320 && height >= 180 && (width, height) != (2304, 1536)
+}
+
+#[cfg(any(windows, test))]
+fn accepts_native_resolution(requested: Option<Resolution>, mode: Resolution) -> bool {
+    supports_preview_resolution(mode) && requested.is_none_or(|requested| requested == mode)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     Idle,
@@ -72,26 +84,25 @@ impl WebcamPreview {
     }
 
     /// Démarre la capture vidéo en arrière-plan (sans effet si déjà active).
-    pub fn start(&mut self) {
+    pub fn start(&mut self, resolution: Option<Resolution>) {
         if self.active {
             return;
         }
+        let resolution = resolution.filter(|&mode| supports_preview_resolution(mode));
         self.active = true;
         let stop = Arc::new(AtomicBool::new(false));
         self.stop = stop.clone();
-        let state = self.state.clone();
-        if let Ok(mut s) = state.lock() {
-            s.status = Status::Starting;
-        }
+        let state = Arc::new(Mutex::new(SharedState { status: Status::Starting, frame: None }));
+        self.state = state.clone();
         #[cfg(windows)]
         {
             let _ = std::thread::Builder::new()
                 .name("c920-preview".into())
-                .spawn(move || win::run(stop, state));
+                .spawn(move || win::run(stop, state, resolution));
         }
         #[cfg(not(windows))]
         {
-            let _ = stop;
+            let _ = (stop, resolution);
             if let Ok(mut s) = state.lock() {
                 s.status = Status::Idle;
             };
@@ -112,9 +123,9 @@ impl WebcamPreview {
     }
 
     /// Redémarre proprement la capture (ex. bouton « Réessayer » quand OBS vient de libérer la caméra).
-    pub fn restart(&mut self) {
+    pub fn restart(&mut self, resolution: Option<Resolution>) {
         self.stop();
-        self.start();
+        self.start(resolution);
     }
 
     /// Renvoie l'état courant et la dernière image capturée (clonage O(1) de l'Arc).
@@ -212,7 +223,7 @@ pub fn probe_one_frame() -> Result<(u32, u32), String> {
 
 #[cfg(windows)]
 mod win {
-    use super::{PreviewFrame, SharedState, Status, copy_rgb32_to_bgra, is_c920_video_symlink, score_native_mode};
+    use super::{Resolution, PreviewFrame, SharedState, Status, accepts_native_resolution, copy_rgb32_to_bgra, is_c920_video_symlink, score_native_mode, supports_preview_resolution};
     use std::sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -221,7 +232,7 @@ mod win {
     use windows::Win32::Media::MediaFoundation::{
         IMF2DBuffer, IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, IMFSourceReader, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
-        MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+        MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
         MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
         MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_STREAMTICK,
         MF_VERSION, MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromMediaSource, MFEnumDeviceSources,
@@ -354,7 +365,7 @@ mod win {
         }
     }
 
-    fn open_camera() -> Result<OpenedCamera, Status> {
+    fn open_camera(resolution: Option<Resolution>) -> Result<OpenedCamera, Status> {
         let activate = match find_c920_activate() {
             Ok(Some(a)) => a,
             Ok(None) => return Err(Status::Disconnected),
@@ -378,20 +389,38 @@ mod win {
 
             let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
             // Choisit d'abord une résolution native légère (640x360 .. 960x540 en 16:9) si disponible.
-            let mut best: Option<(i32, IMFMediaType)> = None;
-            for idx in 0..64u32 {
+            let mut best: Option<((i32, u32), IMFMediaType)> = None;
+            for idx in 0..256u32 {
                 let Ok(mt) = reader.GetNativeMediaType(stream, idx) else {
                     break;
                 };
                 if let Some((w, h)) = read_dims(&mt) {
-                    let sc = score_native_mode(w, h);
+                    if !accepts_native_resolution(resolution, (w, h)) { continue; }
+                    let rate = mt.GetUINT64(&MF_MT_FRAME_RATE).unwrap_or_default();
+                    let fps = (rate >> 32) as u32 / (rate as u32).max(1);
+                    let sc = (score_native_mode(w, h), fps);
                     if best.as_ref().is_none_or(|(b, _)| sc > *b) {
                         best = Some((sc, mt));
                     }
                 }
             }
             if let Some((_, native_mt)) = best {
-                let _ = reader.SetCurrentMediaType(stream, None, &native_mt);
+                if let Err(e) = reader.SetCurrentMediaType(stream, None, &native_mt) {
+                    let compatible_default = resolution.is_none()
+                        && reader.GetCurrentMediaType(stream).ok()
+                            .and_then(|current| read_dims(&current))
+                            .is_some_and(supports_preview_resolution);
+                    if !compatible_default {
+                        let _ = source.Shutdown();
+                        return Err(classify_err(&e, "Résolution refusée par le pilote"));
+                    }
+                }
+            } else {
+                let _ = source.Shutdown();
+                return Err(Status::Error(match resolution {
+                    Some((w, h)) => format!("Le pilote ne propose pas {w} × {h} pour cet aperçu."),
+                    None => "Aucune résolution compatible avec l’aperçu C920.".into(),
+                }));
             }
 
             // Demande une sortie RGB32 (BGRA 32 bits) via la conversion matérielle de Media Foundation.
@@ -401,6 +430,12 @@ mod win {
             })?;
             let _ = rgb_mt.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video);
             let _ = rgb_mt.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32);
+            if let Some((w, h)) = resolution {
+                if let Err(e) = rgb_mt.SetUINT64(&MF_MT_FRAME_SIZE, (u64::from(w) << 32) | u64::from(h)) {
+                    let _ = source.Shutdown();
+                    return Err(classify_err(&e, "Taille du format RGB32"));
+                }
+            }
             if let Err(e) = reader.SetCurrentMediaType(stream, None, &rgb_mt) {
                 let _ = source.Shutdown();
                 return Err(classify_err(&e, "Format RGB32 refusé par la C920"));
@@ -410,7 +445,14 @@ mod win {
                 let _ = source.Shutdown();
                 classify_err(&e, "Lecture du format actif")
             })?;
-            let (width, height) = read_dims(&cur).unwrap_or((640, 360));
+            let Some((width, height)) = read_dims(&cur).filter(|&mode| supports_preview_resolution(mode)) else {
+                let _ = source.Shutdown();
+                return Err(Status::Error("Le pilote a choisi une résolution incompatible avec l’aperçu C920.".into()));
+            };
+            if resolution.is_some_and(|mode| mode != (width, height)) {
+                let _ = source.Shutdown();
+                return Err(Status::Error("Le pilote a changé la résolution demandée.".into()));
+            }
             let default_stride = read_stride(&cur, width);
             Ok(OpenedCamera { source, reader, width, height, default_stride })
         }
@@ -427,6 +469,9 @@ mod win {
             if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0 as u32) != 0 {
                 if let Ok(cur) = cam.reader.GetCurrentMediaType(stream) {
                     if let Some((w, h)) = read_dims(&cur) {
+                        if !supports_preview_resolution((w, h)) {
+                            return Err(Status::Error("Le flux a basculé sur une résolution incompatible avec l’aperçu C920.".into()));
+                        }
                         cam.width = w;
                         cam.height = h;
                         cam.default_stride = read_stride(&cur, w);
@@ -477,7 +522,7 @@ mod win {
     pub fn probe_one_frame() -> Result<(u32, u32), String> {
         let _slot = capture_slot().lock().unwrap_or_else(|e| e.into_inner());
         let _guard = ComMfGuard::init()?;
-        let mut cam = open_camera().map_err(|s| format!("{s:?}"))?;
+        let mut cam = open_camera(None).map_err(|s| format!("{s:?}"))?;
         let mut buf = Vec::new();
         for _ in 0..15 {
             match read_one_sample(&mut cam, &mut buf) {
@@ -489,7 +534,7 @@ mod win {
         Err("Aucune image reçue dans le délai imparti.".into())
     }
 
-    pub fn run(stop: Arc<AtomicBool>, state: Arc<Mutex<SharedState>>) {
+    pub fn run(stop: Arc<AtomicBool>, state: Arc<Mutex<SharedState>>, resolution: Option<Resolution>) {
         let _slot = capture_slot().lock().unwrap_or_else(|e| e.into_inner());
         if stop.load(Ordering::SeqCst) {
             return;
@@ -503,7 +548,7 @@ mod win {
                 return;
             }
         };
-        let mut cam = match open_camera() {
+        let mut cam = match open_camera(resolution) {
             Ok(c) => c,
             Err(st) => {
                 if !stop.load(Ordering::SeqCst) {
@@ -578,6 +623,15 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn le_mode_c920_instable_est_exclu_meme_en_automatique() {
+        assert!(!accepts_native_resolution(None, (2304, 1536)));
+        assert!(!accepts_native_resolution(Some((2304, 1536)), (2304, 1536)));
+        assert!(accepts_native_resolution(None, (1920, 1080)));
+        assert!(accepts_native_resolution(Some((1920, 1080)), (1920, 1080)));
+        assert!(!accepts_native_resolution(Some((1920, 1080)), (1280, 720)));
+    }
 
     #[test]
     fn reconnait_uniquement_les_c920_logitech() {

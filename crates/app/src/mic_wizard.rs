@@ -1,8 +1,6 @@
-//! Studio Micro guidé « Régler mon micro » : espace dédié pleine page en 8 étapes pour configurer
-//! son micro pas à pas, avec explications simples, contrôles complets (Gain, Noise Gate, IA RNNoise,
-//! Égaliseur 6 bandes + fréquences, Compresseur complet, De-esser, Limiteur), écoute directe Avant / Après,
-//! vumètres DSP en temps réel et annulation avec restauration intégrale des anciens réglages.
+//! Réglages détaillés du micro GoXLR, avec analyse de la voix sur demande.
 use crate::desktop::hint;
+use crate::mic_filters::{MicFilter, mic_filter_columns, mic_signal, softer_compressor};
 use crate::mixer::{Mixer, fmt_num};
 use crate::ui::{self, Icon, Tone, alpha, rgb};
 use gpui::{AnyElement, Context, Div, FontWeight, SharedString, div, prelude::*, px};
@@ -13,59 +11,22 @@ use rustudio_core::{
 use serde_json::{Value, json};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 
-/// Trois phrases de live/radio, une toutes les 5 secondes pendant la lecture.
-const SENTENCES: [&str; 3] = [
-    "« Salut tout le monde, bienvenue en direct sur le live ! »",
-    "« Aujourd’hui, on règle mon micro étape par étape pour avoir un vrai son radio. »",
-    "« Si vous m’entendez bien chaud et bien propre, dites-le dans le chat ! »",
-];
-const SENTENCE_S: f64 = 5.0;
-const LOUD_SENTENCE: &str = "« Oh non, c’est pas possible, on l’avait presque ! »";
-/// Volume du retour de ta voix dans le casque pendant l'assistant (sur 255).
-const LISTEN_LEVEL: i64 = 185;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
-    Mic,
-    Measure,
     Gain,
-    Noise,
-    Eq,
-    Radio,
     Compare,
-    Done,
+    Measure,
 }
 
-const STEPS: [(Step, &str); 8] = [
-    (Step::Mic, "1. Micro"),
-    (Step::Measure, "2. Mesure"),
-    (Step::Gain, "3. Gain"),
-    (Step::Noise, "4. Anti-bruit"),
-    (Step::Eq, "5. Égaliseur"),
-    (Step::Radio, "6. Radio FM"),
-    (Step::Compare, "7. Comparer"),
-    (Step::Done, "8. Résumé"),
+const TABS: [(Step, Icon, &str); 3] = [
+    (Step::Gain, Icon::Activity, "Bilan"),
+    (Step::Compare, Icon::Headphones, "Comparer"),
+    (Step::Measure, Icon::Wave, "Analyse"),
 ];
-
-impl Step {
-    pub fn index(self) -> usize {
-        STEPS.iter().position(|(s, _)| *s == self).unwrap_or(0)
-    }
-
-    #[cfg(test)]
-    pub fn next(self) -> Option<Step> {
-        STEPS.get(self.index() + 1).map(|(s, _)| *s)
-    }
-
-    #[cfg(test)]
-    pub fn prev(self) -> Option<Step> {
-        self.index().checked_sub(1).and_then(|i| STEPS.get(i)).map(|(s, _)| *s)
-    }
-}
 
 /// Copie complète des réglages micro avant l'ouverture de l'assistant, pour restaurer à l'identique si on annule.
 #[derive(Clone, Debug)]
@@ -88,6 +49,7 @@ impl MicSnapshot {
                 "enabled": state["mic_ns"]["enabled"] == true,
                 "strength": state["mic_ns"]["strength"].as_i64().unwrap_or(90),
                 "grace_ms": state["mic_ns"]["grace_ms"].as_i64().unwrap_or(200),
+                "device": state["mic_ns"]["device"].clone(),
             })
         });
         Self {
@@ -122,9 +84,6 @@ pub struct MicWizard {
     chosen: Option<String>,
     take: Option<Take>,
     playing: Option<String>,
-    listening: bool,
-    /// Génération partagée de la boucle d'écoute : incrémentée à chaque arrêt pour garantir zéro fuite audio.
-    listen_gen: Arc<AtomicU64>,
     /// Numéro de la mesure en cours : une mesure annulée qui finit plus tard ne touche plus à rien.
     run: u64,
     /// Numéro de la lecture audio en cours : une réouverture n'est jamais touchée par une ancienne lecture.
@@ -136,7 +95,6 @@ impl Drop for MicWizard {
         if let Some(cancel) = self.cancel.as_ref() {
             cancel.store(true, Ordering::Relaxed);
         }
-        self.listen_gen.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -149,7 +107,7 @@ impl Default for MicWizard {
 impl MicWizard {
     pub fn new() -> Self {
         MicWizard {
-            step: Step::Mic,
+            step: Step::Gain,
             snapshot: None,
             cancel: None,
             job: Value::Null,
@@ -157,15 +115,9 @@ impl MicWizard {
             chosen: None,
             take: None,
             playing: None,
-            listening: false,
-            listen_gen: Arc::new(AtomicU64::new(0)),
             run: 0,
             play_run: 0,
         }
-    }
-
-    pub fn is_listening(&self) -> bool {
-        self.listening
     }
 
     fn busy(&self) -> bool {
@@ -173,27 +125,47 @@ impl MicWizard {
     }
 }
 
-fn is_cancelled_error(e: &str) -> bool {
-    matches!(e, "Analyse annulée." | "Mesure annulée.")
+fn measure_prompt(job: &Value, now: f64) -> (&'static str, &'static str, Option<u64>) {
+    let phase = job["phase"].as_str();
+    let (title, detail) = match phase {
+        Some("silence") => ("Reste silencieux", "Rustudio mesure le bruit de la pièce."),
+        Some("reading") if job["retry"].as_u64().unwrap_or(0) > 0 => (
+            "Parle normalement", "Le gain a été baissé. Continue avec tes propres mots.",
+        ),
+        Some("reading") => ("Parle normalement", "Parle comme en appel, avec tes propres mots."),
+        Some("loud") => ("Parle plus fort", "Hausse un peu la voix pour vérifier la marge avant saturation."),
+        Some("prepare") | None => ("Prépare-toi", "La mesure commence par quelques secondes de silence."),
+        _ => ("Analyse en cours", "Rustudio calcule le gain et le bilan de ta voix."),
+    };
+    let countdown = job["phase_end"].as_f64()
+        .map(|deadline| deadline - now)
+        .filter(|left| *left > 0. && matches!(phase, Some("silence" | "reading" | "loud" | "prepare")))
+        .map(|left| left.ceil() as u64);
+    (title, detail, countdown)
 }
 
-/// Empreinte vocale valable pour le micro actuellement sélectionné (même logique que State::voice_for_mic).
-fn voice_print_valid(state: &Value) -> bool {
-    let vp = &state["voice_print"];
-    if !vp.is_object() {
-        return false;
+fn note_state(note: &Value) -> ui::State {
+    match note["lvl"].as_str() {
+        Some("warn") => ui::State::Warn,
+        Some("ok") => ui::State::Ok,
+        _ => ui::State::Info,
     }
-    let mic = &state["mic"];
-    let Some(kind) = mic["type"].as_str() else {
-        return false;
-    };
-    if vp["mic_type"].as_str() != Some(kind) {
-        return false;
+}
+
+fn note_text(note: &Value) -> Option<String> {
+    let text = note["t"].as_str()?;
+    // Les moteurs déjà installés renvoient encore l’ancienne formulation.
+    if let Some((frequency, _)) = text.strip_prefix("Ronflement à ").and_then(|s| s.split_once(" : ")) {
+        return Some(format!("Ronflement à {frequency}. Éloigne le câble du micro des alimentations et des multiprises."));
     }
-    match (vp["model"].as_str(), mic["model"].as_str()) {
-        (Some(a), Some(b)) => a == b,
-        _ => true,
+    if text.starts_with("Ta voix a saturé pendant l’enregistrement :") {
+        return Some("Ta voix a saturé pendant la mesure. Vérifie le gain, puis relance la mesure si nécessaire.".into());
     }
+    Some(text.into())
+}
+
+fn is_cancelled_error(e: &str) -> bool {
+    matches!(e, "Analyse annulée." | "Mesure annulée.")
 }
 
 /// Réglages d'un préréglage tels qu'ils partiraient vers la GoXLR (traitements coupés neutres).
@@ -317,30 +289,6 @@ fn radio_dose_params(info: Option<&Value>, dose: &str) -> (i64, i64, i64, i64, i
     fallback
 }
 
-/// Encadré pédagogique clair qui explique « pourquoi on fait ça » sans jargon technique.
-fn lesson(glyph: Icon, colour: u32, title: &str, text: impl Into<SharedString>) -> Div {
-    div()
-        .p(px(14.))
-        .rounded(px(12.))
-        .bg(alpha(colour, 0.08))
-        .border_1()
-        .border_color(alpha(colour, 0.22))
-        .flex()
-        .items_start()
-        .gap(px(12.))
-        .child(div().flex_none().mt(px(2.)).child(ui::icon(glyph, 18., rgb(colour))))
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(div().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(ui::TEXT)).child(title.to_owned()))
-                .child(div().text_size(px(12.5)).line_height(px(18.)).text_color(rgb(ui::TEXT2)).child(text.into())),
-        )
-}
-
 /// Formatage lisible d'un ratio de compresseur (index GoXLR -> « 5,6:1 »).
 fn ratio_text(idx: f64) -> String {
     let i = idx.round().clamp(0., (RATIOS.len() - 1) as f64) as usize;
@@ -406,11 +354,13 @@ pub(crate) fn dsp_meter_pill(label: &'static str, reduction_db: f64, enabled: bo
 }
 
 impl Mixer {
-    pub fn open_mic_wizard(&mut self, cx: &mut Context<Self>) {
+    pub fn open_mic_wizard(&mut self, step: Step, cx: &mut Context<Self>) {
+        self.voice.cancel_preview();
         if !self.winmic.hardware_active {
             self.go_to(crate::desktop::Page::Go(crate::goxlr::Section::Microphone), cx);
         }
         let mut w = MicWizard::new();
+        w.step = step;
         if let Some(v) = self.go.view.as_ref() {
             w.snapshot = Some(MicSnapshot::capture(&v.state));
             if let Some(p) = v.state["mic_preset"]
@@ -426,16 +376,10 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Coupe immédiatement l'état local d'écoute de l'assistant (appelé aussi par cut_monitor).
-    pub(crate) fn stop_wizard_listen_state(&mut self) {
-        if let Some(w) = self.wizard.as_mut() {
-            w.listening = false;
-            w.listen_gen.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
     /// Enregistrer et terminer : garde les nouveaux réglages, coupe systématiquement le retour casque et l'A/B.
     fn finish_mic_wizard(&mut self, cx: &mut Context<Self>) {
+        self.voice.cancel_preview();
+        self.go.end_monitor();
         let mut cancel_job = false;
         let mut restore_monitor_zero = true;
         if let Some(w) = self.wizard.as_mut() {
@@ -443,8 +387,6 @@ impl Mixer {
                 cancel.store(true, Ordering::Relaxed);
                 cancel_job = true;
             }
-            w.listening = false;
-            w.listen_gen.fetch_add(1, Ordering::SeqCst);
             w.play_run += 1;
             if let Some(snap) = w.snapshot.as_ref() {
                 restore_monitor_zero = snap.mic_monitor == 0;
@@ -457,7 +399,7 @@ impl Mixer {
             if cancel_job {
                 let _ = client.go_command("job-cancel", json!({}));
             }
-            let _ = client.set_mic_listen(0, None);
+            let _ = client.stop_mic_listen();
             let _ = client.go_command("mic-ab", json!({"bypass": false}));
             if restore_monitor_zero {
                 let _ = client.go_command("volume", json!({"channel": "MicMonitor", "value": 0}));
@@ -479,14 +421,14 @@ impl Mixer {
 
     /// Annuler et restaurer : remet tous les réglages micro d'avant l'assistant, coupe le retour et ferme.
     fn cancel_mic_wizard(&mut self, cx: &mut Context<Self>) {
+        self.voice.cancel_preview();
+        self.go.end_monitor();
         let mut cancel_job = false;
         let snapshot = if let Some(w) = self.wizard.as_mut() {
             if let Some(cancel) = w.cancel.take() {
                 cancel.store(true, Ordering::Relaxed);
                 cancel_job = true;
             }
-            w.listening = false;
-            w.listen_gen.fetch_add(1, Ordering::SeqCst);
             w.play_run += 1;
             w.snapshot.clone()
         } else {
@@ -499,7 +441,7 @@ impl Mixer {
             if cancel_job {
                 let _ = client.go_command("job-cancel", json!({}));
             }
-            let _ = client.set_mic_listen(0, None);
+            let _ = client.stop_mic_listen();
             let _ = client.go_command("mic-ab", json!({"bypass": false}));
             if let Some(snap) = snapshot {
                 let _ = client.go_command("volume", json!({"channel": "MicMonitor", "value": snap.mic_monitor}));
@@ -536,7 +478,7 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Applique temporairement les anciens réglages sauvegardés (comparaison sur l'étape 7).
+    /// Recharge les anciens réglages dans l’onglet Comparer.
     fn wizard_apply_snapshot(&mut self, cx: &mut Context<Self>) {
         let Some(snap) = self.wizard.as_ref().and_then(|w| w.snapshot.clone()) else {
             return;
@@ -600,6 +542,7 @@ impl Mixer {
                         }
                     }
                 }
+                this.resume_mic_preset(cx);
                 cx.notify();
             });
         })
@@ -617,7 +560,7 @@ impl Mixer {
             .detach();
     }
 
-    /// Relit l'état de la GoXLR (gain, préréglage, traitements) après une étape.
+    /// Relit l’état de la GoXLR après la mesure.
     fn go_refresh(&mut self, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let work = cx.background_executor().spawn(async move { client.go_view().ok() });
@@ -694,7 +637,7 @@ impl Mixer {
         .detach();
     }
 
-    /// Étape 2 : mesure guidée 25 s ; le moteur mène les phases, l'appli enregistre la voix brute.
+    /// Analyse facultative en 25 s. Le moteur cadence les consignes et l’appli enregistre la voix.
     fn wizard_voice(&mut self, cx: &mut Context<Self>) {
         if !self.go.enabled() {
             return;
@@ -726,7 +669,6 @@ impl Mixer {
             let result = work.await;
             done.store(true, Ordering::Relaxed);
             let _ = this.update(cx, |this, cx| {
-                let mut ok = false;
                 if this.wizard.as_ref().is_none_or(|w| w.run != run) {
                     return;
                 }
@@ -737,7 +679,6 @@ impl Mixer {
                             w.take = take.as_ref().and_then(|t| reading_part(t, &timeline));
                             w.step = Step::Gain;
                             Self::wizard_end(w, None);
-                            ok = true;
                         }
                     }
                     Err(e) => {
@@ -746,32 +687,8 @@ impl Mixer {
                         }
                     }
                 }
-                // Mesure réussie : on applique le profil Radio FM calculé sur ta voix (adapté aux micros brillants),
-                // sans jamais forcer l'IA RNNoise contre ton gré (tu la règles librement à l'étape 4).
-                if ok {
-                    if let Some(w) = this.wizard_mut() {
-                        w.chosen = Some("antenne".into());
-                    }
-                    this.param_held.clear();
-                    let client = this.client.clone();
-                    let work = cx.background_executor().spawn(async move {
-                        let _ = client.go_command("mic-ab", json!({"bypass": false}));
-                        let _ = client.go_command("mic-preset", json!({"name": "antenne"}));
-                        client.go_view().ok()
-                    });
-                    cx.spawn(async move |this, cx| {
-                        let view = work.await;
-                        let _ = this.update(cx, |this, cx| {
-                            this.go.receive(view);
-                            this.load_voice_info(cx);
-                            cx.notify();
-                        });
-                    })
-                    .detach();
-                } else {
-                    this.go_refresh(cx);
-                    this.load_voice_info(cx);
-                }
+                this.go_refresh(cx);
+                this.load_voice_info(cx);
                 cx.notify();
             });
         })
@@ -781,6 +698,7 @@ impl Mixer {
 
     /// Réécoute de ta prise : brute (« avant ») ou passée par la chaîne d'un préréglage, au gain actuel du micro.
     fn wizard_play(&mut self, preset: Option<String>, cx: &mut Context<Self>) {
+        if !self.client.is_live() || self.monitor_on() || self.voice.preview_busy() { return; }
         let Some(w) = self.wizard.as_ref() else { return };
         let Some(take) = w.take.as_ref() else { return };
         if w.playing.is_some() {
@@ -789,39 +707,40 @@ impl Mixer {
         let gain_now = self.go.view.as_ref().and_then(|v| v.state["mic"]["gain_db"].as_i64()).unwrap_or(take.gain_db as i64) as i32;
         let scale = 10f32.powf((gain_now - take.gain_db) as f32 / 20.);
         let (samples, rate) = (take.samples.clone(), take.rate);
+        let after = preset.is_some();
         let chain = match preset.as_deref() {
-            Some("actuel") => {
+            Some("actuel") | None => {
                 let Some(v) = self.go.view.as_ref() else { return };
-                Some(micchain::design(&dsp::effective_dsp(
+                micchain::design(&dsp::effective_dsp(
                     &dsp::normalize_dsp(&v.state["dsp"], None),
                     &dsp::normalize_fx(&v.state["fx"]),
-                )))
+                ))
             }
-            Some(p) => match profile_dsp(self.voice.info.as_ref(), p) {
-                Some(d) => Some(micchain::design(&d)),
-                None => Some(micchain::design(&dsp::preset_dsp(p))),
-            },
-            None => None,
+            Some(p) => micchain::design(&profile_dsp(self.voice.info.as_ref(), p)
+                .unwrap_or_else(|| dsp::preset_dsp(p))),
         };
         let Some(w) = self.wizard_mut() else { return };
         w.play_run += 1;
         let play_run = w.play_run;
         w.playing = Some(preset.clone().unwrap_or_else(|| "avant".into()));
         w.error = None;
+        let stop = Arc::new(AtomicBool::new(false));
+        self.voice.playback = Some(stop.clone());
+        let playing = stop.clone();
         let work = cx.background_executor().spawn(async move {
             let raw: Vec<f32> = samples.iter().map(|x| (x * scale).clamp(-1., 1.)).collect();
-            let (out, play_rate) = match chain {
-                Some(p) => {
-                    let src = if rate == 48_000 { raw } else { rustudio_windows_desktop::soundcheck::resample(&raw, rate, 48_000) };
-                    (micchain::render(&p, &src), 48_000)
-                }
-                None => (raw, rate),
-            };
-            rustudio_windows_desktop::soundcheck::play_default(out, play_rate)
+            let raw = if rate == 48_000 { raw } else { rustudio_windows_desktop::soundcheck::resample(&raw, rate, 48_000) };
+            let processed = micchain::render(&chain, &raw);
+            let out = micchain::match_voice_level(&raw, &processed, after).map_err(str::to_owned)?;
+            if stop.load(Ordering::Relaxed) { return Ok(()); }
+            rustudio_windows_desktop::soundcheck::play_voice_preview(out, 48_000, stop)
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
+                if this.voice.playback.as_ref().is_some_and(|stop| Arc::ptr_eq(stop, &playing)) {
+                    this.voice.playback = None;
+                }
                 if let Some(w) = this.wizard_mut().filter(|w| w.play_run == play_run) {
                     w.playing = None;
                     if let Err(e) = result {
@@ -844,7 +763,7 @@ impl Mixer {
     }
 
     /// Applique une courbe d'EQ complète sans écraser le Noise Gate ni le compresseur.
-    fn wizard_apply_eq_preset(&mut self, preset: &str, cx: &mut Context<Self>) {
+    fn apply_mic_eq_preset(&mut self, preset: &str, cx: &mut Context<Self>) {
         self.param_held.clear();
         if preset == "flat" {
             let zero: serde_json::Map<String, Value> = EQ_BANDS.iter().map(|(b, _, _)| ((*b).to_owned(), json!(0))).collect();
@@ -861,7 +780,7 @@ impl Mixer {
     }
 
     /// Applique un préréglage rapide de Noise Gate sans toucher aux autres blocs.
-    fn wizard_apply_gate_preset(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+    fn apply_mic_gate_preset(&mut self, mode: &'static str, cx: &mut Context<Self>) {
         let (thr, att, attack, release) = match mode {
             "doux" => (-52, 55, 0, 21),
             "clavier" => (-36, 100, 0, 15),
@@ -879,7 +798,7 @@ impl Mixer {
     }
 
     /// Applique uniquement une dose de dynamique (Compresseur + De-esser) sans écraser l'EQ ni le Noise Gate.
-    fn wizard_apply_radio_dose(&mut self, dose: &'static str, cx: &mut Context<Self>) {
+    fn apply_mic_radio_dose(&mut self, dose: &'static str, cx: &mut Context<Self>) {
         let (thr, ratio, attack, release, makeup, deess) = radio_dose_params(self.voice.info.as_ref(), dose);
         self.param_held.clear();
         self.wizard_send_seq(
@@ -910,69 +829,12 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Écoute en direct parfaitement synchronisée avec le moteur et sans course critique :
-    /// si le retour est déjà actif (assistant ou page Micro), un clic le coupe net.
-    fn wizard_toggle_listen(&mut self, cx: &mut Context<Self>) {
-        if self.wizard.as_ref().is_some_and(MicWizard::busy) {
-            return;
-        }
-        if self.monitor_on() {
-            self.cut_monitor(cx);
-            return;
-        }
-        let Some(w) = self.wizard_mut() else { return };
-        w.listening = true;
-        let my_gen = w.listen_gen.fetch_add(1, Ordering::SeqCst) + 1;
-        let gen_arc = w.listen_gen.clone();
-        let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            loop {
-                if gen_arc.load(Ordering::SeqCst) != my_gen {
-                    break;
-                }
-                let c = client.clone();
-                let g = gen_arc.clone();
-                let view = cx
-                    .background_executor()
-                    .spawn(async move {
-                        if g.load(Ordering::SeqCst) != my_gen {
-                            return None;
-                        }
-                        let _ = c.set_mic_listen(20, Some(LISTEN_LEVEL));
-                        // Vérifie juste après l'envoi : si un arrêt a eu lieu entre-temps, coupe immédiatement.
-                        if g.load(Ordering::SeqCst) != my_gen {
-                            let _ = c.set_mic_listen(0, None);
-                            return None;
-                        }
-                        c.go_view().ok()
-                    })
-                    .await;
-                if let Some(v) = view {
-                    let _ = this.update(cx, |this, cx| {
-                        this.go.receive(Some(v));
-                        cx.notify();
-                    });
-                }
-                cx.background_executor().timer(Duration::from_secs(8)).await;
-                let still = gen_arc.load(Ordering::SeqCst) == my_gen
-                    && this
-                        .update(cx, |this, _| this.wizard.as_ref().is_some_and(|w| w.listening))
-                        .unwrap_or(false);
-                if !still {
-                    break;
-                }
-            }
-        })
-        .detach();
-        cx.notify();
-    }
-
     /// Bascule instantanée Avant (voix brute sans filtre) / Après (traitements actifs) en direct.
     fn wizard_toggle_ab(&mut self, bypass: bool, cx: &mut Context<Self>) {
         self.wizard_send_seq(vec![("mic-ab", json!({"bypass": bypass, "seconds": 60}))], false, cx);
     }
 
-    /// Annuler la mesure en cours : arrête immédiatement le moteur et revient à l'étape 1 sans casser tes réglages.
+    /// Annule la mesure et laisse l’onglet Analyse ouvert.
     fn wizard_cancel_measure(&mut self, cx: &mut Context<Self>) {
         let Some(w) = self.wizard_mut() else { return };
         if let Some(cancel) = w.cancel.take() {
@@ -980,15 +842,15 @@ impl Mixer {
         }
         w.run += 1;
         Self::wizard_end(w, None);
-        w.step = Step::Mic;
         self.send_quiet("job-cancel", json!({}), cx);
         cx.notify();
     }
 
-    /// Barre rapide de réécoute Avant / Après affichée dans les étapes de réglage dès qu'une prise existe.
+    /// Réécoute Avant / Après accessible dès qu’une prise existe.
     fn wizard_replay_bar(&self, w: &MicWizard, cx: &mut Context<Self>) -> Option<Div> {
         w.take.as_ref()?;
         let playing = w.playing.as_deref();
+        let monitoring = self.monitor_on();
         Some(
             div()
                 .p(px(12.))
@@ -1008,12 +870,16 @@ impl Mixer {
                         .flex()
                         .flex_col()
                         .child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).child("Réécoute sur ta prise enregistrée"))
-                        .child(ui::caption("Compare ton enregistrement brut avec tes réglages actuels.")),
+                        .child(ui::caption(if monitoring {
+                            "Coupe le retour en direct pour réécouter la prise."
+                        } else {
+                            "Compare la même prise à volume égal."
+                        })),
                 )
                 .child(
                     div()
-                        .flex_none()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap(px(6.))
                         .child(
@@ -1023,7 +889,14 @@ impl Mixer {
                                 if playing == Some("avant") { "Lecture…" } else { "Avant (brut)" },
                                 Tone::Plain,
                             )
-                            .on_click(cx.listener(|this, _, _, cx| this.wizard_play(None, cx))),
+                            .when(monitoring, |d| d.opacity(0.45))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(stop) = &this.voice.playback {
+                                    stop.store(true, Ordering::Relaxed);
+                                } else {
+                                    this.wizard_play(None, cx);
+                                }
+                            })),
                         )
                         .child(
                             ui::pill(
@@ -1032,137 +905,74 @@ impl Mixer {
                                 if playing == Some("actuel") { "Lecture…" } else { "Après (réglé)" },
                                 Tone::Primary,
                             )
-                            .on_click(cx.listener(|this, _, _, cx| this.wizard_play(Some("actuel".into()), cx))),
+                            .when(monitoring, |d| d.opacity(0.45))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(stop) = &this.voice.playback {
+                                    stop.store(true, Ordering::Relaxed);
+                                } else {
+                                    this.wizard_play(Some("actuel".into()), cx);
+                                }
+                            })),
                         ),
                 ),
         )
     }
 
-    // ---------- espace pleine page ----------
-
-    /// Affiche l'assistant directement dans la page Micro (pleine largeur, défilement natif, jamais tronqué).
     pub fn mic_wizard_workspace(&self, width: f32, cx: &mut Context<Self>) -> Option<Div> {
         let w = self.wizard.as_ref()?;
-        let (body, actions) = match w.step {
-            Step::Mic => self.wizard_mic_view(width, cx),
-            Step::Measure => self.wizard_measure_view(w, cx),
+        let body = match w.step {
             Step::Gain => self.wizard_gain_view(w, width, cx),
-            Step::Noise => self.wizard_noise_view(w, width, cx),
-            Step::Eq => self.wizard_eq_view(w, width, cx),
-            Step::Radio => self.wizard_radio_view(w, width, cx),
             Step::Compare => self.wizard_compare_view(w, width, cx),
-            Step::Done => self.wizard_done_view(cx),
+            Step::Measure => self.wizard_measure_view(w, cx),
         };
-        let step_num = w.step.index() + 1;
-        let monitor_on = self.monitor_on();
+        if w.busy() {
+            return Some(body);
+        }
 
-        let head = div()
-            .p(px(18.))
-            .rounded(px(16.))
-            .bg(alpha(ui::PAPER, 0.92))
-            .border_1()
-            .border_color(alpha(ui::INK, 0.08))
+        let mut tabs = ui::tabs();
+        for (index, (target, icon, label)) in TABS.into_iter().enumerate() {
+            tabs = tabs.child(
+                ui::tab(("mic-detail-tab", index), icon, label, w.step == target)
+                    .on_click(cx.listener(move |this, _, _, cx| this.wizard_goto(target, cx))),
+            );
+        }
+
+        Some(div()
             .flex()
             .flex_col()
-            .gap(px(14.))
+            .gap(px(16.))
             .child(
                 div()
                     .flex()
                     .flex_wrap()
                     .items_center()
                     .justify_between()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.))
-                            .child(ui::chip(Icon::Radio, ui::ACCENT, 40.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(div().text_size(px(19.)).font_weight(FontWeight::BOLD).child("Studio Micro · Configuration guidée"))
-                                    .child(ui::caption(format!("Étape {step_num} sur {} : chaque réglage est expliqué, modifiable en direct et annulable.", STEPS.len()))),
-                            ),
-                    )
+                    .gap(px(10.))
+                    .child(ui::title("Bilan vocal", 19.))
                     .child(
                         div()
                             .flex()
                             .flex_wrap()
                             .items_center()
                             .gap(px(8.))
-                            .when(monitor_on, |d| {
-                                d.child(
-                                    ui::pill("wizard-head-stop-mon", Some(Icon::VolumeOff), "Couper le retour", Tone::Danger)
-                                        .on_click(cx.listener(|this, _, _, cx| this.cut_monitor(cx))),
-                                )
-                            })
-                            .child(
-                                ui::pill("wizard-cancel-all", Some(Icon::History), "Annuler et restaurer", Tone::Plain)
-                                    .on_click(cx.listener(|this, _, _, cx| this.cancel_mic_wizard(cx))),
-                            ),
+                            .child(ui::pill("wizard-cancel-all", Some(Icon::History), "Annuler les changements", Tone::Plain)
+                                .on_click(cx.listener(|this, _, _, cx| this.cancel_mic_wizard(cx))))
+                            .child(ui::pill("wizard-finish", Some(Icon::Check), "Terminer", Tone::Primary)
+                                .on_click(cx.listener(|this, _, _, cx| this.finish_mic_wizard(cx)))),
                     ),
             )
-            .child(self.wizard_stepper(w, cx))
-            .child(self.wizard_live_console(w, cx));
-
-        let mut root = div().flex().flex_col().gap(px(18.)).child(head);
-        if let Some(e) = &w.error {
-            root = root.child(ui::notice(false, e.clone()));
-        }
-        root = root.child(body).child(
-            div()
-                .pt(px(16.))
-                .border_t_1()
-                .border_color(alpha(ui::INK, 0.08))
-                .child(actions),
-        );
-        Some(root)
-    }
-
-    fn wizard_stepper(&self, w: &MicWizard, cx: &mut Context<Self>) -> Div {
-        let can_jump = !w.busy() && self.go.view.as_ref().is_some_and(|v| v.state["mic"]["model"].is_string());
-        let current = w.step.index();
-        let mut stepper = div().flex().gap(px(6.));
-        for (i, (st, label)) in STEPS.iter().enumerate() {
-            let state = if i < current { 2 } else if i == current { 1 } else { 0 };
-            let colour = if state == 2 { ui::GREEN } else { ui::ACCENT };
-            let target = *st;
-            let clickable = can_jump && target != Step::Measure && target != w.step;
-            let item = div()
-                .id(SharedString::from(format!("wizard-step-{i}")))
-                .flex_1()
-                .min_w(px(0.))
-                .py(px(4.))
-                .flex()
-                .flex_col()
-                .gap(px(5.))
-                .when(clickable, |d| d.cursor(gpui::CursorStyle::PointingHand).on_click(cx.listener(move |this, _, _, cx| this.wizard_goto(target, cx))))
-                .child(div().h(px(4.)).rounded_full().bg(if state == 0 { alpha(ui::INK, 0.09) } else { alpha(colour, 1.) }))
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(px(11.5))
-                        .font_weight(if state == 1 { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
-                        .text_color(rgb(if state == 0 { ui::TEXT3 } else if state == 1 { ui::ACCENT } else { ui::TEXT2 }))
-                        .child(*label),
-                );
-            stepper = stepper.child(item);
-        }
-        stepper
+            .child(tabs)
+            .when(w.step != Step::Measure, |d| d.child(self.wizard_live_console(w, cx)))
+            .when_some(w.error.as_ref(), |d, error| d.child(ui::notice(false, error.clone())))
+            .child(body))
     }
 
     /// Bandeau de contrôle en direct : vumètre d'entrée, activité DSP temps réel, écoute casque et bascule Avant/Après.
     fn wizard_live_console(&self, w: &MicWizard, cx: &mut Context<Self>) -> Div {
-        let monitor_on = self.monitor_on();
-        let enabled = !w.busy() && self.go.enabled();
+        let enabled = !w.busy() && w.playing.is_none() && self.go.enabled();
         let bypass = self.go.view.as_ref().is_some_and(|v| v.ab);
         let fx = self.go.view.as_ref().map(|v| &v.state["fx"]);
         let mut bar = div()
-            .p(px(12.))
-            .rounded(px(12.))
-            .bg(alpha(ui::INK, 0.03))
             .flex()
             .flex_col()
             .gap(px(10.))
@@ -1172,13 +982,13 @@ impl Mixer {
                     .flex_wrap()
                     .items_center()
                     .gap(px(18.))
-                    .child(div().flex_1().min_w(px(240.)).child(crate::goxlr::level_meter(self.go.level_shown, self.go.level)))
+                    .child(div().flex_1().min_w(px(240.)).child(mic_signal(self.go.level_shown, self.go.level)))
                     .child(
                         div()
-                            .flex_none()
                             .flex()
+                            .flex_wrap()
                             .items_center()
-                            .gap(px(12.))
+                            .gap(px(10.))
                             .child(
                                 div()
                                     .flex()
@@ -1191,32 +1001,20 @@ impl Mixer {
                                         ui::pill("wizard-ab-raw", None, "Voix brute", if bypass { Tone::Warn } else { Tone::Plain })
                                             .h(px(28.))
                                             .when(!enabled, |d| d.opacity(0.45))
-                                            .on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_ab(true, cx))),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if enabled { this.wizard_toggle_ab(true, cx); }
+                                            })),
                                     )
                                     .child(
                                         ui::pill("wizard-ab-fx", None, "Son traité", if !bypass { Tone::Primary } else { Tone::Plain })
                                             .h(px(28.))
                                             .when(!enabled, |d| d.opacity(0.45))
-                                            .on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_ab(false, cx))),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if enabled { this.wizard_toggle_ab(false, cx); }
+                                            })),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child("M’écouter au casque"))
-                                            .child(ui::caption(if monitor_on { "Retour actif" } else { "Coupé" })),
-                                    )
-                                    .child(
-                                        ui::toggle("wizard-listen", monitor_on, enabled)
-                                            .on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_listen(cx))),
-                                    ),
-                            ),
+                            .child(self.monitor_controls("wizard-live-monitor", enabled, cx))
                     ),
             );
         if let Some(m) = self.go.voice_meters {
@@ -1237,243 +1035,77 @@ impl Mixer {
         bar
     }
 
-    fn wizard_nav(&self, left: Vec<AnyElement>, right: Vec<AnyElement>) -> Div {
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .justify_between()
-            .gap(px(10.))
-            .child(div().flex().flex_wrap().items_center().gap(px(8.)).children(left))
-            .child(div().flex().flex_wrap().items_center().gap(px(8.)).children(right))
-    }
-
-    /// Étape 1 : choix du micro, branchement et bons réflexes physiques.
-    fn wizard_mic_view(&self, width: f32, cx: &mut Context<Self>) -> (Div, Div) {
-        let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
-        let current = v.state["mic"]["model"].as_str().unwrap_or("").to_owned();
-        let kind = v.state["mic"]["type"].as_str().or(v.state["mic"]["kind"].as_str()).unwrap_or("dynamic").to_owned();
-        let has_print = voice_print_valid(&v.state);
-        let kind_label = |k: &str| match k {
-            "condenser" => "Statique (48 V)",
-            "jack" => "Jack 3,5 mm",
-            _ => "Dynamique (sans 48 V)",
-        };
-        let mut tiles: Vec<AnyElement> = vec![];
-        for (id, m) in crate::goxlr::entries(&v.meta["mic_models"]) {
-            let brand = m["brand"].as_str().unwrap_or("");
-            let name = m["name"].as_str().unwrap_or(id);
-            let title = if brand.is_empty() { name.to_owned() } else { format!("{brand} {name}") };
-            let key = id.clone();
-            let tile = ui::tile(
-                SharedString::from(format!("wizard-model-{id}")),
-                None,
-                title,
-                Some(kind_label(m["type"].as_str().unwrap_or("dynamic")).into()),
-                current == *id,
-                None,
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.wizard_send_seq(vec![("mic-model", json!({"model": key.clone()}))], true, cx);
-            }));
-            tiles.push(tile.into_any_element());
-        }
-        let mut kinds = ui::segmented();
-        for (k, label) in [("dynamic", "Dynamique"), ("condenser", "Statique · 48 V"), ("jack", "Jack 3,5 mm")] {
-            let k_str = k.to_owned();
-            kinds = kinds.child(
-                ui::seg(SharedString::from(format!("wizard-kind-{k}")), label, kind == k)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.wizard_send_seq(vec![("mic", json!({"type": k_str.clone(), "suggest_gain": true}))], true, cx);
-                    })),
-            );
-        }
-        let tip = |glyph: Icon, title: &'static str, text: &'static str| {
-            div()
-                .flex()
-                .items_start()
-                .gap(px(10.))
-                .child(div().flex_none().mt(px(2.)).child(ui::icon(glyph, 16., rgb(ui::ACCENT))))
+    fn wizard_measure_view(&self, w: &MicWizard, cx: &mut Context<Self>) -> Div {
+        if !w.busy() {
+            return ui::section(Icon::Wave, ui::ACCENT, "Analyser ma voix", None)
+                .child(hint("La mesure prend environ 25 s et ajuste le gain. Elle commence par quelques secondes de silence, puis tu parles avec tes propres mots."))
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .flex()
-                        .flex_col()
-                        .child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).child(title))
-                        .child(hint(text)),
-                )
-        };
-        let model_tips: Vec<String> = v.meta["mic_models"][&current]["tips"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|t| t.as_str().map(str::to_owned))
-            .collect();
-
-        let col_w = if ui::columns_that_fit(width, 420., 16., 2) == 2 { (width - 16.) * 0.5 } else { width };
-        let pick_card = ui::section(Icon::Mic, ui::ACCENT, "1. Choisis ton micro", Some("Type et 48 V réglés automatiquement".into()))
-            .child(ui::grid(tiles, ui::columns_that_fit(col_w, 195., 10., 3)))
-            .child(ui::subhead("Type de prise"))
-            .child(kinds)
-            .child(ui::caption("Pas dans la liste ? Un micro qui marche sans courant 48 V est dynamique (SM7B, PodMic). Un micro qui demande le 48 V est statique (NT1-A, AT2020)."));
-
-        let mut place_card = ui::section(Icon::Sparkles, ui::GREEN, "2. Le placement radio (50 % du son gratuit)", None)
-            .child(tip(Icon::Mic, "Distance de 10 à 15 cm (3 à 4 doigts)", "Plus tu es proche, plus ta voix a des graves chauds naturels et moins on entend ta pièce."))
-            .child(tip(Icon::Sparkles, "Oriente le micro légèrement de côté (30°)", "Parle juste à côté de la grille plutôt que droit dedans : ça supprime les coups d’air sur les « P » et les « B »."))
-            .child(tip(Icon::Headphones, "Casque sur les oreilles et PC normal", "Coupe tes enceintes et laisse tes ventilateurs tourner comme d’habitude pour une mesure réaliste."));
-        for mt in model_tips {
-            place_card = place_card.child(ui::notice(true, mt));
+                    div().flex().child(
+                        ui::pill("wizard-measure-retry", Some(Icon::Play), "Démarrer la mesure", Tone::Primary)
+                            .when(!self.go.enabled(), |d| d.opacity(0.45))
+                            .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx))),
+                    ),
+                );
         }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.);
+        let (instruction, detail, countdown) = measure_prompt(&w.job, now);
+        let progress = w.job["progress"].as_f64().unwrap_or_default() as f32;
 
-        let body = div()
+        div()
+            .w_full()
+            .min_w(px(0.))
             .flex()
             .flex_col()
-            .gap(px(16.))
-            .child(lesson(
-                Icon::Radio,
-                ui::ACCENT,
-                "Objectif : un son chaud, propre et percutant, réglé main dans la main",
-                "On règle ton micro dans l’ordre d’un vrai studio : placement, gain, anti-bruit, égaliseur 6 bandes, puis compresseur, de-esser et limiteur. À tout moment tu peux écouter Avant / Après ou cliquer sur « Annuler et restaurer ».",
-            ))
-            .child(ui::settings_columns(width, vec![pick_card.into_any_element()], vec![place_card.into_any_element()]));
-
-        let skip_label = if has_print { "Garder ma mesure et régler en direct" } else { "Passer la mesure et régler en direct" };
-        let left = vec![
-            ui::pill("wizard-skip-measure", Some(Icon::Sliders), skip_label, Tone::Plain)
-                .when(current.is_empty(), |d| d.opacity(0.45))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if this.go.view.as_ref().is_some_and(|v| v.state["mic"]["model"].is_string()) {
-                        this.wizard_goto(Step::Gain, cx);
-                    } else if let Some(w) = this.wizard_mut() {
-                        w.error = Some("Choisis d’abord ton micro dans la liste ci-dessus.".into());
-                        cx.notify();
-                    }
-                }))
-                .into_any_element(),
-        ];
-        let start = ui::pill("wizard-start", Some(Icon::Play), "Étape 2 : mesurer ma voix (25 s)", Tone::Primary)
-            .when(!self.go.enabled() || current.is_empty(), |d| d.opacity(0.45))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let chosen = this.go.view.as_ref().is_some_and(|v| v.state["mic"]["model"].is_string());
-                if !chosen {
-                    if let Some(w) = this.wizard_mut() {
-                        w.error = Some("Choisis d’abord ton micro dans la liste ci-dessus.".into());
-                    }
-                    cx.notify();
-                } else if this.go.enabled() {
-                    this.wizard_voice(cx);
-                }
-            }))
-            .into_any_element();
-        (body, self.wizard_nav(left, vec![start]))
-    }
-
-    /// Étape 2 : mesure guidée 25 s (silence, 3 phrases normales, 1 phrase forte).
-    fn wizard_measure_view(&self, w: &MicWizard, cx: &mut Context<Self>) -> (Div, Div) {
-        if !w.busy() {
-            let enabled = self.go.enabled();
-            let body = div()
-                .flex()
-                .flex_col()
-                .gap(px(14.))
-                .child(lesson(
-                    Icon::Mic,
-                    ui::ORANGE,
-                    "Mesure interrompue ou non lancée",
-                    "Relance-la quand tu es prêt (6 s de silence, 3 phrases normales, 1 phrase forte), ou passe directement au réglage manuel du gain.",
-                ));
-            let nav = self.wizard_nav(
-                vec![
-                    ui::pill("wizard-back-mic", Some(Icon::ChevronLeft), "Retour au micro", Tone::Plain)
-                        .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Mic, cx)))
-                        .into_any_element(),
-                    ui::pill("wizard-measure-skip", Some(Icon::Sliders), "Régler sans mesure", Tone::Plain)
-                        .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Gain, cx)))
-                        .into_any_element(),
-                ],
-                vec![
-                    ui::pill("wizard-measure-retry", Some(Icon::Refresh), "Relancer la mesure", Tone::Primary)
-                        .when(!enabled, |d| d.opacity(0.45))
-                        .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx)))
-                        .into_any_element(),
-                ],
-            );
-            return (body, nav);
-        }
-        let phase = w.job["phase"].as_str().unwrap_or("");
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.);
-        let left = w.job["phase_end"].as_f64().map(|e| (e - now).max(0.));
-        let progress = w.job["progress"].as_f64().unwrap_or(0.) as f32;
-        let retry = w.job["retry"].as_u64().unwrap_or(0) > 0;
-        let (glyph, title, big, why, colour): (Icon, &str, String, &str, u32) = match phase {
-            "silence" => (
-                Icon::VolumeOff,
-                "Phase 1/3 : Silence complet",
-                "Ne dis plus rien".into(),
-                "Respire calmement, sans toucher clavier ni souris. Rustudio mesure le bruit de ta pièce.",
-                ui::ORANGE,
-            ),
-            "reading" => {
-                let elapsed = left.map(|l| (3. * SENTENCE_S - l).max(0.)).unwrap_or(0.);
-                let i = ((elapsed / SENTENCE_S) as usize).min(SENTENCES.len() - 1);
-                (
-                    Icon::Mic,
-                    if retry { "Ça saturait : gain baissé, relis" } else { "Phase 2/3 : Lis à voix normale" },
-                    SENTENCES[i].into(),
-                    "Parle comme en vocal ou en stream, à 10 à 15 cm du micro. La phrase change automatiquement.",
-                    ui::ACCENT,
-                )
-            }
-            "loud" => (
-                Icon::Bolt,
-                "Phase 3/3 : Parle plus fort (comme sur une grosse action)",
-                LOUD_SENTENCE.into(),
-                "Rustudio vérifie que ta voix ne sature jamais, même sur un rire ou un cri.",
-                ui::RED,
-            ),
-            "prepare" => (Icon::Headphones, "Prépare-toi", "Le silence commence dans un instant".into(), "Pose les mains loin du clavier et reste silencieux.", ui::ACCENT),
-            _ => (Icon::Sparkles, "Calcul de ton son sur mesure", "Analyse en cours…".into(), "Rustudio ajuste ton gain, ton noise gate, ton égaliseur et ta compression.", ui::GREEN),
-        };
-        let mut b = ui::card()
-            .items_center()
-            .gap(px(16.))
-            .py(px(28.))
-            .child(div().w_full().max_w(px(520.)).child(ui::progress(progress, colour)))
+            .gap(px(18.))
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap(px(8.))
-                    .child(ui::icon(glyph, 18., rgb(colour)))
-                    .child(div().text_size(px(14.5)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(colour)).child(title)),
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(ui::title("Mesure de ta voix", 19.))
+                    .child(ui::pill("wizard-cancel-measure", Some(Icon::Close), "Annuler la mesure", Tone::Plain)
+                        .on_click(cx.listener(|this, _, _, cx| this.wizard_cancel_measure(cx)))),
             )
-            .child(div().max_w(px(720.)).text_center().text_size(px(26.)).line_height(px(34.)).font_weight(FontWeight::BOLD).child(big))
-            .child(div().max_w(px(580.)).text_center().child(hint(why)));
-        if phase == "reading" {
-            let elapsed = left.map(|l| (3. * SENTENCE_S - l).max(0.)).unwrap_or(0.);
-            let i = ((elapsed / SENTENCE_S) as usize).min(SENTENCES.len() - 1);
-            b = b.child(div().flex().gap(px(8.)).children((0..SENTENCES.len()).map(|n| {
-                div().w(px(38.)).h(px(5.)).rounded_full().bg(if n <= i { rgb(ui::ACCENT) } else { alpha(ui::INK, 0.12) })
-            })));
-        }
-        if let (Some(l), true) = (left, matches!(phase, "silence" | "reading" | "loud" | "prepare")) {
-            b = b.child(div().text_size(px(46.)).font_weight(FontWeight::BOLD).text_color(rgb(colour)).child(format!("{} s", l.ceil() as i64)));
-        }
-        let nav = self.wizard_nav(
-            vec![],
-            vec![
-                ui::pill("wizard-cancel-measure", Some(Icon::Close), "Annuler la mesure", Tone::Danger)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_cancel_measure(cx)))
-                    .into_any_element(),
-            ],
-        );
-        (b, nav)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.))
+                    .p(px(20.))
+                    .rounded(px(12.))
+                    .bg(alpha(ui::INK, 0.04))
+                    .child(ui::progress(progress, ui::ACCENT).overflow_hidden())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_start()
+                            .justify_between()
+                            .gap(px(12.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(240.))
+                                    .child(ui::title(instruction, 26.))
+                                    .child(hint(detail)),
+                            )
+                            .when_some(countdown, |d, seconds| {
+                                d.child(div().flex_none().text_size(px(26.)).font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(ui::ACCENT)).child(format!("{seconds} s")))
+                            }),
+                    )
+                    .child(mic_signal(self.go.level_shown, self.go.level)),
+            )
     }
 
-    /// Étape 3 : Bilan vocal vulgarisé + réglage complet du Gain d'entrée.
-    fn wizard_gain_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> (Div, Div) {
-        let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
+    /// Bilan vocal vulgarisé + réglage complet du Gain d'entrée.
+    fn wizard_gain_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> Div {
+        let Some(v) = self.go.view.as_ref() else { return div() };
         let s = &v.state;
         let enabled = self.go.enabled();
         let gain = s["mic"]["gain_db"].as_f64().unwrap_or(0.);
@@ -1491,7 +1123,7 @@ impl Mixer {
             Some(n) if n > -42. => ("Bruyante", "PC ou ventilateurs audibles"),
             Some(n) if n > -54. => ("Souffle léger", "Un léger fond sonore s’entend"),
             Some(_) => ("Calme", "Très peu de bruit entre tes phrases"),
-            None => ("Non mesurée", "Lance l’étape 2 pour la mesurer"),
+            None => ("Non mesurée", "L’analyse peut la mesurer"),
         };
         let valid_info = self.voice.info.as_ref().filter(|i| i["valid"] == true);
         let summary = valid_info.map(|i| &i["summary"]);
@@ -1502,7 +1134,7 @@ impl Mixer {
         let f0 = summary
             .and_then(|u| u["f0_hz"].as_f64())
             .map(|f| format!("Fondamentale à {} Hz", f.round()))
-            .unwrap_or_else(|| if valid_info.is_some() { "Timbre mesuré".into() } else { "Passe par l’étape 2".into() });
+            .unwrap_or_else(|| if valid_info.is_some() { "Timbre mesuré".into() } else { "Disponible après l’analyse".into() });
         let sib = summary
             .and_then(|u| u["sibilance"].as_str())
             .map(crate::voice::capital)
@@ -1511,14 +1143,13 @@ impl Mixer {
             .and_then(|u| u["snr_db"].as_f64())
             .map(|d| format!("{} dB", d.round()))
             .unwrap_or_else(|| "Non mesuré".into());
-        let tips: Vec<String> = valid_info
+        let notes = valid_info
             .and_then(|i| i["notes"].as_array())
             .into_iter()
             .flatten()
-            .filter_map(|n| n["t"].as_str().map(String::from))
-            .collect();
+            .filter_map(|note| Some(ui::notice_state(note_state(note), note_text(note)?)));
 
-        let mut diag = ui::section(Icon::Activity, ui::ACCENT, "Bilan de ta voix et ta pièce", None).child(
+        let diag = ui::section(Icon::Activity, ui::ACCENT, "Bilan de ta voix et ta pièce", None).child(
             div()
                 .flex()
                 .flex_wrap()
@@ -1528,10 +1159,7 @@ impl Mixer {
                 .child(ui::fact(voice_label, f0))
                 .child(ui::fact(sib, "Tes « S » (sifflantes)"))
                 .child(ui::fact(snr, "Voix au-dessus du bruit")),
-        );
-        for t in tips {
-            diag = diag.child(ui::notice(true, t));
-        }
+        ).children(notes);
 
         let gain_minus = (gain.round() as i64 - 3).clamp(0, 72);
         let gain_plus = (gain.round() as i64 + 3).clamp(0, 72);
@@ -1567,7 +1195,7 @@ impl Mixer {
             );
         }
 
-        let mut gain_card = ui::section(Icon::Gauge, ui::GREEN, "Gain d’entrée (préampli GoXLR)", Some("Vise la zone verte (-18 à -6 dB)".into()))
+        let mut gain_card = ui::section(Icon::Gauge, ui::GREEN, "Gain d’entrée", None)
             .child(self.slider_row(
                 "wizard-gain",
                 "Sensibilité du préampli",
@@ -1580,7 +1208,7 @@ impl Mixer {
                 cx,
             ))
             .child(quick)
-            .child(ui::caption("Règle d’or : parle normalement en regardant la barre tout en haut. Elle doit danser dans le vert, jamais toucher le rouge quand tu ris."));
+            .child(ui::caption("Parle normalement et vise la zone verte du vumètre, entre −18 et −6 dB."));
         if let Some(cg) = cal_gain
             && (gain.round() as i64 - cg).abs() >= 10
         {
@@ -1590,167 +1218,76 @@ impl Mixer {
             ));
         }
 
-        let body = div()
+        div()
             .flex()
             .flex_col()
             .gap(px(16.))
-            .child(lesson(
-                Icon::Gauge,
-                ui::ACCENT,
-                "Le Gain : la base propre avant tous les filtres",
-                "Trop bas, le compresseur devra pousser le souffle derrière. Trop haut, ta voix sature dès que tu hausses le ton. Cale d’abord un niveau propre dans le vert : tout le reste sonnera 2 fois mieux.",
-            ))
             .child(ui::settings_columns(width, vec![gain_card.into_any_element()], vec![diag.into_any_element()]))
-            .children(self.wizard_replay_bar(w, cx));
-
-        let nav = self.wizard_nav(
-            vec![
-                ui::pill("wizard-gain-back", Some(Icon::ChevronLeft), "Retour : Micro", Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Mic, cx)))
-                    .into_any_element(),
-                ui::pill("wizard-gain-remeasure", Some(Icon::Refresh), "Refaire la mesure", Tone::Plain)
-                    .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx)))
-                    .into_any_element(),
-            ],
-            vec![
-                ui::pill("wizard-gain-next", Some(Icon::ChevronRight), "Suivant : anti-bruit", Tone::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Noise, cx)))
-                    .into_any_element(),
-            ],
-        );
-        (body, nav)
+            .children(self.wizard_replay_bar(w, cx))
     }
 
-    /// Étape 4 : Nettoyage anti-bruit complet (Noise Gate 4 paramètres + IA RNNoise sans forçage).
-    fn wizard_noise_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> (Div, Div) {
-        let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
-        let s = &v.state;
+    /// Tous les filtres de la GoXLR, avec une seule section développée à la fois.
+    pub(crate) fn go_mic_filters(&self, s: &Value, width: f32, cx: &mut Context<Self>) -> Div {
         let enabled = self.go.enabled();
-        let gate_on = s["fx"]["gate"] == true;
-        let gate = &s["dsp"]["gate"];
-        let threshold = gate["threshold"].as_f64().unwrap_or(-46.);
-        let att = gate["attenuation"].as_f64().unwrap_or(80.);
-        let attack = gate["attack"].as_f64().unwrap_or(0.);
-        let release = gate["release"].as_f64().unwrap_or(18.);
-        let is_condenser = s["mic"]["type"].as_str() == Some("condenser");
+        let gate = self.go_filter_toggle("gate", s, enabled, cx);
+        let eq = self.go_filter_toggle("eq", s, enabled, cx);
+        let comp = self.go_filter_toggle("comp", s, enabled, cx);
+        let deesser = self.go_filter_toggle("deesser", s, enabled, cx);
+        let mut list = div().w_full().child(self.winmic_noise(width, cx))
+            .child(self.mic_filter_row(MicFilter::Gate, width, true, gate, |cx| self.mic_gate_settings(s, width, cx), cx))
+            .child(self.mic_filter_row(MicFilter::Eq, width, true, eq, |cx| self.mic_eq_settings(s, cx), cx))
+            .child(self.mic_filter_row(MicFilter::Compressor, width, true, comp, |cx| self.mic_comp_settings(s, width, cx), cx))
+            .child(self.mic_filter_row(MicFilter::Deesser, width, true, deesser, |cx| self.mic_deess_settings(s, cx), cx));
 
-        let gate_presets = div()
-            .flex()
-            .flex_wrap()
-            .gap(px(6.))
-            .child(
-                ui::pill("wizard-gate-doux", None, "Doux (pièce calme)", Tone::Plain)
-                    .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_gate_preset("doux", cx))),
-            )
-            .child(
-                ui::pill("wizard-gate-equilibre", None, "Équilibré", Tone::Soft)
-                    .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_gate_preset("equilibre", cx))),
-            )
-            .child(
-                ui::pill("wizard-gate-clavier", None, "Anti-clavier fort", Tone::Plain)
-                    .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_gate_preset("clavier", cx))),
-            );
-
-        let gate_card = ui::section(Icon::Shield, ui::GREEN, "Bouclier 1 : Noise Gate (porte entre tes phrases)", Some("Traité dans la GoXLR, 0 latence".into()))
-            .child(ui::list_row(
-                None,
-                if gate_on { "Noise Gate actif" } else { "Noise Gate coupé" },
-                Some("Ferme le micro dès que tu arrêtes de parler.".into()),
-                ui::toggle("wizard-gate", gate_on, enabled).on_click(cx.listener(move |this, _, _, cx| this.go_send("fx", json!({"gate": !gate_on}), cx))),
-                true,
-            ))
-            .when(gate_on, |d| {
-                d.child(gate_presets)
-                    .child(self.slider_row(
-                        "wizard-gate-threshold",
-                        "Seuil d’ouverture (baisse si le début de tes mots est mangé)",
-                        threshold,
-                        (-59., 0.),
-                        1.,
-                        |val| format!("{} dB", val.round()),
-                        enabled,
-                        |this, val, cx| this.go_send("dsp", json!({"gate": {"threshold": val.round() as i64}}), cx),
-                        cx,
-                    ))
-                    .child(self.slider_row(
-                        "wizard-gate-att",
-                        "Force de coupure (70 à 85 % naturel, 100 % silence absolu)",
-                        att,
-                        (0., 100.),
-                        5.,
-                        |val| format!("{} %", val.round()),
-                        enabled,
-                        |this, val, cx| this.go_send("dsp", json!({"gate": {"attenuation": val.round() as i64}}), cx),
-                        cx,
-                    ))
-                    .child(self.slider_row(
-                        "wizard-gate-attack",
-                        "Attaque (ouverture : 10 ms recommandé pour ne rien couper)",
-                        attack,
-                        (0., (GATE_MS.len() - 1) as f64),
-                        1.,
-                        fmt_gate_ms,
-                        enabled,
-                        |this, val, cx| this.go_send("dsp", json!({"gate": {"attack": val.round() as i64}}), cx),
-                        cx,
-                    ))
-                    .child(self.slider_row(
-                        "wizard-gate-release",
-                        "Relâchement (fermeture après ta voix : 180 à 300 ms naturel)",
-                        release,
-                        (0., (GATE_MS.len() - 1) as f64),
-                        1.,
-                        fmt_gate_ms,
-                        enabled,
-                        |this, val, cx| this.go_send("dsp", json!({"gate": {"release": val.round() as i64}}), cx),
-                        cx,
-                    ))
-            });
-
-        let mut ns_col = div().flex().flex_col().gap(px(12.)).child(self.ns_panel(v, cx));
-        if is_condenser {
-            ns_col = ns_col.child(ui::notice(
-                true,
-                "Conseil micro statique (ex. NT1-A) : dans une pièce calme, laisser l’IA coupée préserve toute la finesse naturelle de ta voix. Active-la surtout si ton PC ou ton clavier s’entend pendant que tu parles.",
+        if self.rustudio_firmware() {
+            let chain = micchain::design(&dsp::effective_dsp(
+                &dsp::normalize_dsp(&s["dsp"], None), &dsp::normalize_fx(&s["fx"]),
             ));
+            let bypass = self.go.view.as_ref().is_some_and(|v| v.ab);
+            let text = if chain.active() && !bypass { "Auto · −1 dBFS" } else { "En veille" };
+            list = list.child(self.mic_filter_row(MicFilter::Limiter, width, false, ui::caption(text), |_| div(), cx));
         }
 
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(lesson(
-                Icon::Shield,
-                ui::GREEN,
-                "Deux boucliers complémentaires contre le bruit",
-                "Le Noise Gate coupe les bruits entre tes phrases sans toucher au timbre de ta voix. L’IA anti-bruit (RNNoise) retire ventilateurs et clavier même pendant que tu parles. Active « M’écouter au casque » en haut pour ajuster finement.",
-            ))
-            .child(ui::settings_columns(width, vec![gate_card.into_any_element()], vec![ns_col.into_any_element()]))
-            .children(self.wizard_replay_bar(w, cx));
-
-        let nav = self.wizard_nav(
-            vec![
-                ui::pill("wizard-noise-back", Some(Icon::ChevronLeft), "Retour : Gain", Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Gain, cx)))
-                    .into_any_element(),
-            ],
-            vec![
-                ui::pill("wizard-noise-next", Some(Icon::ChevronRight), "Suivant : égaliseur 6 bandes", Tone::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Eq, cx)))
-                    .into_any_element(),
-            ],
-        );
-        (body, nav)
+        list
     }
 
-    /// Étape 5 : Console d'égaliseur 6 bandes (faders verticaux + fréquences réglables + courbe visuelle).
-    fn wizard_eq_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> (Div, Div) {
-        let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
-        let s = &v.state;
+    fn go_filter_toggle(&self, key: &'static str, s: &Value, enabled: bool, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let on = s["fx"][key] == true;
+        ui::toggle(SharedString::from(format!("mic-fx-{key}")), on, enabled)
+            .on_click(cx.listener(move |this, _, _, cx| this.go_send("fx", json!({(key): !on}), cx)))
+    }
+
+    fn mic_gate_settings(&self, s: &Value, width: f32, cx: &mut Context<Self>) -> Div {
+        let enabled = self.go.enabled();
+        let on = s["fx"]["gate"] == true;
+        let gate = &s["dsp"]["gate"];
+        let presets = div().flex().flex_wrap().items_center().gap(px(8.)).children([
+            ("doux", "Doux"), ("equilibre", "Équilibré"), ("clavier", "Anti-clavier"),
+        ].into_iter().map(|(key, title)| {
+            ui::pill(SharedString::from(format!("mic-gate-preset-{key}")), None, title, Tone::Plain)
+                .when(enabled, |d| d.on_click(cx.listener(move |this, _, _, cx| this.apply_mic_gate_preset(key, cx))))
+                .when(!enabled, |d| d.opacity(0.45))
+        }));
+        let controls = [
+            ("threshold", "Seuil d’ouverture", -46., (-59., 0.), 1., eq_db_text as fn(f64) -> String),
+            ("attenuation", "Atténuation", 80., (0., 100.), 5., |x| format!("{x:.0} %")),
+            ("attack", "Attaque", 0., (0., (GATE_MS.len() - 1) as f64), 1., fmt_gate_ms),
+            ("release", "Relâchement", 18., (0., (GATE_MS.len() - 1) as f64), 1., fmt_gate_ms),
+        ];
+        let sliders = controls.into_iter().map(|(field, title, fallback, range, step, format)| {
+            self.slider_row(&format!("goxlr-gate-{field}"), title, gate[field].as_f64().unwrap_or(fallback), range,
+                step, format, enabled && on,
+                move |this, x, cx| this.go_send("dsp", json!({"gate": {(field): x.round() as i64}}), cx), cx)
+                .into_any_element()
+        }).collect();
+
+        div().flex().flex_col().gap(px(12.))
+            .child(presets)
+            .child(ui::grid(sliders, mic_filter_columns(width)))
+    }
+
+    /// Console d'égaliseur 6 bandes (faders verticaux + fréquences réglables + courbe visuelle).
+    fn mic_eq_settings(&self, s: &Value, cx: &mut Context<Self>) -> Div {
         let enabled = self.go.enabled();
         let eq_on = s["fx"]["eq"] == true;
         let dsp = &s["dsp"];
@@ -1759,7 +1296,7 @@ impl Mixer {
         let fitted_layout = f250 < 230. || g90 < 0.;
 
         let preset_key = s["mic_preset"].as_str().filter(|p| dsp::is_preset(p) && *p != "brut");
-        let active_key = preset_key.or(w.chosen.as_deref()).unwrap_or("antenne");
+        let active_key = preset_key.unwrap_or("antenne");
         let eq_notes: Vec<String> = self
             .voice
             .info
@@ -1778,27 +1315,27 @@ impl Mixer {
             .child(
                 ui::pill("wizard-eq-antenne", Some(Icon::Radio), "Radio FM", Tone::Soft)
                     .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_eq_preset("antenne", cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.apply_mic_eq_preset("antenne", cx))),
             )
             .child(
                 ui::pill("wizard-eq-studio", Some(Icon::Podcast), "Studio propre", Tone::Plain)
                     .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_eq_preset("studio", cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.apply_mic_eq_preset("studio", cx))),
             )
             .child(
                 ui::pill("wizard-eq-podcast", Some(Icon::Mic), "Chaleur podcast", Tone::Plain)
                     .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_eq_preset("podcast", cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.apply_mic_eq_preset("podcast", cx))),
             )
             .child(
                 ui::pill("wizard-eq-stream", Some(Icon::Sparkles), "Voix claire", Tone::Plain)
                     .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_eq_preset("stream", cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.apply_mic_eq_preset("stream", cx))),
             )
             .child(
                 ui::pill("wizard-eq-flat", Some(Icon::History), "Plat (0 dB)", Tone::Plain)
                     .when(!enabled, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_eq_preset("flat", cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.apply_mic_eq_preset("flat", cx))),
             );
 
         let mut bands = div().flex().gap(px(6.)).pt(px(6.));
@@ -1849,248 +1386,84 @@ impl Mixer {
             ));
         }
 
-        let eq_console = ui::section(Icon::Sliders, ui::ACCENT, "Console égaliseur 6 bandes", Some("Glisse les curseurs · flèches pour la fréquence".into()))
-            .child(ui::list_row(
-                None,
-                if eq_on { "Égaliseur actif" } else { "Égaliseur coupé" },
-                Some("Chaque bande agit de -9 à +9 dB sur une zone précise de ta voix.".into()),
-                ui::toggle("wizard-eq-toggle", eq_on, enabled).on_click(cx.listener(move |this, _, _, cx| this.go_send("fx", json!({"eq": !eq_on}), cx))),
-                true,
-            ))
+        div().flex().flex_col().gap(px(10.))
             .child(quick_eq)
-            .child(bands.when(!eq_on, |d| d.opacity(0.4)));
-
-        let mut analysis_right: Vec<AnyElement> = vec![];
-        if !eq_notes.is_empty() {
-            let mut list = ui::section(Icon::Sparkles, ui::GREEN, "Pourquoi Rustudio a réglé ton EQ ainsi", None);
-            for n in eq_notes {
-                list = list.child(div().text_size(px(12.5)).line_height(px(18.)).text_color(rgb(ui::TEXT2)).child(format!("• {n}")));
-            }
-            analysis_right.push(list.into_any_element());
-        } else {
-            analysis_right.push(
-                ui::section(Icon::Sparkles, ui::GREEN, "Repères rapides d’égaliseur", None)
-                    .child(hint("• Coupe-bas (90 Hz) : baisse pour retirer chocs de bureau et grondements."))
-                    .child(hint("• Chaleur (250 Hz) : monte légèrement (+2 à +3 dB) pour une voix plus proche."))
-                    .child(hint("• Anti-carton (500 Hz) : baisse (-2 à -3 dB) pour éclaircir le timbre."))
-                    .child(hint("• Présence (3 kHz) & Air (8 kHz) : dose la clarté ; reste léger sur un micro statique brillant."))
-                    .into_any_element(),
-            );
-        }
-
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(lesson(
-                Icon::Sliders,
-                ui::ACCENT,
-                "L’Égaliseur : sculpter ton timbre sans dénaturer ta voix",
-                "Coupe les grondements sous ta voix, ajoute juste ce qu’il faut de chaleur, nettoie le côté carton vers 400 à 600 Hz, et dose présence et brillance à l’oreille. Si un micro statique paraît trop brillant, baisse légèrement 3 kHz ou 8 kHz.",
-            ))
-            .child(eq_console)
-            .child(ui::settings_columns(width, vec![self.voice_chart(active_key).into_any_element()], analysis_right))
-            .children(self.wizard_replay_bar(w, cx));
-
-        let nav = self.wizard_nav(
-            vec![
-                ui::pill("wizard-eq-back", Some(Icon::ChevronLeft), "Retour : Anti-bruit", Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Noise, cx)))
-                    .into_any_element(),
-            ],
-            vec![
-                ui::pill("wizard-eq-next", Some(Icon::ChevronRight), "Suivant : compresseur et effet radio", Tone::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Radio, cx)))
-                    .into_any_element(),
-            ],
-        );
-        (body, nav)
+            .child(bands)
+            .children(eq_notes.into_iter().map(ui::caption))
     }
 
-    /// Étape 6 : Le trio Compresseur complet (5 contrôles) + De-esser + Limiteur.
-    fn wizard_radio_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> (Div, Div) {
-        let Some(v) = self.go.view.as_ref() else { return (div(), div()) };
-        let s = &v.state;
+    fn mic_comp_settings(&self, s: &Value, width: f32, cx: &mut Context<Self>) -> Div {
         let enabled = self.go.enabled();
-        let comp_on = s["fx"]["comp"] == true;
-        let deess_on = s["fx"]["deesser"] == true;
+        let on = s["fx"]["comp"] == true;
         let comp = &s["dsp"]["comp"];
-        let thr = comp["threshold"].as_f64().unwrap_or(-22.);
-        let ratio = comp["ratio"].as_f64().unwrap_or(9.);
-        let attack = comp["attack"].as_f64().unwrap_or(2.);
-        let release = comp["release"].as_f64().unwrap_or(10.);
-        let makeup = comp["makeup"].as_f64().unwrap_or(6.);
-        let deess = s["dsp"]["deesser"].as_f64().unwrap_or(30.);
-
-        let mic_preset = s["mic_preset"].as_str().unwrap_or("custom");
-        let dose_selected = selected_dose(comp_on, mic_preset, ratio, thr);
-
-        let doses = ui::grid(
-            vec![
-                ui::tile(
-                    "wizard-dose-doux",
-                    Some((Icon::Leaf, ui::GREEN)),
-                    "Doux (Naturel)",
-                    Some("Lisse juste les petits écarts, dynamique très libre.".into()),
-                    dose_selected == Some("doux"),
-                    None,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_radio_dose("doux", cx)))
-                .into_any_element(),
-                ui::tile(
-                    "wizard-dose-stream",
-                    Some((Icon::Headphones, ui::ACCENT)),
-                    "Présent (Stream)",
-                    Some("Voix bien calée devant le jeu, sans excès.".into()),
-                    dose_selected == Some("stream"),
-                    None,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_radio_dose("stream", cx)))
-                .into_any_element(),
-                ui::tile(
-                    "wizard-dose-skyrock",
-                    Some((Icon::Radio, ui::ORANGE)),
-                    "Radio FM (Skyrock)",
-                    Some("Compression dense 5,6:1 + sifflantes tenues : gros son d’antenne.".into()),
-                    dose_selected == Some("skyrock"),
-                    Some(("Son Skyrock".into(), ui::ORANGE)),
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_radio_dose("skyrock", cx)))
-                .into_any_element(),
-            ],
-            ui::columns_that_fit(width - 40., 220., 10., 3),
-        );
-
-        let comp_card = ui::section(Icon::Gauge, ui::ACCENT, "Compresseur complet (densité et puissance)", None)
-            .child(ui::list_row(
-                None,
-                if comp_on { "Compresseur actif" } else { "Compresseur coupé" },
-                Some("Rapproche tes phrases douces et tes éclats de voix.".into()),
-                ui::toggle("wizard-comp-toggle", comp_on, enabled).on_click(cx.listener(move |this, _, _, cx| this.go_send("fx", json!({"comp": !comp_on}), cx))),
-                true,
-            ))
-            .when(comp_on, |d| {
-                d.child(self.slider_row(
-                    "wizard-comp-thr",
-                    "Seuil (plus bas = voix plus compressée et plus collée devant)",
-                    thr,
-                    (-40., 0.),
-                    1.,
-                    |val| format!("{} dB", val.round()),
-                    enabled,
-                    |this, val, cx| this.go_send("dsp", json!({"comp": {"threshold": val.round() as i64}}), cx),
-                    cx,
-                ))
-                .child(self.slider_row(
-                    "wizard-comp-ratio",
-                    "Ratio / Force (3:1 naturel, 4:1 à 5,6:1 radio FM)",
-                    ratio,
-                    (0., 14.),
-                    1.,
-                    ratio_text,
-                    enabled,
-                    |this, val, cx| this.go_send("dsp", json!({"comp": {"ratio": val.round() as i64}}), cx),
-                    cx,
-                ))
-                .child(self.slider_row(
-                    "wizard-comp-makeup",
-                    "Gain de compensation (remonte le volume après compression)",
-                    makeup,
-                    (-6., 24.),
-                    1.,
-                    eq_db_text,
-                    enabled,
-                    |this, val, cx| this.go_send("dsp", json!({"comp": {"makeup": val.round() as i64}}), cx),
-                    cx,
-                ))
-                .child(self.slider_row(
-                    "wizard-comp-attack",
-                    "Attaque (rapide = son radio serré ; plus lent = plus naturel)",
-                    attack,
-                    (0., (COMP_ATTACK_MS.len() - 1) as f64),
-                    1.,
-                    fmt_comp_attack,
-                    enabled,
-                    |this, val, cx| this.go_send("dsp", json!({"comp": {"attack": val.round() as i64}}), cx),
-                    cx,
-                ))
-                .child(self.slider_row(
-                    "wizard-comp-release",
-                    "Relâchement (100 à 230 ms fluide ; trop court = pompage)",
-                    release,
-                    (0., (COMP_RELEASE_MS.len() - 1) as f64),
-                    1.,
-                    fmt_comp_release,
-                    enabled,
-                    |this, val, cx| this.go_send("dsp", json!({"comp": {"release": val.round() as i64}}), cx),
-                    cx,
-                ))
-            });
-
-        let deess_card = ui::section(Icon::Sparkles, ui::ORANGE, "De-esser (douceur sur les « S » et « CH »)", None)
-            .child(ui::list_row(
-                None,
-                if deess_on { "De-esser actif" } else { "De-esser coupé" },
-                Some("Calme les sifflantes qui percent les oreilles au casque.".into()),
-                ui::toggle("wizard-deess-toggle", deess_on, enabled).on_click(cx.listener(move |this, _, _, cx| this.go_send("fx", json!({"deesser": !deess_on}), cx))),
-                true,
-            ))
-            .when(deess_on, |d| {
-                d.child(self.slider_row(
-                    "wizard-deess",
-                    "Intensité (25 à 45 % conseillé, plus haut sur micro brillant)",
-                    deess,
-                    (0., 100.),
-                    5.,
-                    |val| format!("{} %", val.round()),
-                    enabled,
-                    |this, val, cx| this.go_send("dsp", json!({"deesser": val.round() as i64}), cx),
-                    cx,
-                ))
-            });
-
-        let limiter_card = ui::section(Icon::Shield, ui::GREEN, "Limiteur anti-saturation", Some(if self.rustudio_firmware() { "Actif à -1 dB".into() } else { "Marge de sortie".into() }))
-            .child(hint(if self.rustudio_firmware() {
-                "Le firmware Rustudio embarque un limiteur matériel en bout de chaîne à -1 dB : même sur un cri, le son reste propre et sans distorsion."
-            } else {
-                "La compensation est bornée pour garder de la marge sur tes pics et éviter la saturation numérique."
+        let active_dose = selected_dose(on, s["mic_preset"].as_str().unwrap_or_default(),
+            comp["ratio"].as_f64().unwrap_or(9.), comp["threshold"].as_f64().unwrap_or(-22.));
+        let presets = div().flex().flex_wrap().items_center().gap(px(8.))
+            .child(ui::caption("Compression et sifflantes"))
+            .children([("doux", "Doux"), ("stream", "Stream"), ("skyrock", "Radio FM")].into_iter().map(|(key, title)| {
+                ui::pill(SharedString::from(format!("mic-comp-preset-{key}")), None, title,
+                    if active_dose == Some(key) { Tone::Soft } else { Tone::Plain })
+                    .when(enabled, |d| d.on_click(cx.listener(move |this, _, _, cx| this.apply_mic_radio_dose(key, cx))))
+                    .when(!enabled, |d| d.opacity(0.45))
             }));
+        let controls = [
+            ("threshold", "Seuil", -22., (-40., 0.), eq_db_text as fn(f64) -> String),
+            ("ratio", "Ratio", 9., (0., 14.), ratio_text),
+            ("makeup", "Gain de compensation", 6., (-6., 24.), eq_db_text),
+            ("attack", "Attaque", 2., (0., (COMP_ATTACK_MS.len() - 1) as f64), fmt_comp_attack),
+            ("release", "Relâchement", 10., (0., (COMP_RELEASE_MS.len() - 1) as f64), fmt_comp_release),
+        ];
+        let sliders = controls.into_iter().map(|(field, title, fallback, range, format)| {
+            self.slider_row(&format!("goxlr-comp-{field}"), title, comp[field].as_f64().unwrap_or(fallback), range,
+                1., format, enabled && on,
+                move |this, x, cx| this.go_send("dsp", json!({"comp": {(field): x.round() as i64}}), cx), cx)
+                .into_any_element()
+        }).collect();
 
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(lesson(
-                Icon::Radio,
-                ui::ORANGE,
-                "Le secret d’un son d’antenne : Compresseur + De-esser + Limiteur",
-                "Choisis une dose rapide en un clic, puis ajuste finement l’attaque, le relâchement, la compensation et le de-esser en observant les indicateurs en direct tout en haut.",
-            ))
-            .child(doses)
-            .child(ui::settings_columns(
-                width,
-                vec![comp_card.into_any_element()],
-                vec![deess_card.into_any_element(), limiter_card.into_any_element()],
-            ))
-            .children(self.wizard_replay_bar(w, cx));
-
-        let nav = self.wizard_nav(
-            vec![
-                ui::pill("wizard-radio-back", Some(Icon::ChevronLeft), "Retour : Égaliseur", Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Eq, cx)))
-                    .into_any_element(),
-            ],
-            vec![
-                ui::pill("wizard-radio-next", Some(Icon::ChevronRight), "Suivant : comparer Avant / Après", Tone::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Compare, cx)))
-                    .into_any_element(),
-            ],
-        );
-        (body, nav)
+        div().flex().flex_col().gap(px(12.))
+            .child(presets)
+            .when(on, |d| d.children(self.mic_softer_compressor(s, cx)))
+            .child(ui::grid(sliders, mic_filter_columns(width)))
     }
 
-    /// Étape 7 : Comparateur final Avant / Après (en direct + prise + anciens réglages) et bibliothèque de styles.
-    fn wizard_compare_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> (Div, Div) {
+    fn mic_softer_compressor(&self, s: &Value, cx: &mut Context<Self>) -> Option<Div> {
+        let current: dsp::Comp = serde_json::from_value(s["dsp"]["comp"].clone()).ok()?;
+        let enabled = self.go.enabled() && !self.go.busy;
+        if let Some((before, applied)) = self.go.softer_compressor_undo.as_ref().filter(|(_, after)| after == &current) {
+            let (before, applied) = (before.clone(), applied.clone());
+            return Some(div().flex().flex_wrap().items_center().gap(px(8.))
+                .child(ui::caption("Compression adoucie"))
+                .child(ui::pill("mic-revert-softer-comp", Some(Icon::History), "Rétablir la compression", Tone::Plain)
+                    .when(enabled, |d| d.on_click(cx.listener(move |this, _, _, cx| {
+                        if this.go.busy || this.go.view.as_ref().is_none_or(|v| v.state["dsp"]["comp"] != json!(applied)) { return; }
+                        this.go_send("dsp", json!({"comp": before}), cx);
+                    })))));
+        }
+        let cal: rustudio_core::state::MicCal = serde_json::from_value(s["mic_cal"].clone()).ok()?;
+        if s["mic"]["type"].as_str() != Some(cal.kind.as_str()) { return None; }
+        let gain = i32::try_from(s["mic"]["gain_db"].as_i64()?).ok()?;
+        let next = softer_compressor(&current, &cal, gain)?;
+        Some(div().flex().flex_wrap().items_center().gap(px(8.))
+            .child(ui::pill("mic-softer-comp", Some(Icon::Wave), "Adoucir la compression", Tone::Soft)
+                .when(enabled, |d| d.on_click(cx.listener(move |this, _, _, cx| {
+                    if this.go.busy || this.go.view.as_ref().is_none_or(|v| {
+                        v.state["dsp"]["comp"] != json!(current) || v.state["fx"]["comp"] != true
+                            || v.state["mic"]["gain_db"] != gain || v.state["mic"]["type"] != cal.kind
+                    }) { return; }
+                    this.go.softer_compressor_undo = Some((current.clone(), next.clone()));
+                    this.go_send("dsp", json!({"comp": next}), cx);
+                }))))
+            .child(ui::caption("Réduit les remontées de souffle liées à la compensation.")))
+    }
+
+    fn mic_deess_settings(&self, s: &Value, cx: &mut Context<Self>) -> Div {
+        self.slider_row("goxlr-deesser", "Intensité", s["dsp"]["deesser"].as_f64().unwrap_or(30.),
+            (0., 100.), 5., |x| format!("{x:.0} %"), self.go.enabled() && s["fx"]["deesser"] == true,
+            |this, x, cx| this.go_send("dsp", json!({"deesser": x.round() as i64}), cx), cx)
+    }
+
+    /// Comparateur final Avant / Après (en direct + prise + anciens réglages) et bibliothèque de styles.
+    fn wizard_compare_view(&self, w: &MicWizard, width: f32, cx: &mut Context<Self>) -> Div {
         let state = self.go.view.as_ref().map(|v| &v.state);
         let current = state.and_then(|s| s["mic_preset"].as_str()).unwrap_or("custom").to_owned();
         let bypass = self.go.view.as_ref().is_some_and(|v| v.ab);
@@ -2126,42 +1499,17 @@ impl Mixer {
             rows.push(div().flex().items_center().gap(px(8.)).child(tile.flex_1().min_w(px(0.))).children(play).into_any_element());
         }
 
-        let live_ab = ui::section(Icon::Ear, ui::GREEN, "Test à l’oreille : compare ton son", None).child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    ui::pill("wizard-cmp-raw", Some(Icon::Mic), "Voix brute (sans filtre)", if bypass { Tone::Warn } else { Tone::Plain })
-                        .on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_ab(true, cx))),
-                )
-                .child(
-                    ui::pill("wizard-cmp-now", Some(Icon::Radio), "Mon nouveau son", if !bypass { Tone::Primary } else { Tone::Plain })
-                        .on_click(cx.listener(|this, _, _, cx| this.wizard_toggle_ab(false, cx))),
-                )
-                .when(has_snap, |d| {
-                    d.child(
-                        ui::pill("wizard-cmp-old", Some(Icon::History), "Recharger mes anciens réglages", Tone::Plain)
-                            .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_snapshot(cx))),
-                    )
-                }),
-        );
-
         let mut body = div()
             .flex()
             .flex_col()
             .gap(px(16.))
-            .child(lesson(
-                Icon::Ear,
-                ui::GREEN,
-                "Le juge final, c’est ton oreille",
-                "Active « M’écouter au casque » tout en haut pour comparer instantanément ta voix brute, ton nouveau son et même tes anciens réglages. Tu peux aussi tester d’autres styles recalculés sur ta voix ci-dessous.",
-            ))
-            .child(live_ab)
+            .when(has_snap, |d| d.child(div().flex().child(
+                ui::pill("wizard-cmp-old", Some(Icon::History), "Recharger mes anciens réglages", Tone::Plain)
+                    .on_click(cx.listener(|this, _, _, cx| this.wizard_apply_snapshot(cx))),
+            )))
             .children(self.wizard_replay_bar(w, cx))
             .child(
-                ui::section(Icon::Sparkles, ui::ACCENT, "Tous les styles calculés sur ta voix", None)
+                ui::section(Icon::Sparkles, ui::ACCENT, "Préréglages", None)
                     .child(ui::grid(rows, ui::columns_that_fit(width - 40., 320., 10., 2))),
             );
         if !can_play {
@@ -2171,124 +1519,16 @@ impl Mixer {
                     .items_center()
                     .justify_between()
                     .gap(px(10.))
-                    .child(ui::caption("Aucune prise vocale enregistrée dans cette session : tu peux comparer en direct au casque ou enregistrer une prise."))
+                    .child(ui::caption("Compare en direct au casque ou lance une analyse pour enregistrer une prise."))
                     .child(
-                        ui::pill("wizard-compare-remeasure", Some(Icon::Refresh), "Enregistrer une prise (25 s)", Tone::Plain)
+                        ui::pill("wizard-compare-remeasure", Some(Icon::Wave), "Analyser ma voix", Tone::Plain)
                             .when(!self.go.enabled(), |d| d.opacity(0.45))
-                            .on_click(cx.listener(|this, _, _, cx| this.wizard_voice(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Measure, cx))),
                     ),
             );
         }
 
-        let nav = self.wizard_nav(
-            vec![
-                ui::pill("wizard-compare-back", Some(Icon::ChevronLeft), "Retour : Radio FM", Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Radio, cx)))
-                    .into_any_element(),
-            ],
-            vec![
-                ui::pill("wizard-to-done", Some(Icon::Check), "Voir le résumé final", Tone::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Done, cx)))
-                    .into_any_element(),
-            ],
-        );
-        (body, nav)
-    }
-
-    /// Étape 8 : Récapitulatif final + conseils Discord / OBS + boutons Enregistrer et Annuler/Restaurer.
-    fn wizard_done_view(&self, cx: &mut Context<Self>) -> (Div, Div) {
-        let v = self.go.view.as_ref();
-        let s = v.map(|v| &v.state);
-        let preset = s.and_then(|s| s["mic_preset"].as_str()).and_then(dsp::preset).map(|p| p.label).unwrap_or("Sur mesure");
-        let gain = s.and_then(|s| s["mic"]["gain_db"].as_f64()).unwrap_or(0.);
-        let comp = s.map(|s| &s["dsp"]["comp"]);
-        let comp_desc = if s.is_some_and(|s| s["fx"]["comp"] == true) {
-            format!(
-                "{} dès {} dB (+{} dB)",
-                ratio_text(comp.and_then(|c| c["ratio"].as_f64()).unwrap_or(0.)),
-                comp.and_then(|c| c["threshold"].as_f64()).unwrap_or(0.).round(),
-                comp.and_then(|c| c["makeup"].as_f64()).unwrap_or(0.).round()
-            )
-        } else {
-            "Coupé".into()
-        };
-        let gate_desc = if s.is_some_and(|s| s["fx"]["gate"] == true) {
-            format!(
-                "{} dB ({} %)",
-                s.and_then(|s| s["dsp"]["gate"]["threshold"].as_f64()).unwrap_or(-46.).round(),
-                s.and_then(|s| s["dsp"]["gate"]["attenuation"].as_f64()).unwrap_or(80.).round()
-            )
-        } else {
-            "Coupé".into()
-        };
-        let ns_on = v.is_some_and(|v| v.mic_ns["ready"] == true && v.state["mic_ns"]["enabled"] == true);
-        let goxlr_active = s.is_some_and(|s| {
-            micchain::design(&dsp::effective_dsp(
-                &dsp::normalize_dsp(&s["dsp"], None),
-                &dsp::normalize_fx(&s["fx"]),
-            ))
-            .active()
-        });
-        let mut on: Vec<&str> = [("eq", "Égaliseur"), ("gate", "Noise gate"), ("comp", "Compresseur"), ("deesser", "De-esser")]
-            .into_iter()
-            .filter(|(k, _)| s.is_some_and(|s| s["fx"][*k] == true))
-            .map(|(_, l)| l)
-            .collect();
-        if self.rustudio_firmware() && goxlr_active {
-            on.push("Coupe-bas & Limiteur");
-        }
-        if ns_on {
-            on.insert(0, "IA anti-bruit");
-        }
-
-        let summary_card = ui::section(Icon::Check, ui::GREEN, "Ton son micro est prêt !", Some("Le retour casque sera coupé automatiquement en terminant".into()))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_x(px(36.))
-                    .gap_y(px(12.))
-                    .child(ui::fact(preset, "Style actif"))
-                    .child(ui::fact(format!("{} dB", gain.round()), "Gain micro"))
-                    .child(ui::fact(gate_desc, "Noise Gate"))
-                    .child(ui::fact(comp_desc, "Compresseur"))
-                    .child(ui::fact(if ns_on { "Active" } else { "Coupée" }, "IA anti-bruit")),
-            )
-            .child(hint(if on.is_empty() {
-                "Ta voix part telle quelle, sans traitement.".to_owned()
-            } else {
-                format!("Chaîne active : {}.", on.join(", "))
-            }));
-
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(summary_card)
-            .child(lesson(
-                Icon::Chat,
-                ui::ACCENT,
-                "Dernier réflexe important dans Discord et OBS",
-                "Dans Discord (Paramètres, Voix et vidéo), désactive Krisp, la suppression d’écho et le contrôle automatique du gain. Ta GoXLR traite déjà ta voix en studio : empiler les filtres de Discord par-dessus écraserait toute la chaleur.",
-            ))
-            .child(hint("Clique sur « Enregistrer et terminer » pour garder ces réglages et couper le retour micro, ou sur « Annuler et restaurer » pour revenir exactement comme avant."));
-
-        let nav = self.wizard_nav(
-            vec![
-                ui::pill("wizard-done-back", Some(Icon::ChevronLeft), "Retour : Comparer", Tone::Plain)
-                    .on_click(cx.listener(|this, _, _, cx| this.wizard_goto(Step::Compare, cx)))
-                    .into_any_element(),
-                ui::pill("wizard-done-cancel", Some(Icon::History), "Annuler et restaurer mes anciens réglages", Tone::Danger)
-                    .on_click(cx.listener(|this, _, _, cx| this.cancel_mic_wizard(cx)))
-                    .into_any_element(),
-            ],
-            vec![
-                ui::pill("wizard-finish", Some(Icon::Check), "Enregistrer et terminer", Tone::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.finish_mic_wizard(cx)))
-                    .into_any_element(),
-            ],
-        );
-        (body, nav)
+        body
     }
 }
 
@@ -2297,17 +1537,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parcours_huit_etapes_complet() {
-        let mut s = Step::Mic;
-        let mut seen = vec![s];
-        while let Some(next) = s.next() {
-            assert_eq!(next.prev(), Some(s));
-            seen.push(next);
-            s = next;
-        }
-        assert_eq!(seen.len(), 8);
-        assert_eq!(seen.first(), Some(&Step::Mic));
-        assert_eq!(seen.last(), Some(&Step::Done));
+    fn analyse_facultative_et_consignes_sans_texte_a_lire() {
+        assert_eq!(MicWizard::new().step, Step::Gain);
+        assert_eq!(TABS.last().map(|(tab, _, _)| *tab), Some(Step::Measure));
+        assert_eq!(measure_prompt(&Value::Null, 100.).2, None);
+        let reading = json!({"phase": "reading", "phase_end": 108.2});
+        assert_eq!(measure_prompt(&reading, 100.).0, "Parle normalement");
+        assert_eq!(measure_prompt(&reading, 100.).2, Some(9));
+        assert_eq!(measure_prompt(&reading, 109.).2, None);
+        let retry = json!({"phase":"reading","retry":1});
+        assert_eq!(measure_prompt(&retry, 100.).1, "Le gain a été baissé. Continue avec tes propres mots.");
+        assert!(note_state(&json!({"lvl":"warn"})) == ui::State::Warn);
+        assert!(note_state(&json!({"lvl":"tip"})) == ui::State::Info);
+        let legacy = json!({"lvl":"warn", "t":"Ronflement à 60 Hz : éloigne le câble du micro."});
+        assert!(note_text(&legacy).unwrap().starts_with("Ronflement à 60 Hz. Éloigne"));
     }
 
     #[test]
@@ -2321,7 +1564,7 @@ mod tests {
         assert_eq!(fmt_gate_ms(35.), "1 s");
         assert_eq!(fmt_comp_attack(0.), "0,1 ms (instantanée)");
         assert_eq!(fmt_comp_release(16.), "1 s");
-        for (_, label) in STEPS {
+        for (_, _, label) in TABS {
             assert!(!label.contains('\u{2014}') && !label.contains('\u{2013}'));
         }
         assert_eq!(fmt_hz(90.), "90 Hz");
@@ -2336,7 +1579,7 @@ mod tests {
             "mic_preset": "studio",
             "fx": {"eq": true, "gate": true, "comp": true, "deesser": true},
             "dsp": {"deesser": 20},
-            "mic_ns": {"enabled": false, "strength": 77, "grace_ms": 200},
+            "mic_ns": {"enabled": false, "strength": 77, "grace_ms": 200, "device": "{aaaaaaaa-0000-0000-0000-000000000001}"},
             "volumes": {"MicMonitor": 0}
         });
         let snap = MicSnapshot::capture(&state);
@@ -2345,7 +1588,7 @@ mod tests {
         assert_eq!(snap.gain_db, 56);
         assert_eq!(snap.mic_preset, "studio");
         assert_eq!(snap.mic_monitor, 0);
-        assert_eq!(snap.mic_ns.unwrap()["enabled"], false);
+        assert_eq!(snap.mic_ns.unwrap(), state["mic_ns"]);
     }
 
     #[test]
@@ -2364,30 +1607,6 @@ mod tests {
         let part = reading_part(&take, &timeline).expect("lecture trouvee");
         assert_eq!(part.gain_db, 35, "doit prendre la derniere lecture non saturee");
         assert_eq!(part.samples.len(), 6 * 48_000);
-    }
-
-    #[test]
-    fn empreinte_valide_seulement_pour_le_micro_selectionne() {
-        let st = json!({
-            "mic": {"type": "condenser", "model": "rode-nt1a"},
-            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
-        });
-        assert!(voice_print_valid(&st));
-        let other_model = json!({
-            "mic": {"type": "condenser", "model": "at2020"},
-            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
-        });
-        assert!(!voice_print_valid(&other_model));
-        let other_type = json!({
-            "mic": {"type": "dynamic", "model": "shure-sm7b"},
-            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
-        });
-        assert!(!voice_print_valid(&other_type));
-        let no_model = json!({
-            "mic": {"type": "condenser", "model": null},
-            "voice_print": {"mic_type": "condenser", "model": "rode-nt1a"}
-        });
-        assert!(voice_print_valid(&no_model));
     }
 
     #[test]

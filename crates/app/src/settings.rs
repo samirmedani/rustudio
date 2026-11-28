@@ -164,34 +164,21 @@ impl Mixer {
         let hold = prefs["hold_ms"].as_i64().unwrap_or(600);
         let osd = prefs["osd"] != false;
         let startup = data["startup"] == true;
-        let step = |delta: i64| (hold + delta).clamp(250, 1500);
         let root = div().flex().flex_col().gap(px(16.));
-        let (less, more) = (step(-50), step(50));
         let mut general = ui::section(Icon::Settings, ui::ACCENT, "Comportement", None)
             .child(ui::list_row(
                 Some((Icon::Mic, ui::RED)),
-                "Bulle à l’écran quand le micro change",
-                Some("Une pastille discrète apparaît au centre de l’écran.".into()),
+                "Indicateur d’état du micro",
+                Some("Affiche brièvement l’état du micro en bas à droite.".into()),
                 ui::toggle("osd-toggle", osd, true).on_click(cx.listener(move |this, _, _, cx| {
                     this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"osd": !osd}}), "Préférence enregistrée.", cx)
                 })),
                 true,
             ))
-            .child(ui::list_row(
-                Some((Icon::Gauge, ui::ORANGE)),
-                "Durée d’un appui long",
-                Some("Pour les boutons de la GoXLR qui ont deux fonctions.".into()),
-                ui::stepper(
-                    ui::step_button("hold-less", Icon::Minus).on_click(cx.listener(move |this, _, _, cx| {
-                        this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"hold_ms": less}}), "Durée enregistrée.", cx)
-                    })),
-                    format!("{:.2} s", hold as f64 / 1000.).replace('.', ","),
-                    ui::step_button("hold-more", Icon::Plus).on_click(cx.listener(move |this, _, _, cx| {
-                        this.engine_action("/api/modules/goxlr-mini", "settings", json!({"prefs": {"hold_ms": more}}), "Durée enregistrée.", cx)
-                    })),
-                ),
-                false,
-            ));
+            .child(self.slider_row("hold-duration", "Durée d’un appui long (GoXLR)", hold as f64,
+                (250., 2_000.), 10., |ms| format!("{:.2} s", ms / 1_000.).replace('.', ","), true,
+                |this, value, cx| this.engine_action("/api/modules/goxlr-mini", "settings",
+                    json!({"prefs": {"hold_ms": value as i64}}), "Durée enregistrée.", cx), cx));
         if self.client.is_live() {
             general = general.child(ui::list_row(
                 Some((Icon::Power, ui::GREEN)),

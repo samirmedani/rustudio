@@ -65,25 +65,27 @@ impl Profile {
 
     fn write(&self, path: &Path) -> Result<(), String> {
         self.validate()?;
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let write = || -> std::io::Result<()> {
-            let mut file = tempfile::NamedTempFile::new_in(parent)?;
-            serde_json::to_writer_pretty(&mut file, self)?;
-            file.write_all(b"\n")?;
-            file.as_file().sync_all()?;
-            file.persist_noclobber(path)?;
-            Ok(())
-        };
-        write().map_err(|e| match e.kind() {
-            std::io::ErrorKind::AlreadyExists => {
-                "Un fichier porte déjà ce nom. Choisis un autre nom.".into()
-            }
-            _ => format!("Écriture du profil impossible : {e}"),
-        })
+        export_json(path, self)
     }
+}
+
+pub(crate) fn export_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let write = || -> std::io::Result<()> {
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        serde_json::to_writer_pretty(&mut file, value)?;
+        file.write_all(b"\n")?;
+        file.as_file().sync_all()?;
+        file.persist_noclobber(path)?;
+        Ok(())
+    };
+    write().map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => "Un fichier porte déjà ce nom. Choisis un autre nom.".into(),
+        _ => format!("Écriture du profil impossible : {e}"),
+    })
 }
 
 #[derive(Clone)]

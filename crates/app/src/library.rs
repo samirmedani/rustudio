@@ -190,7 +190,7 @@ impl Mixer {
             Some(page) => ui::pill(gpui::ElementId::Name(format!("module-{id}").into()), None, "Ouvrir", Tone::Primary)
                 .h(px(34.))
                 .child(ui::icon(Icon::ChevronRight, 14., rgb(ui::WHITE)))
-                .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)))
                 .into_any_element(),
             None => ui::caption("La communauté peut l’ajouter").into_any_element(),
         };
@@ -235,7 +235,7 @@ impl Mixer {
             );
         match dest {
             Some(page) => ui::lift(card, gpui::ElementId::Name(format!("card-module-{id}").into()))
-                .on_click(cx.listener(move |this, _, _, cx| this.go_to(page, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)))
                 .into_any_element(),
             None => card.into_any_element(),
         }

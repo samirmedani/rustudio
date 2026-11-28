@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
@@ -175,14 +175,28 @@ impl Client {
         }
     }
 
-    /// Active ou coupe l'écoute de ta voix au casque, dans l'ordre strict des appels.
-    pub(crate) fn set_mic_listen(&self, seconds: u32, level: Option<i64>) -> Result<Value, String> {
+    /// Coupe le bail après avoir sérialisé les envois en cours.
+    pub(crate) fn stop_mic_listen(&self) -> Result<Value, String> {
         let _guard = self.listen_lock.lock().unwrap_or_else(|e| e.into_inner());
-        let body = match level {
-            Some(lvl) if seconds > 0 => json!({"seconds": seconds, "level": lvl}),
-            _ => json!({"seconds": seconds}),
-        };
-        self.go_command("mic-listen", body)
+        self.go_command("mic-listen", json!({"seconds": 0}))
+    }
+
+    /// Le niveau zéro annule l’envoi, même si l’arrêt a gagné la course au verrou.
+    pub(crate) fn renew_mic_listen(&self, requested: &AtomicU32, starting: bool) -> Result<Option<u32>, String> {
+        let _guard = self.listen_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if requested.load(Ordering::SeqCst) == 0 { return Ok(None); }
+        let state = self.live_state()?;
+        // Respecte aussi un arrêt demandé depuis l'icône Windows ou après un redémarrage du moteur.
+        if !starting && state["listening"].as_f64().unwrap_or_default() <= 0. {
+            return Ok(None);
+        }
+        if state["connected"] != true {
+            return Err("La GoXLR est déconnectée.".into());
+        }
+        let level = requested.load(Ordering::SeqCst);
+        if level == 0 { return Ok(None); }
+        self.post_module(MODULE, "mic-listen", json!({"seconds": 6, "level": level}))?;
+        Ok(Some(level))
     }
 
     pub fn set_mixer_visible(&self, visible: bool) {

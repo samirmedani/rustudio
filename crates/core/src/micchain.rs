@@ -133,10 +133,67 @@ pub fn render(p: &Params, samples: &[f32]) -> Vec<f32> {
     out
 }
 
+/// Met deux prises au même niveau sur les passages de voix, par atténuation seulement.
+/// Marge avant la protection d'écoute de Windows, qui reste active sur chaque prise.
+pub fn match_voice_level(raw: &[f32], processed: &[f32], after: bool) -> Result<Vec<f32>, &'static str> {
+    if raw.is_empty() || raw.len() != processed.len() {
+        return Err("Les deux prises ne correspondent pas.");
+    }
+    const BLOCK_25_MS: usize = 1200;
+    const PEAK: f64 = 0.16;
+    let power = |block: &[f32]| block.iter().filter(|x| x.is_finite())
+        .map(|x| f64::from(*x).powi(2)).sum::<f64>() / block.len() as f64;
+    let loudest = raw.chunks(BLOCK_25_MS).map(power).fold(0.0, f64::max);
+    let threshold = (loudest * 0.08).max(0.000_001);
+    let peak = |samples: &[f32]| samples.iter().copied().filter(|x| x.is_finite())
+        .map(|x| f64::from(x.abs())).fold(PEAK, f64::max);
+    let (mut a, mut b) = (0., 0.);
+    for (before, after) in raw.chunks(BLOCK_25_MS).zip(processed.chunks(BLOCK_25_MS)) {
+        let level = power(before);
+        if level >= threshold {
+            a += level * before.len() as f64;
+            b += power(after) * after.len() as f64;
+        }
+    }
+    if a == 0. || b <= f64::EPSILON {
+        return Err("La voix est trop faible pour comparer les prises à volume égal.");
+    }
+    let (a, b) = (a.sqrt(), b.sqrt());
+    let target = (a * PEAK / peak(raw)).min(b * PEAK / peak(processed));
+    let (samples, level) = if after { (processed, b) } else { (raw, a) };
+    let gain = (target / level) as f32;
+    Ok(samples.iter().map(|x| if x.is_finite() { *x * gain } else { 0. }).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::micdsp::{gain_q24, level_db};
+
+    #[test]
+    fn comparaison_nivelle_la_voix_sans_remonter_les_pauses() {
+        let mut raw = vec![0.002; 4800];
+        raw.extend(vec![0.04; 2400]);
+        let mut processed = vec![0.0002; 4800];
+        processed.extend(vec![0.4; 2400]);
+        let a = match_voice_level(&raw, &processed, false).unwrap();
+        let b = match_voice_level(&raw, &processed, true).unwrap();
+        assert!((a[4900] - b[4900]).abs() < 1e-7);
+        assert!(a[4900] <= raw[4900]);
+        assert!(b[100] < a[100] * 0.05);
+        assert!(a.iter().chain(&b).all(|x| x.abs() <= 0.16));
+    }
+
+    #[test]
+    fn comparaison_ecarte_le_silence_et_assainit_les_echantillons_invalides() {
+        assert!(match_voice_level(&[], &[], false).is_err());
+        assert!(match_voice_level(&[0.1], &[0.; 2], true).is_err());
+        assert!(match_voice_level(&[0.1], &[0.], true).is_err());
+        assert!(match_voice_level(&[f32::NAN], &[0.1], false).is_err());
+        let out = match_voice_level(&[0.2, f32::NAN, 0.2], &[0.4, 0.6, 0.4], false).unwrap();
+        assert!(out.iter().all(|x| x.abs() <= 0.16 && x.is_finite()));
+        assert_eq!(out[1], 0.);
+    }
 
     fn sine(hz: f64, db: f64, seconds: f64) -> Vec<f32> {
         let amp = 10f64.powf(db / 20.0);

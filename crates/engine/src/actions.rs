@@ -258,6 +258,22 @@ impl Inner {
                 self.state.dsp = self.preset_dsp(if name == "brut" { "naturel" } else { &name });
                 self.state.fx = if name == "brut" { Fx::default() } else { dsp::fx_from_dsp(&self.state.dsp) };
                 self.state.mic_preset = name;
+                self.ab_until = None;
+                self.mark(&[Key::Dsp], true);
+            }
+            "mic-profile" => {
+                if self.voice_capture {
+                    return Err(ApiError::bad("Attends la fin de l’analyse du micro."));
+                }
+                let profile: dsp::MicProfile = serde_json::from_value(p.clone())
+                    .map_err(|_| ApiError::bad("Profil micro illisible."))?;
+                if profile.mic_preset != "custom" && !dsp::is_preset(&profile.mic_preset) {
+                    return Err(ApiError::bad("Préréglage micro inconnu."));
+                }
+                self.state.dsp = dsp::normalize_dsp(&json!(profile.dsp), None);
+                self.state.fx = profile.fx;
+                self.state.mic_preset = profile.mic_preset;
+                self.ab_until = None;
                 self.mark(&[Key::Dsp], true);
             }
             "fx" => self.set_fx(p),

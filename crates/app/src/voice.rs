@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 const MODULE: &str = "/api/modules/goxlr-mini";
 
 fn take(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<Value, String> {
-    // assistant : 6 s de silence (ta pièce), 3 phrases de 5 s, 4 s plus fort
+    // Analyse complète : 6 s de silence, 15 s à voix normale et 4 s plus fort.
     let options = if quick {
         json!({"silence_s":1.5,"reading_s":8,"loud_s":1.5})
     } else {
@@ -123,13 +123,26 @@ pub fn analyse(client: &Client, cancel: &AtomicBool, quick: bool) -> Result<(Val
 pub struct VoiceExtras {
     pub recording: Option<Arc<AtomicBool>>,
     pub take: Option<Arc<(Vec<f32>, u32)>>,
-    pub playing: bool,
+    pub(crate) playback: Option<Arc<AtomicBool>>,
     pub info: Option<Value>,
     pub loading: bool,
     pub reload: bool,
     pub echo: Option<Value>,
     pub echo_running: bool,
-    pub note: Option<String>,
+    pub(crate) note: Option<String>,
+}
+
+impl VoiceExtras {
+    pub(crate) fn preview_busy(&self) -> bool { self.recording.is_some() || self.playback.is_some() }
+
+    pub(crate) fn cancel_preview(&mut self) {
+        if let Some(stop) = &self.recording { stop.store(true, Ordering::Relaxed); }
+        if let Some(stop) = &self.playback { stop.store(true, Ordering::Relaxed); }
+    }
+}
+
+impl Drop for VoiceExtras {
+    fn drop(&mut self) { self.cancel_preview(); }
 }
 
 const REC_SECONDS: f64 = 8.0;
@@ -160,17 +173,20 @@ impl Mixer {
     }
 
     fn record_take(&mut self, cx: &mut Context<Self>) {
-        if self.voice.recording.is_some() || !self.client.is_live() {
+        if self.voice.recording.is_some() || self.voice.playback.is_some() || !self.client.is_live() || self.monitor_on() {
             return;
         }
         let stop = Arc::new(AtomicBool::new(false));
         self.voice.recording = Some(stop.clone());
+        self.voice.take = None;
         self.voice.note = None;
+        let cancel = stop.clone();
         let job = cx.background_executor().spawn(async move { rustudio_windows_desktop::soundcheck::record_mic(REC_SECONDS, stop) });
         cx.spawn(async move |this, cx| {
             let r = job.await;
             let _ = this.update(cx, |this, cx| {
                 this.voice.recording = None;
+                if cancel.load(Ordering::Relaxed) { cx.notify(); return; }
                 match r {
                     Ok((x, rate)) if !x.is_empty() => this.voice.take = Some(Arc::new((x, rate))),
                     Ok(_) => this.voice.note = Some("Aucun son reçu de Chat Mic.".into()),
@@ -185,15 +201,19 @@ impl Mixer {
 
     fn play_take(&mut self, cx: &mut Context<Self>) {
         let Some(take) = self.voice.take.clone() else { return };
-        if self.voice.playing {
+        if self.voice.playback.is_some() || self.voice.recording.is_some() || !self.client.is_live() || self.monitor_on() {
             return;
         }
-        self.voice.playing = true;
-        let job = cx.background_executor().spawn(async move { rustudio_windows_desktop::soundcheck::play_default(take.0.clone(), take.1) });
+        let stop = Arc::new(AtomicBool::new(false));
+        self.voice.playback = Some(stop.clone());
+        self.voice.note = None;
+        let job = cx.background_executor().spawn(async move {
+            rustudio_windows_desktop::soundcheck::play_voice_preview(take.0.clone(), take.1, stop)
+        });
         cx.spawn(async move |this, cx| {
             let r = job.await;
             let _ = this.update(cx, |this, cx| {
-                this.voice.playing = false;
+                this.voice.playback = None;
                 if let Err(e) = r {
                     this.voice.note = Some(e);
                 }
@@ -265,34 +285,39 @@ impl Mixer {
         p
     }
 
-    pub fn listen_panel(&self, cx: &mut Context<Self>) -> Div {
-        let mut p = div().flex().flex_col().gap(px(10.)).child(ui::subhead("Comme les autres t’entendent"))
-            .child(hint("Enregistre 8 secondes de « Chat Mic », puis réécoute ta voix telle que la reçoivent Discord et ton stream."));
+    pub(crate) fn voice_preview_controls(&self, id: &'static str, cx: &mut Context<Self>) -> Div {
+        let mut actions = div().flex().flex_wrap().items_center().gap(px(8.));
         if !self.client.is_live() {
-            return p.child(hint("Démonstration : aucun micro du PC n’est enregistré."));
+            return actions.child(hint("Réécoute indisponible en démonstration."));
         }
-        let mut actions = div().flex().items_center().gap(px(8.));
         if let Some(stop) = self.voice.recording.clone() {
-            actions = actions.child(hint("Enregistrement… parle comme en live.")).child(
-                ui::pill("listen-stop", Some(Icon::Stop), "Arrêter", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, _| stop.store(true, Ordering::Relaxed))),
-            );
-        } else {
-            actions = actions.child(ui::pill("listen-rec", Some(Icon::Mic), if self.voice.take.is_some() { "Refaire" } else { "Enregistrer 8 s" }, ui::Tone::Primary)
+            actions = actions.child(ui::pill((id, 0usize), Some(Icon::Stop), "Annuler la prise", ui::Tone::Plain)
+                .on_click(cx.listener(move |_, _, _, _| stop.store(true, Ordering::Relaxed))));
+        } else if let Some(stop) = self.voice.playback.clone() {
+            actions = actions.child(ui::pill((id, 1usize), Some(Icon::Stop), "Arrêter la réécoute", ui::Tone::Plain)
+                .on_click(cx.listener(move |_, _, _, _| stop.store(true, Ordering::Relaxed))));
+        } else if !self.monitor_on() {
+            actions = actions.child(ui::pill((id, 2usize), Some(Icon::Mic),
+                if self.voice.take.is_some() { "Refaire la prise" } else { "M’enregistrer (8 s)" }, ui::Tone::Plain)
                 .on_click(cx.listener(|this, _, _, cx| this.record_take(cx))));
             if self.voice.take.is_some() {
-                actions = actions.child(ui::pill("listen-play", Some(Icon::Play), if self.voice.playing { "Lecture…" } else { "Réécouter" }, ui::Tone::Plain)
+                actions = actions.child(ui::pill((id, 3usize), Some(Icon::Play), "Réécouter doucement", ui::Tone::Primary)
                     .on_click(cx.listener(|this, _, _, cx| this.play_take(cx))));
             }
         }
-        p = p.child(actions);
-        if let Some(n) = &self.voice.note {
-            p = p.child(hint(n.clone()));
-        }
+        actions
+    }
+
+    pub fn listen_panel(&self, cx: &mut Context<Self>) -> Div {
+        let mut p = div().flex().flex_col().gap(px(10.)).child(ui::subhead("Comme les autres t’entendent"))
+            .child(hint("Enregistre ta voix, puis réécoute-la à faible volume sur ta sortie Windows."))
+            .child(self.voice_preview_controls("go-listen-panel", cx));
+        if let Some(n) = self.voice.note.as_ref() { p = p.child(hint(n.clone())); }
         p
     }
 
     /// Ta voix avant et avec le préréglage actif, par bande de fréquence.
-    pub fn voice_chart(&self, preset: &str) -> Div {
+    pub fn voice_chart(&self, preset: &str, chart_height: f32) -> Div {
         let mut p = ui::section(Icon::Activity, ui::ACCENT, "Ta voix et le préréglage", None);
         let Some(info) = self.voice.info.as_ref() else {
             return p.child(hint(if self.voice.loading { "Lecture…" } else { "Lance « Régler mon micro » pour voir ta voix." }));
@@ -310,7 +335,7 @@ impl Mixer {
         let height = |v: Option<f64>| gpui::relative((((v.unwrap_or(lo) - lo) / span) * 0.94 + 0.04) as f32);
         let step = (bands.len() / 32).max(1);
         // barres sur toute la largeur : gris ta voix, bleu avec le préréglage
-        let mut bars = div().flex().items_end().gap(px(4.)).h(px(130.)).w_full();
+        let mut bars = div().flex().items_end().gap(px(4.)).h(px(chart_height)).w_full();
         for i in (0..bands.len()).step_by(step) {
             bars = bars.child(
                 div()

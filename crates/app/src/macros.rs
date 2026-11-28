@@ -4,8 +4,8 @@ use crate::{
     ui::{self, Icon, Tone, rgb},
 };
 use gpui::{
-    Context, Div, FocusHandle, KeyDownEvent, PathPromptOptions, SharedString, Window, div,
-    prelude::*, px,
+    Context, Div, FocusHandle, KeyDownEvent, PathPromptOptions, SharedString, Window,
+    div, prelude::*, px,
 };
 use rustudio_core::keyboard_macro::{self as data, Assignment, Event, Macro, Mode, Slot};
 use rustudio_windows_desktop::keyboard as keys;
@@ -72,7 +72,17 @@ fn write_json(path: &Path, value: &impl Serialize, replace: bool) -> Result<(), 
     Ok(())
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Tab {
+    #[default]
+    Edit,
+    Library,
+    Device,
+}
+
 pub struct Editor {
+    pub(crate) tab: Tab,
+    manual: bool,
     path: PathBuf,
     saved: Vec<Macro>,
     pub draft: Macro,
@@ -137,6 +147,8 @@ impl Editor {
             vec![]
         };
         Self {
+            tab: Tab::Edit,
+            manual: false,
             path,
             saved,
             draft: Macro {
@@ -271,6 +283,7 @@ impl Editor {
         self.stop();
         self.draft = data;
         self.selected_event = None;
+        self.manual = false;
         self.dirty = false;
         self.notice = None;
         self.name_selected = false;
@@ -319,12 +332,7 @@ fn mode_name(mode: Mode) -> &'static str {
 }
 
 impl Mixer {
-    pub(crate) fn macro_command(
-        &mut self,
-        action: &'static str,
-        body: Value,
-        cx: &mut Context<Self>,
-    ) {
+    fn macro_command(&mut self, action: &'static str, body: Value, cx: &mut Context<Self>) {
         if self.macros.busy {
             return;
         }
@@ -387,12 +395,9 @@ impl Mixer {
                     Ok(data) => {
                         this.macros.load(data);
                         this.macros.selected_saved = None;
+                        this.macro_tab(Tab::Edit, cx);
                         this.macros.dirty = true;
-                        this.macros.notice = Some((
-                            true,
-                            "Macro importée dans l’éditeur ; enregistre-la pour la conserver."
-                                .into(),
-                        ));
+                        this.macros.notice = Some((true, "Macro chargée dans l’éditeur.".into()));
                     }
                     Err(e) => this.macros.notice = Some((false, e)),
                 }
@@ -432,167 +437,142 @@ impl Mixer {
         })
         .detach();
     }
+    pub(crate) fn macro_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if self.macros.tab == tab {
+            return;
+        }
+        self.macros.stop();
+        self.macros.tab = tab;
+        if self.macros.notice.as_ref().is_some_and(|(ok, _)| *ok) {
+            self.macros.notice = None;
+        }
+        self.select_open = None;
+        self.reset_page_scroll();
+        self.macro_page_opened(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn macro_page_opened(&mut self, cx: &mut Context<Self>) {
+        if self.macros.tab == Tab::Device && self.keyboard.live().is_some() {
+            self.macro_command("macros", json!({}), cx);
+        }
+    }
+
+    fn macro_new(&mut self, cx: &mut Context<Self>) {
+        self.macros.load(Macro {
+            name: String::new(),
+            mode: Mode::Once,
+            events: vec![],
+        });
+        self.macros.selected_saved = None;
+        self.macro_tab(Tab::Edit, cx);
+        self.macros.notice = None;
+        cx.notify();
+    }
+
     pub(crate) fn macros_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let m = &self.macros;
         let idle = !m.busy && m.recording.is_none();
-        let connected = self
-            .keyboard
-            .status
-            .as_ref()
-            .is_some_and(|v| v.device.status == "ready");
-        let mut root = div()
+        let preferred = match self.motion.target() {
+            Some(crate::motion::Destination::Macros(tab)) => tab,
+            _ => m.tab,
+        };
+        let tabs = self.motion.tabs(crate::motion::Surface::Macros, preferred as usize,
+            [
+                (Tab::Edit, Icon::Sliders, "Éditeur"),
+                (Tab::Library, Icon::Bookmark, "Mes macros"),
+                (Tab::Device, Icon::Keyboard, "Dans le clavier"),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (tab, icon, label))| {
+                ui::motion_tab(("macro-tab", i), icon, label, preferred == tab)
+                    .on_click(cx.listener(move |this, _, _, cx| this.navigate_to(crate::motion::Destination::Macros(tab), cx)))
+                    .into_any_element()
+            }).collect(),
+        );
+        let content = match m.tab {
+            Tab::Edit => self.macro_editor(window, idle, cx),
+            Tab::Library => self.macro_library(idle, cx),
+            Tab::Device => self.macro_device(idle, cx),
+        };
+        div()
             .w_full()
+            .max_w(px(880.))
+            .mx_auto()
             .min_w(px(0.))
             .whitespace_normal()
             .flex()
             .flex_col()
-            .gap(px(16.));
-        let mut controls = div()
+            .gap(px(20.))
+            .child(tabs)
+            .children(m.notice.as_ref().map(|(ok, message)| {
+                ui::caption(message.clone()).text_color(rgb(if *ok {
+                    ui::GREEN_TEXT
+                } else {
+                    ui::RED_TEXT
+                }))
+            }))
+            .child(content.opacity(self.surface_opacity(crate::motion::Surface::Macros, window)))
+    }
+
+    fn macro_library(&self, idle: bool, cx: &mut Context<Self>) -> Div {
+        let m = &self.macros;
+        let actions = div()
             .flex()
             .flex_wrap()
-            .items_center()
             .gap(px(8.))
             .child(
-                ui::pill("macro-new", Some(Icon::Plus), "Nouvelle", Tone::Plain).when(idle, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| {
-                        this.macros.load(Macro {
-                            name: String::new(),
-                            mode: Mode::Once,
-                            events: vec![],
-                        });
-                        this.macros.selected_saved = None;
-                        cx.notify();
-                    }))
+                ui::pill(
+                    "macro-new",
+                    Some(Icon::Plus),
+                    "Nouvelle macro",
+                    Tone::Primary,
+                )
+                .when(idle, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.macro_new(cx)))
                 }),
             )
             .child(
-                ui::pill("macro-import", Some(Icon::Upload), "Importer", Tone::Plain)
-                    .when(idle, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| this.macro_import(cx)))
-                    }),
-            )
-            .child(
                 ui::pill(
-                    "macro-export",
-                    Some(Icon::Download),
-                    "Exporter",
+                    "macro-import",
+                    Some(Icon::Upload),
+                    "Importer un fichier",
                     Tone::Plain,
                 )
                 .when(idle, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| this.macro_export(cx)))
-                }),
-            )
-            .child(
-                ui::pill(
-                    "macro-refresh",
-                    Some(Icon::Refresh),
-                    if m.busy {
-                        "Lecture / envoi…"
-                    } else {
-                        "Relire le clavier"
-                    },
-                    Tone::Plain,
-                )
-                .when(idle && connected, |d| {
-                    d.on_click(
-                        cx.listener(|this, _, _, cx| this.macro_command("macros", json!({}), cx)),
-                    )
+                    d.on_click(cx.listener(|this, _, _, cx| this.macro_import(cx)))
                 }),
             );
-        if let Some((ok, text)) = &m.notice {
-            controls = controls.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(rgb(if *ok { ui::GREEN_TEXT } else { ui::RED_TEXT }))
-                    .child(text.clone()),
-            );
-        }
-        root = root
-            .child(ui::notice(
-                false,
-                "Fonction expérimentale : l’envoi des macros dans le clavier n’a pas encore été validé sur un vrai MK770. Garde une copie de tes macros sur ce PC ou en JSON avant de les envoyer.",
-            ))
-            .child(controls);
-        let mut saved = ui::card().w_full().min_w(px(0.)).child(ui::card_title(
-            Some((Icon::Bookmark, ui::ACCENT)),
-            "Sur ce PC",
-            Some(format!("{} / 64 macros", m.saved.len()).into()),
-        ));
+        let mut library = div().flex().flex_col().gap(px(12.)).child(actions);
         if m.saved.is_empty() {
-            saved = saved.child(ui::hint(
-                "Crée ou importe une macro, puis enregistre-la ici.",
-            ));
+            return library.child(ui::hint("Aucune macro enregistrée sur ce PC."));
         }
         for (i, item) in m.saved.iter().enumerate() {
-            let selected = m.selected_saved == Some(i);
-            saved = saved.child(
-                ui::choice(SharedString::from(format!("macro-local-{i}")), Some(Icon::Keyboard), item.name.clone(), selected)
+            library = library.child(
+                ui::menu_item(
+                    ("macro-local", i),
+                    Some(Icon::Keyboard),
+                    item.name.clone(),
+                    m.selected_saved == Some(i),
+                )
+                .child(ui::caption(format!("{} événements", item.events.len())))
                 .when(idle, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
-                        let data = this.macros.saved[i].clone();
-                        this.macros.load(data);
-                        this.macros.selected_saved = Some(i);
-                        cx.notify();
+                        if let Some(data) = this.macros.saved.get(i).cloned() {
+                            this.macros.load(data);
+                            this.macros.selected_saved = Some(i);
+                            this.macro_tab(Tab::Edit, cx);
+                        }
                     }))
                 }),
             );
         }
-        let mut board=ui::card().w_full().min_w(px(0.)).child(ui::card_title(Some((Icon::Keyboard,ui::ACCENT)),"Dans le clavier",None)).child(ui::caption("Profil actif · 12 emplacements"))
-            .child(ui::hint("Les macros envoyées restent disponibles quand Rustudio est fermé. Programme-les par câble USB."));
-        if let Some(slots) = &m.slots {
-            if slots.is_empty() {
-                board = board.child(ui::caption("Aucune macro affectée dans le profil actif."));
-            }
-            for item in slots {
-                let id = item.id;
-                let detail = format!(
-                    "{} · {}",
-                    item.data.name,
-                    item.bindings
-                        .iter()
-                        .map(|b| label(b.key))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                board = board.child(
-                    ui::pill(
-                        SharedString::from(format!("macro-board-{id}")),
-                        None,
-                        format!("{} · {detail}", id + 1),
-                        Tone::Plain,
-                    )
-                    .when(idle, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(slot) = this
-                                .macros
-                                .slots
-                                .as_ref()
-                                .and_then(|s| s.iter().find(|s| s.id == id))
-                                .cloned()
-                            {
-                                this.macros.load(slot.data);
-                                this.macros.slot = id;
-                                if let Some(first) = slot.bindings.first() {
-                                    this.macros.source = first.key;
-                                }
-                                this.macros.selected_saved = None;
-                            }
-                            cx.notify();
-                        }))
-                    }),
-                );
-            }
-        } else {
-            board = board.child(ui::caption(if connected {
-                "Relis le clavier pour afficher ses affectations."
-            } else {
-                "Clavier non détecté : l’éditeur et les fichiers restent disponibles."
-            }));
-        }
-        root = root.child(ui::grid(
-            vec![saved.into_any_element(), board.into_any_element()],
-            ui::columns_that_fit(crate::desktop::page_width(window), 390., 10., 2),
-        ));
+        library
+    }
+
+    fn macro_editor(&self, window: &mut Window, idle: bool, cx: &mut Context<Self>) -> Div {
+        let m = &self.macros;
         let editing = m.name_focus.is_focused(window);
         let name = ui::field(
             "macro-name",
@@ -653,21 +633,23 @@ impl Mixer {
                 cx,
             )
             .w(px(130.));
-        let mut editor=ui::card().child(ui::card_title(Some((Icon::Sliders,ui::ACCENT)),"Éditeur",Some(format!("{} / 70 événements{}",m.draft.events.len(),if m.dirty{" · Modifications non enregistrées"}else{""}).into())))
-            .child(div().flex().flex_wrap().gap(px(10.)).child(name).child(mode))
-            .child(ui::caption(m.draft.mode.label()))
-            .child(ui::caption("Chaque appui et chaque relâchement compte comme un événement. Les délais sont placés avant la touche."));
+        let mut editor = div().flex().flex_col().gap(px(16.)).child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(10.))
+                .child(name)
+                .child(mode),
+        );
         let focus = m.capture_focus.clone();
         let is_recording = m.recording.is_some();
         let record = div()
             .id("macro-capture")
             .track_focus(&focus)
             .tab_stop(idle || is_recording)
-            .p(px(14.))
-            .rounded(px(12.))
-            .border_1()
-            .border_color(ui::alpha(if is_recording { ui::RED } else { ui::INK }, 0.3))
-            .bg(ui::alpha(ui::ACCENT, 0.05))
+            .when(is_recording, |d| {
+                d.p(px(8.)).rounded(px(9.)).bg(ui::alpha(ui::RED, 0.06))
+            })
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 if this.macros.recording.is_none() {
                     return;
@@ -753,7 +735,7 @@ impl Mixer {
                             if is_recording {
                                 Tone::Danger
                             } else {
-                                Tone::Plain
+                                Tone::Soft
                             },
                         )
                         .when(!m.busy, |d| {
@@ -796,13 +778,42 @@ impl Mixer {
                             }))
                         }),
                     )
-                    .child(ui::caption(if is_recording {
-                        "Tape dans cette zone · Échap termine · Ajout à la fin de la séquence"
-                    } else {
-                        "La capture reste dans cette fenêtre et ajoute les touches à la fin."
-                    })),
+                    .when(is_recording, |d| {
+                        d.child(ui::caption("Échap pour terminer l’enregistrement."))
+                    })
+                    .when(!is_recording, |d| {
+                        d.child(
+                            ui::pill(
+                                "macro-manual",
+                                Some(Icon::Plus),
+                                if m.manual {
+                                    "Masquer l’ajout manuel"
+                                } else {
+                                    "Ajouter à la main"
+                                },
+                                Tone::Plain,
+                            )
+                            .when(idle, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| {
+                                    this.macros.manual = !this.macros.manual;
+                                    if !this.macros.manual {
+                                        this.macros.selected_event = None;
+                                    }
+                                    cx.notify();
+                                }))
+                            }),
+                        )
+                    }),
             );
-        editor = editor.child(record);
+        editor = editor
+            .child(ui::card_title(
+                None,
+                "Séquence",
+                (!m.draft.events.is_empty()).then(|| {
+                    format!("{} / {} événements", m.draft.events.len(), data::MAX_EVENTS).into()
+                }),
+            ))
+            .child(record);
         let mut table = div()
             .id("macro-events")
             .max_h(px(270.))
@@ -810,11 +821,6 @@ impl Mixer {
             .flex()
             .flex_col()
             .gap(px(5.));
-        if m.draft.events.is_empty() {
-            table = table.child(ui::hint(
-                "Aucun événement. Enregistre tes touches ou ajoute un appui et son relâchement.",
-            ));
-        }
         for (i, e) in m.draft.events.iter().enumerate() {
             let selected = m.selected_event == Some(i);
             table = table.child(
@@ -835,6 +841,7 @@ impl Mixer {
                         if let Some(e) = this.macros.draft.events.get(i) {
                             let (key, delay_ms) = (e.key, e.delay_ms);
                             this.macros.selected_event = Some(i);
+                            this.macros.manual = true;
                             this.macros.manual_key = key;
                             this.macros.delay = delay_ms.to_string();
                             cx.notify();
@@ -843,7 +850,56 @@ impl Mixer {
                 }),
             );
         }
-        editor = editor.child(table);
+        if !m.draft.events.is_empty() {
+            editor = editor.child(table);
+        }
+        if m.manual && idle {
+            editor = editor.child(self.macro_manual(window, idle, cx));
+        }
+        let can_export = idle && m.draft.validate().is_ok();
+        let save = ui::pill(
+            "macro-save",
+            Some(Icon::Check),
+            "Enregistrer sur ce PC",
+            Tone::Primary,
+        )
+        .when(idle, |d| {
+            d.on_click(cx.listener(|this, _, _, cx| {
+                let result = this.macros.save();
+                this.macros.result(result, "Macro enregistrée sur ce PC.");
+                cx.notify();
+            }))
+        });
+        let actions = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(8.))
+            .child(save)
+            .when(can_export, |d| {
+                d.child(
+                    ui::pill(
+                        "macro-export",
+                        Some(Icon::Download),
+                        "Exporter",
+                        Tone::Plain,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.macro_export(cx))),
+                )
+            })
+            .when(m.dirty, |d| {
+                d.child(ui::caption("Modifications non enregistrées"))
+            });
+        editor = editor.child(actions);
+        if m.selected_saved.is_some() {
+            editor=editor.child(div().flex().gap(px(8.)).child(ui::pill("macro-duplicate",Some(Icon::Plus),"Créer une copie",Tone::Plain).when(idle,|d|d.on_click(cx.listener(|this,_,_,cx|{this.macros.selected_saved=None;this.macros.dirty=true;cx.notify();})))).child(ui::pill("macro-delete-local",Some(Icon::Trash),"Supprimer du PC",Tone::Danger).when(idle,|d|d.on_click(cx.listener(|this,_,_,cx|{let m=&mut this.macros;if let Some(i)=m.selected_saved{let mut next=m.saved.clone();next.remove(i);match write_json(&m.path,&next,true){Ok(())=>{m.saved=next;m.selected_saved=None;m.dirty=true;m.notice=Some((true,"Macro supprimée du PC ; celle du clavier est conservée.".into()));}Err(e)=>m.notice=Some((false,e))}}cx.notify();})))));
+        }
+        editor
+    }
+
+    fn macro_manual(&self, window: &mut Window, idle: bool, cx: &mut Context<Self>) -> Div {
+        let m = &self.macros;
+        let mut editor = div().flex().flex_col().gap(px(12.));
         let options: Vec<_> = (4..=231).filter(|k| data::valid_key(*k)).collect();
         let selected = m.manual_key;
         let key_select = self
@@ -974,7 +1030,9 @@ impl Mixer {
                             } else {
                                 Some(i + 1).filter(|j| *j < m.draft.events.len())
                             };
-                            if let Some(j) = j.filter(|&j| i < m.draft.events.len() && j < m.draft.events.len()) {
+                            if let Some(j) =
+                                j.filter(|&j| i < m.draft.events.len() && j < m.draft.events.len())
+                            {
                                 m.draft.events.swap(i, j);
                                 m.selected_event = Some(j);
                                 m.dirty = true;
@@ -1004,28 +1062,98 @@ impl Mixer {
             );
             editor = editor.child(edits);
         }
-        if let Err(error) = m.draft.validate() {
-            editor = editor.child(ui::caption(error).text_color(rgb(ui::ORANGE_TEXT)));
-        }
-        editor = editor.child(
-            ui::pill(
-                "macro-save",
-                Some(Icon::Check),
-                "Enregistrer sur ce PC",
-                Tone::Primary,
-            )
-            .when(idle, |d| {
-                d.on_click(cx.listener(|this, _, _, cx| {
-                    let result = this.macros.save();
-                    this.macros.result(result, "Macro enregistrée sur ce PC.");
-                    cx.notify();
-                }))
-            }),
+        editor
+    }
+
+    fn macro_device(&self, idle: bool, cx: &mut Context<Self>) -> Div {
+        let m = &self.macros;
+        let connected = self.keyboard.live().is_some();
+        let mut board = div().flex().flex_col().gap(px(12.)).child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .child(ui::caption("Profil actif · 12 emplacements"))
+                .child(
+                    ui::pill(
+                        "macro-refresh",
+                        Some(Icon::Refresh),
+                        if m.busy {
+                            "Lecture ou envoi…"
+                        } else {
+                            "Relire le clavier"
+                        },
+                        Tone::Plain,
+                    )
+                    .when(idle && connected, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            this.macro_command("macros", json!({}), cx);
+                        }))
+                    }),
+                ),
         );
-        if m.selected_saved.is_some() {
-            editor=editor.child(div().flex().gap(px(8.)).child(ui::pill("macro-duplicate",Some(Icon::Plus),"Créer une copie",Tone::Plain).when(idle,|d|d.on_click(cx.listener(|this,_,_,cx|{this.macros.selected_saved=None;this.macros.dirty=true;cx.notify();})))).child(ui::pill("macro-delete-local",Some(Icon::Trash),"Supprimer du PC",Tone::Danger).when(idle,|d|d.on_click(cx.listener(|this,_,_,cx|{let m=&mut this.macros;if let Some(i)=m.selected_saved{let mut next=m.saved.clone();next.remove(i);match write_json(&m.path,&next,true){Ok(())=>{m.saved=next;m.selected_saved=None;m.dirty=true;m.notice=Some((true,"Macro supprimée du PC ; celle du clavier est conservée.".into()));}Err(e)=>m.notice=Some((false,e))}}cx.notify();})))));
+        if let Some(slots) = &m.slots {
+            if slots.is_empty() {
+                board = board.child(ui::caption("Aucune macro affectée dans le profil actif."));
+            }
+            for item in slots {
+                let id = item.id;
+                let detail = format!(
+                    "{} · {}",
+                    item.data.name,
+                    item.bindings
+                        .iter()
+                        .map(|b| label(b.key))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                board = board.child(
+                    ui::pill(
+                        SharedString::from(format!("macro-board-{id}")),
+                        None,
+                        format!("{} · {detail}", id + 1),
+                        Tone::Plain,
+                    )
+                    .when(idle, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(slot) = this
+                                .macros
+                                .slots
+                                .as_ref()
+                                .and_then(|s| s.iter().find(|s| s.id == id))
+                                .cloned()
+                            {
+                                this.macros.load(slot.data);
+                                this.macros.slot = id;
+                                if let Some(first) = slot.bindings.first() {
+                                    this.macros.source = first.key;
+                                }
+                                this.macros.selected_saved = None;
+                            }
+                            cx.notify();
+                        }))
+                    }),
+                );
+            }
+        } else {
+            board = board.child(ui::caption(if connected {
+                "Relis le clavier pour afficher ses affectations."
+            } else {
+                "Branche le MK770 en USB pour voir ses affectations."
+            }));
         }
-        root = root.child(editor);
+        let valid = m.draft.validate().is_ok();
+        let occupied = m
+            .slots
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|s| s.id == m.slot));
+        if !valid && !occupied {
+            return board.child(ui::hint(
+                "Ouvre ou enregistre une macro dans l’éditeur pour l’affecter à une touche.",
+            ));
+        }
         let slot_options = (0..12)
             .map(|id| {
                 (
@@ -1074,14 +1202,67 @@ impl Mixer {
                 cx,
             )
             .w(px(200.));
-        let program=ui::card().child(ui::card_title(Some((Icon::Keyboard,ui::ACCENT)),"Affecter au clavier",None))
-            .child(ui::hint("La touche choisie déclenchera la macro à la place de son action habituelle, dans le profil actif. Reste sur ce profil pendant l’envoi."))
+        let ready = valid && connected && idle && m.slots.is_some();
+        let actions = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .child(
+                ui::pill(
+                    "macro-program",
+                    Some(Icon::Check),
+                    "Envoyer au clavier",
+                    Tone::Primary,
+                )
+                .when(!ready, |d| d.opacity(0.45))
+                .when(ready, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| {
+                        let assignment = Assignment {
+                            slot: this.macros.slot,
+                            key: this.macros.source,
+                            data: this.macros.draft.clone(),
+                        };
+                        match assignment.validate() {
+                            Ok(_) => this.macro_command("macro-assign", json!(assignment), cx),
+                            Err(error) => {
+                                this.macros.notice = Some((false, error));
+                                cx.notify();
+                            }
+                        }
+                    }))
+                }),
+            )
+            .when(occupied && connected && idle, |d| {
+                d.child(
+                    ui::pill(
+                        "macro-remove",
+                        Some(Icon::Trash),
+                        "Retirer du clavier",
+                        Tone::Danger,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.macro_command("macro-remove", json!({"slot":this.macros.slot}), cx)
+                    })),
+                )
+            })
+            .when(valid && idle, |d| {
+                d.child(
+                    ui::pill(
+                        "macro-back-editor",
+                        Some(Icon::Sliders),
+                        "Ouvrir dans l’éditeur",
+                        Tone::Plain,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.macro_tab(Tab::Edit, cx))),
+                )
+            });
+        let program = ui::card()
+            .child(ui::card_title(None, "Affectation", valid.then(|| m.draft.name.clone().into())))
+            .child(ui::caption("Programmation expérimentale. Garde une copie locale avant l’envoi.").text_color(rgb(ui::ORANGE_TEXT)))
             .child(div().flex().flex_wrap().items_center().gap(px(10.)).child(slot).child(ui::caption("Touche")).child(source))
-            .child(ui::caption("Remplacer un emplacement déplace aussi sa précédente affectation. « Retirer » rétablit la touche d’origine."))
-            .child(div().flex().flex_wrap().gap(px(8.))
-                .child(ui::pill("macro-program",Some(Icon::Check),"Envoyer au clavier",Tone::Primary).when(!connected||!idle||m.slots.is_none(),|d|d.opacity(0.5)).when(connected&&idle&&m.slots.is_some(),|d|d.on_click(cx.listener(|this,_,_,cx|{let a=Assignment{slot:this.macros.slot,key:this.macros.source,data:this.macros.draft.clone()};match a.validate(){Ok(_)=>this.macro_command("macro-assign",json!(a),cx),Err(e)=>{this.macros.notice=Some((false,e));cx.notify();}}}))))
-                .child(ui::pill("macro-remove",Some(Icon::Trash),"Retirer du clavier",Tone::Danger).when(connected&&idle&&m.slots.as_ref().is_some_and(|s|s.iter().any(|s|s.id==m.slot)),|d|d.on_click(cx.listener(|this,_,_,cx|this.macro_command("macro-remove",json!({"slot":this.macros.slot}),cx))))));
-        root.child(program)
+            .child(ui::caption("L’envoi remplace l’action de la touche et l’ancienne affectation de l’emplacement."))
+            .child(actions);
+        board.child(program)
     }
 }
 

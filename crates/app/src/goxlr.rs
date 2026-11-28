@@ -2,6 +2,8 @@
 use crate::{
     backend::Client,
     desktop::{Page, hint},
+    mic_filters::{MicTab, mic_signal},
+    mic_wizard::Step,
     mixer::Mixer,
 };
 use crate::mixer::fmt_num;
@@ -10,8 +12,25 @@ use crate::ui::rgb;
 use gpui::{AnyElement, ClipboardItem, Context, Div, FontWeight, IntoElement, KeyDownEvent, MouseButton, SharedString, Stateful, div, prelude::*, px};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+use std::time::{Duration, Instant};
 
 const MODULE: &str = "/api/modules/goxlr-mini";
+const MONITOR_START: u32 = 12;
+
+fn monitor_level(percent: f64) -> u32 {
+    (percent.clamp(1., 100.) * 255. / 100.).round() as u32
+}
+
+fn monitor_percent(level: u32) -> f64 {
+    (f64::from(level) * 100. / 255.).round()
+}
+
+enum FeedbackEvent {
+    Suspected,
+    Unavailable,
+}
+
 pub const ACTIONS: &[&str] = &[
     "route",
     "settings",
@@ -25,6 +44,7 @@ pub const ACTIONS: &[&str] = &[
     "mic",
     "mic-model",
     "mic-preset",
+    "mic-profile",
     "volume",
     "mute",
     "dsp",
@@ -110,9 +130,6 @@ pub struct GoView {
     /// écoute temporaire de ta voix dans le casque en cours
     #[serde(default)]
     pub(crate) listening: bool,
-    /// Suppression du bruit du micro sur le PC (RNNoise via Equalizer APO)
-    #[serde(default)]
-    pub(crate) mic_ns: Value,
 }
 #[derive(Default)]
 pub struct GoPage {
@@ -121,17 +138,23 @@ pub struct GoPage {
     pub(crate) notice: Option<(bool, String)>,
     pub(crate) voice_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub(crate) job: Value,
+    preset_in_flight: Option<String>,
+    preset_pending: Option<Value>,
     /// intensité du style : valeur en attente, envoi en cours
     pub(crate) intensity_pending: Option<i64>,
     pub(crate) intensity_sending: bool,
-    /// onglet ouvert de la page Micro (0 : ta voix, 1 : réglages fins, 2 : bouton et retour)
-    pub(crate) mic_tab: u8,
+    monitor: Option<Arc<AtomicU32>>,
+    monitor_stopping: bool,
+    monitor_notice: Option<&'static str>,
+    mic_connection_open: bool,
     /// Niveau d'entrée du micro en dB, lu seulement page Micro ouverte.
     pub(crate) level: Option<f64>,
     /// Niveau affiché par le vumètre : il suit `level` en douceur.
     pub(crate) level_shown: Option<f64>,
     /// Réduction en direct des 4 traitements du firmware Rustudio (dB) : gate, compresseur, de-esser, limiteur.
     pub(crate) voice_meters: Option<[f64; 4]>,
+    /// Annulation proposée tant que le compresseur relu correspond au réglage doux envoyé.
+    pub(crate) softer_compressor_undo: Option<(rustudio_core::dsp::Comp, rustudio_core::dsp::Comp)>,
     level_tick: Option<std::time::Instant>,
     confirm: Option<(&'static str, Value, Ask)>,
     editing: Option<usize>,
@@ -140,6 +163,9 @@ pub struct GoPage {
     auto_scene: Option<String>,
     colour: String,
     diagnostics: Option<Value>,
+    diagnostic_loading: bool,
+    diagnostic_error: Option<String>,
+    diagnostic_details: ui::Disclosure,
     sound_test: Option<Value>,
     /// Latence en direct (page Diagnostic ouverte) : réponse USB et estimation de Windows.
     pub(crate) latency: Option<Value>,
@@ -148,6 +174,7 @@ pub struct GoPage {
 }
 impl Drop for GoPage {
     fn drop(&mut self) {
+        self.end_monitor();
         if let Some(cancel) = self.voice_cancel.as_ref() {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -155,11 +182,25 @@ impl Drop for GoPage {
 }
 
 impl GoPage {
+    pub(crate) fn end_monitor(&mut self) {
+        if let Some(level) = self.monitor.take() {
+            level.store(0, Ordering::SeqCst);
+        }
+    }
+
+    pub(crate) fn owns_monitor(&self) -> bool { self.monitor.is_some() }
+
     pub fn receive(&mut self, view: Option<GoView>) {
         if let Some(v) = view.as_ref() {
             self.job = v.job.clone();
         }
         if !self.busy {
+            if let (Some(v), Some((before, after))) = (&view, &self.softer_compressor_undo)
+                && v.state["dsp"]["comp"] != json!(before)
+                && v.state["dsp"]["comp"] != json!(after)
+            {
+                self.softer_compressor_undo = None;
+            }
             self.view = view;
         }
     }
@@ -180,12 +221,16 @@ impl GoPage {
         self.level_tick.is_some()
     }
 
+    pub(crate) fn clear_level_display(&mut self) {
+        self.level_shown = None;
+        self.level_tick = None;
+    }
+
     /// Une image du vumètre : l'affichage monte vite vers le niveau mesuré et redescend doucement, comme le
     /// vumètre d'une console. Renvoie vrai tant qu'il bouge encore.
     pub(crate) fn step_level(&mut self) -> bool {
         let Some(target) = self.level else {
-            self.level_shown = None;
-            self.level_tick = None;
+            self.clear_level_display();
             return false;
         };
         let now = std::time::Instant::now();
@@ -318,12 +363,19 @@ impl Mixer {
             return;
         }
         if self.go.busy {
+            if action == "mic-preset" && self.go.enabled() {
+                self.go.preset_pending = Some(data);
+                cx.notify();
+            }
             return;
         }
         if !self.go.enabled() && !matches!(action, "reconnect" | "job-cancel") {
             return;
         }
         self.go.busy = true;
+        if action == "mic-preset" {
+            self.go.preset_in_flight = data["name"].as_str().map(str::to_owned);
+        }
         self.go.notice = None;
         let client = self.client.clone();
         let diagnostic = self.page == Page::Go(Section::Diagnostic);
@@ -347,6 +399,8 @@ impl Mixer {
                 }
                 // un réglage qui passe se voit sur la page : seul un échec mérite un message
                 this.go.notice = result.err().map(|error| (false, error));
+                this.go.preset_in_flight = None;
+                this.resume_mic_preset(cx);
                 cx.notify();
             });
         })
@@ -354,19 +408,37 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Coupe tout retour de ta voix dans le casque : arrêt immédiat de la boucle d'écoute, bail terminé et volume à zéro.
+    pub(crate) fn resume_mic_preset(&mut self, cx: &mut Context<Self>) {
+        if let Some(data) = self.go.preset_pending.take() {
+            if self.go.enabled() {
+                self.go_send("mic-preset", data, cx);
+            } else if self.go.notice.is_none() {
+                self.go.notice = Some((false, "Impossible d’appliquer le préréglage. La GoXLR ne répond pas.".into()));
+            }
+        }
+    }
+
+    /// Coupe le bail temporaire et, s’il alimente le casque, le retour réglé à la main.
     pub(crate) fn cut_monitor(&mut self, cx: &mut Context<Self>) {
-        self.stop_wizard_listen_state();
+        self.go.end_monitor();
+        if self.go.monitor_stopping { return; }
+        self.go.monitor_stopping = true;
+        let manual = self.manual_monitor_on();
         let client = self.client.clone();
         let work = cx.background_executor().spawn(async move {
-            let _ = client.set_mic_listen(0, None);
-            let _ = client.go_command("volume", json!({"channel": "MicMonitor", "value": 0}));
-            client.go_view().ok()
+            let mut result = client.stop_mic_listen().map(|_| ());
+            if manual {
+                let cut = client.go_command("volume", json!({"channel":"MicMonitor","value":0})).map(|_| ());
+                result = result.and(cut);
+            }
+            (result, client.go_view().ok())
         });
         cx.spawn(async move |this, cx| {
-            let view = work.await;
+            let (result, view) = work.await;
             let _ = this.update(cx, |this, cx| {
+                this.go.monitor_stopping = false;
                 this.go.receive(view);
+                this.go.notice = result.err().map(|e| (false, e));
                 cx.notify();
             });
         })
@@ -374,20 +446,141 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Vrai si ta voix part dans le casque en ce moment (bail d'écoute, assistant actif ou retour réglé à la main).
-    pub(crate) fn monitor_on(&self) -> bool {
-        let wizard_on = self.wizard.as_ref().is_some_and(|w| w.is_listening());
-        wizard_on
-            || self.go.view.as_ref().is_some_and(|v| {
-                v.listening || (v.state["volumes"]["MicMonitor"].as_i64().unwrap_or(0) > 0 && v.state["routing"]["Microphone"]["Headphones"] == true)
+    fn start_monitor(&mut self, cx: &mut Context<Self>) {
+        if !self.go.enabled() || self.go.monitor_stopping || self.monitor_on() || self.voice.preview_busy() { return; }
+        let level = Arc::new(AtomicU32::new(MONITOR_START));
+        self.go.monitor = Some(level.clone());
+        self.go.monitor_notice = None;
+        self.go.notice = None;
+        let client = self.client.clone();
+        let (feedback, events) = async_channel::bounded(1);
+        if client.is_live() {
+            let requested = level.clone();
+            std::thread::spawn(move || {
+                if rustudio_windows_desktop::soundcheck::monitor_feedback(requested, {
+                    let feedback = feedback.clone();
+                    move || { let _ = feedback.try_send(FeedbackEvent::Suspected); }
+                }).is_err() {
+                    let _ = feedback.try_send(FeedbackEvent::Unavailable);
+                }
+            });
+        }
+        cx.spawn(async move |this, cx| {
+            let mut sent = 0;
+            let mut refreshed = Instant::now();
+            loop {
+                if let Ok(event) = events.try_recv() {
+                    let _ = this.update(cx, |this, cx| {
+                        if !this.go.monitor.as_ref().is_some_and(|current| Arc::ptr_eq(current, &level)) {
+                            return;
+                        }
+                        match event {
+                            FeedbackEvent::Suspected if level.load(Ordering::SeqCst) > MONITOR_START => {
+                                // Un curseur encore tenu ne doit pas rétablir le niveau juste après la réduction.
+                                this.param_drag = None;
+                                this.param_held.remove("param-mic-quick-monitor");
+                                this.param_held.remove("param-wizard-live-monitor");
+                                level.store(MONITOR_START, Ordering::SeqCst);
+                                this.go.monitor_notice = Some("Larsen possible. Retour ramené à 5 %.");
+                            }
+                            FeedbackEvent::Suspected => {
+                                this.go.monitor_notice = Some("Larsen possible. Retour coupé.");
+                                this.cut_monitor(cx);
+                            }
+                            FeedbackEvent::Unavailable => {
+                                this.go.monitor_notice = Some("Protection anti-Larsen indisponible sur cette entrée.");
+                            }
+                        }
+                        cx.notify();
+                    });
+                }
+                let desired = level.load(Ordering::SeqCst);
+                if desired == 0 { break; }
+                if desired != sent || refreshed.elapsed() >= Duration::from_secs(2) {
+                    let client = client.clone();
+                    let requested = level.clone();
+                    let starting = sent == 0;
+                    let result = cx.background_executor().spawn(async move { client.renew_mic_listen(&requested, starting) }).await;
+                    match result {
+                        Ok(Some(actual)) => {
+                            sent = actual;
+                            refreshed = Instant::now();
+                        }
+                        stopped => {
+                            let _ = this.update(cx, |this, cx| {
+                                if this.go.monitor.as_ref().is_some_and(|current| Arc::ptr_eq(current, &level)) {
+                                    this.go.end_monitor();
+                                    this.go.notice = stopped.err().map(|error| (false, error));
+                                    cx.notify();
+                                }
+                            });
+                            break;
+                        }
+                    }
+                }
+                cx.background_executor().timer(Duration::from_millis(120)).await;
+            }
+        }).detach();
+        cx.notify();
+    }
+
+    pub(crate) fn monitor_controls(&self, id: &'static str, enabled: bool, cx: &mut Context<Self>) -> Div {
+        let on = self.monitor_on();
+        let can_start = enabled && !self.go.monitor_stopping && !self.voice.preview_busy();
+        let toggle = ui::pill((id, 0usize), Some(if on { Icon::VolumeOff } else { Icon::Headphones }),
+            if on { "Couper le retour" } else { "M’écouter en direct" },
+            if on { ui::Tone::Warn } else { ui::Tone::Plain })
+            .when(!on && !can_start, |d| d.opacity(0.45))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.monitor_on() { this.cut_monitor(cx); }
+                else if can_start { this.start_monitor(cx); }
+            }));
+        let mut controls = div().flex().items_center().gap(px(8.)).child(toggle);
+        if let Some(level) = &self.go.monitor {
+            let current = monitor_percent(level.load(Ordering::SeqCst));
+            let requested = level.clone();
+            controls = controls.child(div().w(px(170.)).child(self.slider_row(
+                id, "Niveau du retour", current, (1., 100.), 1.,
+                |value| format!("{value:.0} %"),
+                true,
+                move |this, value, cx| {
+                    if this.go.monitor.as_ref().is_some_and(|active| Arc::ptr_eq(active, &requested)) {
+                        requested.store(monitor_level(value), Ordering::SeqCst);
+                        cx.notify();
+                    }
+                },
+                cx,
+            )));
+        }
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(5.))
+            .child(controls)
+            .when_some(self.go.monitor_notice, |d, notice| {
+                d.child(ui::status(notice, ui::State::Warn).max_w(px(350.)))
             })
     }
 
+    /// Le casque peut aussi recevoir le micro par son routage et son volume manuels.
+    pub(crate) fn monitor_on(&self) -> bool {
+        self.go.owns_monitor() || self.go.view.as_ref().is_some_and(|v| v.listening) || self.manual_monitor_on()
+    }
+
+    fn manual_monitor_on(&self) -> bool {
+        self.go.view.as_ref().is_some_and(|v| {
+            v.state["volumes"]["MicMonitor"].as_i64().unwrap_or(0) > 0
+                && v.state["routing"]["Microphone"]["Headphones"] == true
+        })
+    }
+
     pub(crate) fn refresh_diag(&mut self, cx: &mut Context<Self>) {
-        if self.go.busy {
+        if self.go.diagnostic_loading {
             return;
         }
-        self.go.busy = true;
+        self.go.diagnostic_loading = true;
+        self.go.diagnostic_error = None;
         let client = self.client.clone();
         let job = cx
             .background_executor()
@@ -395,13 +588,10 @@ impl Mixer {
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
-                this.go.busy = false;
+                this.go.diagnostic_loading = false;
                 match result {
-                    Ok(data) => {
-                        this.go.diagnostics = Some(data);
-                        this.go.notice = None;
-                    }
-                    Err(err) => this.go.notice = Some((false, err)),
+                    Ok(data) => this.go.diagnostics = Some(data),
+                    Err(err) => this.go.diagnostic_error = Some(err),
                 }
                 cx.notify();
             });
@@ -712,31 +902,19 @@ impl Mixer {
         ui::settings_columns(width, vec![look.into_any_element()], vec![colours.into_any_element()])
     }
 
-    /// Page Micro : si l'assistant guidé est ouvert, il occupe toute la page (sans fenêtre modale tronquée) ;
-    /// sinon, en-tête micro + onglets (ta voix, réglages fins, bouton et retour).
     fn microphone(&self, v: &GoView, width: f32, cx: &mut Context<Self>) -> Div {
         if let Some(workspace) = self.mic_wizard_workspace(width, cx) {
             return workspace;
         }
-        let wide = width >= 900.;
-        let tab = self.go.mic_tab;
-        let mut tabs = ui::tabs();
-        for (n, (glyph, label)) in [(Icon::Wave, "Ta voix"), (Icon::Sliders, "Réglages fins"), (Icon::MicOff, "Bouton et retour")].into_iter().enumerate() {
-            tabs = tabs.child(ui::tab(SharedString::from(format!("mic-tab-{n}")), glyph, label, tab == n as u8).on_click(cx.listener(move |this, _, _, cx| {
-                this.go.mic_tab = n as u8;
-                cx.notify();
-            })));
+        match self.mic_tab {
+            MicTab::Input => self.go_mic_input(v, cx),
+            MicTab::Filters => self.go_mic_filters(&v.state, width, cx),
+            MicTab::Presets => self.mic_voice(v, width, cx),
+            MicTab::Listen => self.mic_button_and_listen(v, width, cx),
         }
-        let body = match tab {
-            1 => self.mic_fine(v, width, cx),
-            2 => self.mic_button_and_listen(v, width, cx),
-            _ => self.mic_voice(v, width, cx),
-        };
-        div().flex().flex_col().gap(px(20.)).child(self.mic_hero(v, wide, cx).pb(px(8.))).child(div().flex().flex_col().gap(px(4.)).child(tabs).child(body))
     }
 
-    /// En tête de la page Micro : le micro et son branchement à gauche, son niveau en direct et son gain à droite.
-    fn mic_hero(&self, v: &GoView, wide: bool, cx: &mut Context<Self>) -> Div {
+    fn go_mic_input(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
         let s = &v.state;
         let mic = &s["mic"];
         let enabled = self.go.enabled();
@@ -756,59 +934,36 @@ impl Mixer {
         let model = mic["model"].as_str().unwrap_or("");
         let model_text = models.iter().find(|(id, _)| id == model).map(|(_, l)| l.clone()).unwrap_or_else(|| "Choisir le modèle".into());
         let ids: Vec<String> = models.iter().map(|(id, _)| id.clone()).collect();
-        let job = self.go.job.is_object() && self.go.job["phase"].is_string();
-        let identity = div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(ui::eyebrow("Modèle branché sur la GoXLR"))
-            .child(div().w_full().max_w(px(340.)).child(self.dropdown("mic-model", model_text, models.iter().map(|(id, l)| (l.clone(), id == model)).collect(), enabled, move |this, i, cx| this.go_send("mic-model", json!({"model": ids[i]}), cx), cx)))
+        let gain = ui::card_title(Some((Icon::Gauge, ui::ACCENT)), "Gain du micro", None);
+        let gain = div().flex().flex_col().gap(px(14.))
+            .child(div().flex().flex_wrap().items_center().justify_between().gap(px(12.))
+                .child(gain)
+                .child(mic_signal(self.go.level_shown, self.go.level)))
+            .child(self.slider_row("mic-gain", "Préampli GoXLR", mic["gain_db"].as_f64().unwrap_or(0.),
+                (0., 72.), 1., |v| format!("{v:.0} dB"), enabled,
+                |this, v, cx| this.go_send("mic", json!({"gain_db": v.round() as i64}), cx), cx));
+
+        let connection = div().flex().flex_col().gap(px(12.))
+            .child(div().flex().flex_col().gap(px(6.))
+                .child(ui::eyebrow("Modèle"))
+                .child(div().w_full().max_w(px(340.)).child(self.dropdown("mic-model", model_text,
+                    models.iter().map(|(id, l)| (l.clone(), id == model)).collect(), enabled,
+                    move |this, i, cx| this.go_send("mic-model", json!({"model": ids[i]}), cx), cx))))
             .child(kinds)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    // un seul chemin pour régler le micro : l'assistant fait la détection, le gain et l'empreinte
-                    .child(ui::pill("mic-voice-setup", Some(Icon::Wave), if s["mic_cal"].is_object() { "Refaire le réglage" } else { "Régler mon micro" }, ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.open_mic_wizard(cx)))),
-            )
-            .when(job, |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(ui::status(self.go.job["step"].as_str().unwrap_or("Mesure en cours…").to_owned(), ui::State::Info))
-                        .child(self.act(ui::pill("mic-job-cancel", Some(Icon::Close), "Annuler", ui::Tone::Danger), "job-cancel", json!({}), cx)),
-                )
+            .when_some(labels(&v.meta["mic_models"][model]["tips"]).next(), |d, tip| {
+                d.child(ui::caption(tip.to_owned()))
             });
-        // tu t'entends dans le casque : toujours visible, et coupable d'un clic
-        let monitor_on = self.monitor_on();
-        let identity = identity.when(monitor_on, |d| {
-            d.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(ui::status("Tu t’entends dans le casque", ui::State::Warn))
-                    .child(ui::pill("mic-monitor-stop", Some(Icon::VolumeOff), "Couper le retour", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.cut_monitor(cx)))),
-            )
-        });
-        let tip = labels(&v.meta["mic_models"][model]["tips"]).next().map(str::to_owned);
-        let live = div()
-            .flex()
-            .flex_col()
-            .gap(px(18.))
-            .child(level_meter(self.go.level_shown, self.go.level))
-            .child(self.slider_row("mic-gain", "Gain", mic["gain_db"].as_f64().unwrap_or(0.), (0., 72.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("mic", json!({"gain_db": v.round() as i64}), cx), cx))
-            .when_some(tip, |d, tip| {
-                d.child(div().flex().items_start().gap(px(8.)).child(div().flex_none().mt(px(2.)).child(ui::icon(Icon::Sparkles, 14., rgb(ui::ACCENT)))).child(ui::hint(tip).text_size(px(12.5)).flex_1().min_w(px(0.))))
-            });
-        if wide {
-            div().flex().items_start().gap(px(48.)).child(identity.w(px(470.)).flex_none()).child(live.flex_1().min_w(px(0.)).pt(px(28.)))
-        } else {
-            div().flex().flex_col().gap(px(22.)).child(identity).child(live)
-        }
+
+        let open = self.go.mic_connection_open;
+        let details = ui::pill("mic-connection", Some(if open { Icon::ChevronDown } else { Icon::ChevronRight }),
+            "Modèle et alimentation", ui::Tone::Plain)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.go.mic_connection_open = !this.go.mic_connection_open;
+                cx.notify();
+            }));
+        div().w_full().flex().flex_col().gap(px(18.))
+            .child(gain)
+            .child(ui::card().child(div().flex().child(details)).when(open, |d| d.child(connection)))
     }
 
     /// Onglet « Ta voix » : le préréglage à gauche ; à droite ce que Rustudio sait de ta voix et l'effet du préréglage.
@@ -821,10 +976,34 @@ impl Mixer {
             let tile = ui::tile(SharedString::from(format!("mic-preset-{id}")), Some((preset_icon(id), preset_colour(id))), p["label"].as_str().unwrap_or(id).to_owned(), p["desc"].as_str().map(|d| d.to_owned().into()), s["mic_preset"] == id.as_str(), (id == advised).then(|| ("Conseillé".into(), ui::GREEN)));
             presets.push(self.act(tile, "mic-preset", json!({"name":id}), cx).into_any_element());
         }
-        let measured = s["voice_print"].is_object();
-        let voices = ui::section(Icon::Wave, 0x5856d6, "Préréglage", measured.then(|| "Ajustés à ta voix".into())).child(ui::grid(presets, 2));
         let cal = &s["mic_cal"];
-        if !cal.is_object() && !measured { return voices; }
+        let measured = s["voice_print"].is_object();
+        let has_details = cal.is_object() || measured;
+        let column_width = if has_details { ui::settings_column_width(width) } else { width };
+        let columns = ui::columns_that_fit(column_width, 200., 10., 4);
+        let applying = self.go.preset_pending.as_ref().and_then(|p| p["name"].as_str())
+            .or(self.go.preset_in_flight.as_deref())
+            .and_then(|id| v.meta["mic_presets"][id]["label"].as_str());
+        let feedback = if let Some(label) = applying {
+            (format!("Application de {label}…"), ui::State::Info)
+        } else if v.ab {
+            ("Écoute de la voix brute".into(), ui::State::Info)
+        } else if let Some(label) = s["mic_preset"].as_str()
+            .and_then(|id| v.meta["mic_presets"][id]["label"].as_str()) {
+            (format!("{label} · Actif"), ui::State::Ok)
+        } else {
+            ("Réglages personnalisés".into(), ui::State::Info)
+        };
+        let voices = ui::card()
+            .child(ui::status(feedback.0, feedback.1))
+            .child(ui::grid(presets, columns))
+            .when(s["mic_preset"] == "anti-bruit", |d| d.child(ui::caption("Pour atténuer le clavier pendant que tu parles dans tes applis, utilise la suppression du bruit (IA).")))
+            .child(div().flex().flex_wrap().gap(px(8.))
+                .child(ui::pill("mic-voice-setup", Some(Icon::Wave), "Analyser ma voix", ui::Tone::Plain)
+                    .on_click(cx.listener(|this, _, _, cx| this.open_mic_wizard(Step::Measure, cx))))
+                .when(has_details, |d| d.child(ui::pill("mic-adjustments", Some(Icon::Activity), "Bilan vocal", ui::Tone::Plain)
+                    .on_click(cx.listener(|this, _, _, cx| this.open_mic_wizard(Step::Gain, cx))))));
+        if !has_details { return voices; }
         let mut tuned = ui::section(Icon::Mic, ui::RED, "Ton réglage", None);
         if cal.is_object() {
             let when = cal["t"].as_f64().map(ago).unwrap_or_default();
@@ -839,136 +1018,18 @@ impl Mixer {
                         .child(ui::fact(format!("{} dB", (cal["voice_db"].as_f64().unwrap_or(0.) - cal["noise_peak_db"].as_f64().unwrap_or(0.)).round()), "Voix au-dessus du bruit"))
                         .child(ui::fact(if s["voice_print"].is_object() { "Analysée" } else { "Non analysée" }, "Ta voix")),
                 )
-                .child(ui::caption(format!("Réglé {when}. Relance-le si tu changes de micro, de place ou de pièce.")));
+                .child(ui::caption(format!("Réglé {when}. Relance l’analyse si tu changes de micro, de place ou de pièce.")));
         }
         if measured {
-            tuned = tuned.child(div().flex().child(self.ask_go(ui::pill("voice-forget", Some(Icon::Trash), "Oublier ma voix", ui::Tone::Plain), "voice-forget", json!({}), Ask::new("Oublier l’analyse de ta voix ?", "Oublier").text("Rustudio efface ce qu’il a mesuré de ta voix avec ce micro. Les sons repartent de réglages généraux, jusqu’à ton prochain passage dans l’assistant.").danger(), cx)));
+            tuned = tuned.child(div().flex().child(self.ask_go(ui::pill("voice-forget", Some(Icon::Trash), "Oublier ma voix", ui::Tone::Plain), "voice-forget", json!({}), Ask::new("Oublier l’analyse de ta voix ?", "Oublier").text("Rustudio efface ce qu’il a mesuré de ta voix avec ce micro. Les sons repartent de réglages généraux, jusqu’à la prochaine analyse.").danger(), cx)));
         }
         let mut details = vec![tuned.into_any_element()];
         if measured {
             let preset = s["mic_preset"].as_str().filter(|p| *p != "brut" && *p != "custom").unwrap_or("studio");
-            details.push(self.voice_chart(preset).into_any_element());
+            let chart_height = (column_width * 0.21).clamp(130., 220.);
+            details.push(self.voice_chart(preset, chart_height).into_any_element());
         }
         ui::settings_columns(width, vec![voices.into_any_element()], details)
-    }
-
-    /// Suppression du bruit par IA (RNNoise, comme OBS), sur le PC : installation, marche, intensité, micro visé.
-    pub(crate) fn ns_panel(&self, v: &GoView, cx: &mut Context<Self>) -> Div {
-        let ns = &v.mic_ns;
-        let st = &v.state["mic_ns"];
-        let enabled = self.go.enabled();
-        let setup = &ns["setup"];
-        let mut p = ui::section(Icon::Sparkles, 0x5856d6, "Suppression du bruit (IA)", Some("Comme OBS · sur ton PC".into()));
-        if setup["running"] == true {
-            return p.child(ui::status(setup["step"].as_str().unwrap_or("En cours…").to_owned(), ui::State::Info)).child(ui::caption("Le son de Windows peut se couper environ 2 secondes."));
-        }
-        if let Some(e) = setup["error"].as_str() {
-            p = p.child(div().text_size(px(12.5)).text_color(rgb(ui::RED_TEXT)).child(format!("Échec : {e}")));
-        }
-        if ns["ready"] != true {
-            let target = ns["target_name"].as_str().unwrap_or("ton micro").to_owned();
-            return p
-                .child(hint("Enlève les ventilateurs, le clavier, le souffle et la respiration de ta voix, même pendant que tu parles. C’est RNNoise, le filtre « Suppression du bruit » d’OBS, appliqué à ton micro pour toutes tes applis : Discord, OBS, jeux."))
-                .child(ui::caption(format!("Micro : {target}")))
-                .child(div().flex().child(self.ask_go(ui::pill("ns-install", Some(Icon::Download), "Installer la suppression du bruit", ui::Tone::Primary), "mic-ns-setup", json!({}), Ask::new("Installer la suppression du bruit ?", "Installer")
-                    .text("Rustudio télécharge RNNoise, le module libre qu’utilise OBS (14 Mo, vérifié), et Equalizer APO s’il manque, puis les branche sur l’entrée de ton micro dans Windows. Le traitement tourne sur ton processeur : moins de 1 % du processeur, 10 ms de latence.")
-                    .text("Le son de Windows redémarre : environ 2 secondes de silence. Tu peux la couper ou la retirer à tout moment."), cx)));
-        }
-        let on = st["enabled"] == true;
-        let strength = st["strength"].as_f64().unwrap_or(90.);
-        let grace = st["grace_ms"].as_f64().unwrap_or(200.);
-        p = p
-            .child(ui::list_row(None, if on { "Active" } else { "Coupée" }, Some(format!("Sur {}", ns["target_name"].as_str().unwrap_or("ton micro")).into()), self.act(ui::toggle("ns-enabled", on, enabled), "mic-ns", json!({"enabled": !on}), cx), true))
-            .when(on, |d| {
-                d.child(self.slider_row("ns-strength", "Intensité : plus haut, le bruit entre tes mots disparaît", strength, (50., 99.), 1., |v| format!("{} %", v.round()), enabled, |this, v, cx| this.go_send("mic-ns", json!({"strength": v.round() as i64}), cx), cx))
-                    .child(self.slider_row("ns-grace", "Maintien après ta voix (fins de mots)", grace, (0., 500.), 10., |v| format!("{} ms", v.round()), enabled, |this, v, cx| this.go_send("mic-ns", json!({"grace_ms": v.round() as i64}), cx), cx))
-            });
-        // micro visé : n'importe quelle entrée de Windows (GoXLR ou non)
-        let caps: Vec<(String, String)> = ns["captures"].as_array().into_iter().flatten().filter_map(|c| Some((c["guid"].as_str()?.to_owned(), c["name"].as_str()?.to_owned()))).collect();
-        if caps.len() > 1 {
-            let target = ns["target"].as_str().unwrap_or("").to_owned();
-            let mut list = ui::segmented();
-            for (guid, name) in caps {
-                let selected = guid.eq_ignore_ascii_case(&target);
-                list = list.child(self.act(ui::seg(SharedString::from(format!("ns-dev-{guid}")), name, selected), "mic-ns", json!({"device": guid}), cx));
-            }
-            p = p.child(ui::subhead("Micro traité")).child(list);
-            if ns["captures"].as_array().into_iter().flatten().any(|c| c["guid"].as_str().is_some_and(|g| g.eq_ignore_ascii_case(&target)) && c["installed"] != true) {
-                p = p.child(div().flex().child(self.ask_go(ui::pill("ns-branch", Some(Icon::Plug), "Brancher sur ce micro", ui::Tone::Primary), "mic-ns-setup", json!({}), Ask::new("Brancher la suppression du bruit sur ce micro ?", "Brancher").text("Le son de Windows redémarre : environ 2 secondes de silence."), cx)));
-            }
-        }
-        p.child(div().flex().child(self.ask_go(ui::pill("ns-remove", Some(Icon::Close), "Retirer de ce micro", ui::Tone::Plain), "mic-ns-remove", json!({}), Ask::new("Retirer la suppression du bruit de ce micro ?", "Retirer").text("Ta voix repart sans filtre IA. Le son de Windows redémarre : environ 2 secondes de silence.").danger(), cx)))
-    }
-
-    /// Onglet « Réglages fins » : les quatre traitements d'un coup d'œil, puis l'égaliseur et la dynamique.
-    fn mic_fine(&self, v: &GoView, width: f32, cx: &mut Context<Self>) -> Div {
-        let s = &v.state;
-        let enabled = self.go.enabled();
-        let mut switches: Vec<AnyElement> = vec![];
-        for (key, label, sub) in [
-            ("eq", "Égaliseur", "Timbre de ta voix"),
-            ("gate", "Noise gate", "Bruit entre tes phrases"),
-            ("comp", "Compresseur", "Écarts de volume"),
-            ("deesser", "De-esser", "« s » qui sifflent"),
-        ] {
-            let on = s["fx"][key] == true;
-            switches.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .py(px(6.))
-                    .child(div().flex_1().min_w(px(0.)).flex().flex_col().child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(label)).child(ui::caption(sub)))
-                    .child(self.act(ui::toggle(SharedString::from(format!("fx-{key}")), on, enabled), "fx", json!({(key):!on}), cx))
-                    .into_any_element(),
-            );
-        }
-        let fx = ui::section(Icon::Sliders, ui::ACCENT, "Traitements", Some("Coupe ce dont tu n’as pas besoin".into())).child(ui::grid(switches, ui::columns_that_fit(width, 220., 32., 4)).gap_x(px(32.)));
-        let dsp = &s["dsp"];
-        let mut bands = div().flex().gap(px(4.));
-        for band in labels(&v.meta["eq_bands"]) {
-            let band = band.to_owned();
-            let freq = dsp["eq_freq"][&band].as_f64().or_else(|| band.parse().ok()).unwrap_or(100.);
-            let range = &v.meta["eq_ranges"][&band];
-            let (lo, hi) = (range[0].as_f64().unwrap_or(freq), range[1].as_f64().unwrap_or(freq));
-            let down = ((freq / 1.12).round()).clamp(lo, hi);
-            let up = ((freq * 1.12).round()).clamp(lo, hi);
-            let (b1, b2, b3) = (band.clone(), band.clone(), band.clone());
-            let below = div()
-                .child(div().flex().justify_center().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(hz(freq)))
-                .child(
-                    div().mt(px(6.)).flex().justify_center().child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(2.))
-                            .child(self.act(ui::round(SharedString::from(format!("eqf-down-{band}")), Icon::ChevronLeft, 22., alpha(0x767680, 0.), rgb(ui::TEXT3)), "dsp", json!({"eq_freq":{(b1):down}}), cx))
-                            .child(self.act(ui::round(SharedString::from(format!("eqf-up-{band}")), Icon::ChevronRight, 22., alpha(0x767680, 0.), rgb(ui::TEXT3)), "dsp", json!({"eq_freq":{(b2):up}}), cx)),
-                    ),
-                );
-            bands = bands.child(self.eq_column(&format!("mic-eq-{band}"), dsp["eq"][&band].as_f64().unwrap_or(0.), (-9., 9.), 1., below.into_any_element(), enabled, move |this, v, cx| this.go_send("dsp", json!({"eq":{(b3.clone()): v.round() as i64}}), cx), cx));
-        }
-        let eq_on = s["fx"]["eq"] == true;
-        let eq = ui::section(Icon::Activity, ui::ACCENT, "Égaliseur", Some(if eq_on { "Flèches : déplacer la fréquence".into() } else { "Coupé dans Traitements".into() }))
-            .child(bands.when(!eq_on, |d| d.opacity(0.45)));
-        let ratios: Vec<f64> = v.meta["ratios"].as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
-        let ratio_label = move |i: f64| ratios.get(i.round() as usize).map(|r| format!("{}:1", fmt_num(*r))).unwrap_or_else(|| fmt_num(i));
-        let dynamics = ui::section(Icon::Gauge, 0x34c759, "Dynamique", None)
-            .child(ui::subhead("Noise gate"))
-            .child(self.slider_row("gate-threshold", "Seuil", dsp["gate"]["threshold"].as_f64().unwrap_or(-59.), (-59., 0.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("dsp", json!({"gate":{"threshold": v.round() as i64}}), cx), cx))
-            .child(self.slider_row("gate-attenuation", "Réduction du bruit", dsp["gate"]["attenuation"].as_f64().unwrap_or(0.), (0., 100.), 1., |v| format!("{} %", v.round()), enabled, |this, v, cx| this.go_send("dsp", json!({"gate":{"attenuation": v.round() as i64}}), cx), cx))
-            .child(ui::subhead("Compresseur"))
-            .child(self.slider_row("comp-threshold", "Seuil", dsp["comp"]["threshold"].as_f64().unwrap_or(0.), (-40., 0.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("dsp", json!({"comp":{"threshold": v.round() as i64}}), cx), cx))
-            .child(self.slider_row("comp-ratio", "Force", dsp["comp"]["ratio"].as_f64().unwrap_or(0.), (0., 14.), 1., ratio_label, enabled, |this, v, cx| this.go_send("dsp", json!({"comp":{"ratio": v.round() as i64}}), cx), cx))
-            .child(self.slider_row("comp-makeup", "Gain de compensation", dsp["comp"]["makeup"].as_f64().unwrap_or(0.), (-6., 24.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("dsp", json!({"comp":{"makeup": v.round() as i64}}), cx), cx))
-            .child(ui::subhead("De-esser"))
-            .child(self.slider_row("deesser", "Intensité", dsp["deesser"].as_f64().unwrap_or(0.), (0., 100.), 5., |v| format!("{} %", v.round()), enabled, |this, v, cx| this.go_send("dsp", json!({"deesser": v.round() as i64}), cx), cx))
-            // le firmware Rustudio n'a pas de bip de censure
-            .when(!self.rustudio_firmware(), |d| {
-                d.child(ui::subhead("Bip de censure")).child(self.slider_row("bleep", "Volume", s["bleep_db"].as_f64().unwrap_or(0.), (-36., 0.), 1., |v| format!("{} dB", v.round()), enabled, |this, v, cx| this.go_send("dsp", json!({"bleep_db": v.round() as i64}), cx), cx))
-            });
-        // dans l'ordre d'OBS : suppression du bruit, puis traitements de la GoXLR
-        div().flex().flex_col().gap(px(16.)).child(self.ns_panel(v, cx)).child(fx).child(ui::settings_columns(width, vec![eq.into_any_element()], vec![dynamics.into_any_element()]))
     }
 
     /// Onglet « Bouton et retour » : ce que fait le bouton du micro, et comment t'entendre.
@@ -986,22 +1047,21 @@ impl Mixer {
         let button_card = ui::section(Icon::MicOff, ui::RED, "Bouton du micro", None)
             .child(mode)
             .child(ui::list_row(None, "Il coupe le micro", None, div().w(px(200.)).child(self.dropdown("mic-target", targets.iter().find(|(t, _)| *t == target).map(|(_, l)| l.to_string()).unwrap_or_default(), targets.iter().map(|(t, l)| (l.to_string(), *t == target)).collect(), enabled, move |this, i, cx| this.go_send("settings", json!({"mic_button":{"target": target_ids[i]}}), cx), cx)), true))
-            .child(ui::list_row(None, "Clignoter quand le micro est coupé", None, self.act(ui::toggle("mic-blink", blink, enabled), "settings", json!({"mic_button":{"blink":!blink}}), cx), false));
+            .child(ui::list_row(None, "Clignoter quand le micro est coupé", None, self.act(ui::toggle("mic-blink", blink, enabled), "settings", json!({"mic_button":{"blink":!blink}}), cx), false))
+            .when(!self.rustudio_firmware(), |d| d.child(self.slider_row(
+                "bleep", "Volume du bip de censure", s["bleep_db"].as_f64().unwrap_or(0.), (-36., 0.), 1.,
+                |v| format!("{} dB", v.round()), enabled,
+                |this, v, cx| this.go_send("dsp", json!({"bleep_db": v.round() as i64}), cx),
+                cx,
+            )));
         let mut compare = ui::segmented();
         let bypass = v.ab;
         compare = compare
             .child(self.act(ui::seg("mic-ab-processed", "Voix traitée", !bypass), "mic-ab", json!({"bypass":false}), cx))
             .child(self.act(ui::seg("mic-ab-raw", "Voix brute", bypass), "mic-ab", json!({"bypass":true}), cx));
-        let listen = ui::section(Icon::Ear, 0xff9500, "T’écouter", None)
-            .child(ui::subhead("En direct dans le casque"))
-            .child(self.slider_row("mic-monitor", "Retour de ta voix", s["volumes"]["MicMonitor"].as_f64().unwrap_or(0.) / 2.55, (0., 100.), 1., |v| format!("{} %", v.round()), enabled, |this, v, cx| this.go_send("volume", json!({"channel":"MicMonitor","value": (v * 2.55).round() as i64}), cx), cx))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .child(self.act(ui::pill("mic-listen", Some(Icon::Play), "M’entendre 30 s", ui::Tone::Plain), "mic-listen", json!({"seconds":30}), cx))
-                    .child(self.act(ui::pill("mic-listen-stop", Some(Icon::Stop), "Arrêter", ui::Tone::Plain), "mic-listen", json!({"seconds":0}), cx)),
-            )
+        let listen = ui::section(Icon::Ear, ui::ACCENT, "Retour casque", None)
+            .child(self.monitor_controls("mic-quick-monitor", enabled, cx))
+            .child(ui::caption("Le retour direct utilise les filtres de la GoXLR. L’antibruit Windows agit sur le son envoyé aux applis."))
             .child(ui::subhead("Comparer"))
             .child(compare)
             .child(self.listen_panel(cx));
@@ -1089,7 +1149,7 @@ impl Mixer {
         // Intensité du style choisi : 100 % = la courbe telle quelle, flèche pour y revenir.
         let has_style = eq["style"].as_str().is_some_and(|s| s != "neutre");
         let intensity = eq["intensity"].as_f64().unwrap_or(100.);
-        let shown = self.param_value("param-hp-intensity", intensity);
+        let (shown, fraction) = self.parameter_view("param-hp-intensity", intensity, (0., 200.));
         let reset = ui::round("hp-intensity-reset", Icon::History, 26., alpha(0x767680, 0.), rgb(ui::TEXT2));
         let intensity_row = div()
             .mt(px(10.))
@@ -1112,7 +1172,7 @@ impl Mixer {
                     .mt(px(2.))
                     .h(px(22.))
                     .w_full()
-                    .child(ui::hslider((shown / 200.) as f32, rgb(ui::ACCENT), ui::hover_t("param-hp-intensity"))),
+                    .child(ui::hslider(fraction, rgb(ui::ACCENT), ui::hover_t("param-hp-intensity"))),
             );
         let style_card = ui::section(Icon::Music, 0xff2d55, "Style de son", None)
             .child(style_row)
@@ -1216,7 +1276,7 @@ impl Mixer {
     }
 
     pub(crate) fn run_latency_test(&mut self, cx: &mut Context<Self>) {
-        if !self.go.enabled() {
+        if self.go.busy || !self.go.enabled() {
             return;
         }
         self.go.busy = true;
@@ -1229,6 +1289,7 @@ impl Mixer {
                 this.go.busy = false;
                 this.go.latency_running = false;
                 this.go.latency_test = Some(result.unwrap_or_else(|error| json!({"status": "error", "error": error})));
+                this.resume_mic_preset(cx);
                 cx.notify();
             });
         })
@@ -1304,7 +1365,7 @@ impl Mixer {
     }
 
     pub(crate) fn run_sound_test(&mut self, cx: &mut Context<Self>) {
-        if !self.go.enabled() {
+        if self.go.busy || !self.go.enabled() {
             return;
         }
         self.go.busy = true;
@@ -1322,6 +1383,7 @@ impl Mixer {
                     }
                     Err(error) => this.go.notice = Some((false, error)),
                 }
+                this.resume_mic_preset(cx);
                 cx.notify();
             });
         })
@@ -1329,12 +1391,11 @@ impl Mixer {
         cx.notify();
     }
 
-    /// Diagnostic : en tête, le verdict et ce qu'il faut corriger (avec le bouton qui corrige) ;
-    /// en dessous, le détail des vérifications et les mesures.
+    /// Le verdict et les actions utiles restent visibles quand les outils sont repliés.
     fn diagnostic_view(&self, width: f32, cx: &mut Context<Self>) -> Div {
         let url = self.client.overlay_url();
         let mut copy_text: Option<String> = None;
-        let mut state = ui::section(Icon::Gauge, ui::GREEN, "Vérifications", None);
+        let mut state = ui::section(Icon::Gauge, ui::GREEN, "Connexions et Windows", None);
         let mut problems: Vec<AnyElement> = vec![];
         let mut checked = false;
         if let Some(d) = self.go.diagnostics.as_ref() {
@@ -1362,14 +1423,24 @@ impl Mixer {
                 let high = kernel["high"] == true;
                 rows.push((Icon::Gauge, "Mémoire noyau de Windows".into(), kernel_size(mb), if high { ui::State::Warn } else { ui::State::Ok }));
             }
-            for (n, (glyph, title, value, st)) in rows.into_iter().enumerate() {
+            let mut first = true;
+            for (glyph, title, value, st) in rows {
                 if st == ui::State::Warn {
-                    problems.push(ui::list_row(Some((glyph, ui::ORANGE)), title.clone(), None, ui::status(value.clone(), st), problems.is_empty()).into_any_element());
+                    let detail = (title == "Mémoire noyau de Windows").then(|| kernel_advice(
+                        kernel["nonpaged_mb"].as_u64().unwrap_or(0), kernel["uptime_h"].as_u64().unwrap_or(0),
+                    ).into());
+                    problems.push(ui::list_row(Some((glyph, ui::ORANGE)), title, detail, ui::status(value, st), problems.is_empty()).into_any_element());
+                } else {
+                    state = state.child(ui::list_row(Some((glyph, ui::TEXT2)), title, None, ui::status(value, st), first));
+                    first = false;
                 }
-                state = state.child(ui::list_row(Some((glyph, ui::TEXT2)), title, None, ui::status(value, st), n == 0));
             }
-            if kernel["high"] == true {
-                problems.push(ui::notice(false, kernel_advice(kernel["nonpaged_mb"].as_u64().unwrap_or(0), kernel["uptime_h"].as_u64().unwrap_or(0))).into_any_element());
+            if self.rustudio_firmware() && d["firmware"].is_object() {
+                let firmware = firmware_verdict(&d["firmware"]);
+                if firmware.state == ui::State::Warn {
+                    problems.push(ui::list_row(Some((Icon::Activity, ui::ORANGE)), "Firmware Rustudio", None,
+                        ui::status(firmware.label, firmware.state), problems.is_empty()).into_any_element());
+                }
             }
             for (i, check) in d["echo"]["checks"].as_array().into_iter().flatten().enumerate() {
                 // le moteur envoie le titre dans « t » et l'explication dans « d »
@@ -1377,7 +1448,8 @@ impl Mixer {
                 let detail = check["d"].as_str().map(|d| SharedString::from(d.to_owned()));
                 let ok = check["ok"] == true;
                 if ok {
-                    state = state.child(ui::list_row(Some((Icon::Route, ui::TEXT2)), label, detail, ui::status("Bon", ui::State::Ok), false));
+                    state = state.child(ui::list_row(Some((Icon::Route, ui::TEXT2)), label, detail, ui::status("Bon", ui::State::Ok), first));
+                    first = false;
                     continue;
                 }
                 // un réglage à corriger monte dans le verdict, avec son bouton
@@ -1389,33 +1461,26 @@ impl Mixer {
                     ui::status("À vérifier", ui::State::Warn).into_any_element()
                 };
                 problems.push(ui::list_row(Some((Icon::Route, ui::ORANGE)), label, detail, trailing, problems.is_empty()).into_any_element());
-                state = state.child(ui::list_row(Some((Icon::Route, ui::TEXT2)), check["t"].as_str().or(check["title"].as_str()).unwrap_or("Routage").to_owned(), None, ui::status("À corriger", ui::State::Warn), false));
             }
-        } else {
-            state = state.child(hint("Lecture des données du moteur…"));
         }
         // verdict : la première chose qu'on lit
-        let (glyph, colour, headline, sub) = if !checked {
-            (Icon::Refresh, ui::TEXT3, "Vérification en cours…".to_owned(), "Rustudio lit l’état de la GoXLR et de Windows.".to_owned())
+        let (glyph, colour, headline) = if !checked && self.go.diagnostic_error.is_some() {
+            (Icon::Alert, ui::ORANGE, "Vérification indisponible".to_owned())
+        } else if !checked {
+            (Icon::Refresh, ui::TEXT3, "Vérification en cours…".to_owned())
         } else if problems.is_empty() {
-            (Icon::Check, ui::GREEN, "Tout va bien".to_owned(), "Aucun réglage à corriger : le détail des vérifications est plus bas.".to_owned())
+            (Icon::Check, ui::GREEN, "Aucun problème détecté".to_owned())
         } else {
             let n = problems.len();
-            (Icon::Alert, ui::ORANGE, format!("{n} point{} à corriger", if n > 1 { "s" } else { "" }), "Chaque point a son explication et, quand c’est possible, un bouton qui le corrige.".to_owned())
+            (Icon::Alert, ui::ORANGE, format!("{n} point{} à vérifier", if n > 1 { "s" } else { "" }))
         };
-        let mut actions = div()
+        let actions = div()
             .flex()
             .flex_wrap()
             .gap(px(4.))
-            .child(ui::pill("diag-read", Some(Icon::Refresh), "Actualiser", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.refresh_diag(cx))))
-            .child(self.act(ui::pill("diag-reconnect", Some(Icon::Plug), "Reconnecter", ui::Tone::Plain), "reconnect", json!({}), cx));
-        if let Some(copy) = copy_text {
-            actions = actions.child(ui::pill("diag-copy", Some(Icon::Bookmark), "Copier le rapport anonyme", ui::Tone::Plain).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))));
-        }
-        let verdict = div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
+            .child(ui::pill("diag-read", Some(Icon::Refresh), if self.go.diagnostic_loading { "Lecture…" } else { "Actualiser" }, ui::Tone::Plain)
+                .on_click(cx.listener(|this, _, _, cx| this.refresh_diag(cx))));
+        let verdict = ui::card()
             .child(
                 div()
                     .flex()
@@ -1430,11 +1495,28 @@ impl Mixer {
                             .flex_1()
                             .min_w(px(260.))
                             .child(ui::icon(glyph, 26., rgb(colour)))
-                            .child(div().flex().flex_col().gap(px(2.)).child(ui::title(headline, 22.)).child(ui::caption(sub))),
+                            .child(ui::title(headline, 22.)),
                     )
                     .child(actions),
             )
+            .when_some(self.go.diagnostic_error.as_ref(), |d, error| d.child(ui::caption(error.clone())))
             .when(!problems.is_empty(), |d| d.child(div().flex().flex_col().children(problems)));
+        let open = self.go.diagnostic_details.is_open();
+        let details_button = ui::pill("diag-details", Some(if open { Icon::ChevronDown } else { Icon::ChevronRight }),
+            "Détails et outils", ui::Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
+                let panel = &mut this.go.diagnostic_details;
+                panel.set(!panel.is_open(), Instant::now());
+                cx.notify();
+            }));
+        let details = self.go.diagnostic_details.body(|| self.diagnostic_tools(
+            width, checked.then_some(state), copy_text, url, cx,
+        ));
+        div().flex().flex_col().gap(px(16.))
+            .child(verdict)
+            .child(div().child(div().flex().child(details_button)).children(details))
+    }
+
+    fn diagnostic_tools(&self, width: f32, state: Option<Div>, copy_text: Option<String>, url: String, cx: &mut Context<Self>) -> Div {
         let mut test = ui::section(Icon::Volume, ui::ACCENT, "Test des voies audio", None)
             .child(hint("Rustudio joue un son dans chaque voie et vérifie qu’il arrive sans coupure ni saut.").text_size(px(12.)))
             .child(ui::pill("sound-test", Some(Icon::Play), "Lancer le test", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.run_sound_test(cx))));
@@ -1460,7 +1542,16 @@ impl Mixer {
             right.push(test.into_any_element());
         }
         right.push(self.echo_panel(cx).into_any_element());
-        div().flex().flex_col().gap(px(24.)).child(verdict).child(ui::settings_columns(width, vec![state.into_any_element(), obs.into_any_element()], right))
+        let mut tools = div().flex().flex_wrap().gap(px(8.))
+            .child(self.act(ui::pill("diag-reconnect", Some(Icon::Plug), "Reconnecter la GoXLR", ui::Tone::Plain), "reconnect", json!({}), cx));
+        if let Some(copy) = copy_text {
+            tools = tools.child(ui::pill("diag-copy", Some(Icon::Bookmark), "Copier le rapport anonyme", ui::Tone::Plain)
+                .on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))));
+        }
+        let left = state.into_iter().chain([obs]).map(IntoElement::into_any_element).collect();
+        div().pt(px(12.)).flex().flex_col().gap(px(16.))
+            .child(tools)
+            .child(ui::settings_columns(width, left, right))
     }
 
     /// Compteurs du firmware Rustudio : ce que le pilote officiel comptait, mesuré par la Mini elle-même.
@@ -1665,65 +1756,10 @@ pub fn verify(client: &Client) -> Result<(), String> {
 
 /// Plage affichée par le niveau d'entrée du micro, en dB.
 const LEVEL_FLOOR: f64 = -72.;
-/// Au-dessus : trop fort, la voix sature bientôt. En dessous de LEVEL_GOOD : trop faible pour un bon rapport au bruit.
-const LEVEL_HOT: f64 = -6.;
-const LEVEL_GOOD: f64 = -24.;
 /// Vumètre : temps de montée et de retombée (secondes), puis rythme d'affichage (60 images/s suffisent à l'œil).
 const LEVEL_RISE_S: f64 = 0.035;
 const LEVEL_FALL_S: f64 = 0.28;
 pub(crate) const LEVEL_FRAME: std::time::Duration = std::time::Duration::from_micros(16_600);
-
-/// Couleur et conseil pour un niveau d'entrée donné.
-fn level_reading(db: f64) -> (u32, &'static str) {
-    if db >= LEVEL_HOT {
-        (ui::RED, "Trop fort : baisse le gain")
-    } else if db >= LEVEL_GOOD {
-        (ui::GREEN, "Bon niveau")
-    } else if db > -50. {
-        (ui::ORANGE, "Faible : parle ou monte le gain")
-    } else {
-        (ui::TEXT3, "Silence")
-    }
-}
-
-/// Niveau d'entrée du micro en direct : barre segmentée de −72 à 0 dB et conseil. La barre suit le niveau lissé
-/// (le dernier segment s'allume progressivement), la valeur et le conseil suivent la mesure.
-pub(crate) fn level_meter(shown: Option<f64>, level: Option<f64>) -> Div {
-    const SEGMENTS: usize = 36;
-    let filled = shown.map(|db| ((db - LEVEL_FLOOR) / -LEVEL_FLOOR).clamp(0., 1.) * SEGMENTS as f64).unwrap_or(0.);
-    let mut bar = div().flex().gap(px(3.)).h(px(18.));
-    for n in 0..SEGMENTS {
-        // chaque segment garde la couleur de sa zone : vert jusqu'à −6 dB, rouge au-delà
-        let db = LEVEL_FLOOR + (n as f64 + 0.5) * -LEVEL_FLOOR / SEGMENTS as f64;
-        let zone = if db >= LEVEL_HOT { ui::RED } else if db >= -12. { ui::ORANGE } else { ui::GREEN };
-        let amount = (filled - n as f64).clamp(0., 1.) as f32;
-        bar = bar.child(div().flex_1().h_full().rounded(px(3.)).bg(ui::lerp(alpha(0x767680, 0.14), rgb(zone), amount)));
-    }
-    let (value, colour, advice) = match level {
-        Some(db) => {
-            let (colour, advice) = level_reading(db);
-            (format!("{} dB", db.round()).replace('-', "−"), colour, advice)
-        }
-        None => ("—".to_owned(), ui::TEXT3, "Mesure en attente"),
-    };
-    div()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(div().text_size(px(13.)).text_color(rgb(ui::TEXT)).child("Niveau d’entrée"))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(div().text_size(px(12.)).text_color(rgb(colour)).child(advice))
-                        .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(rgb(ui::TEXT2)).child(value)),
-                ),
-        )
-        .child(bar.mt(px(6.)))
-}
 
 /// « il y a 5 min », « il y a 3 h », « il y a 2 jours » depuis un instant epoch en secondes.
 fn ago(t: f64) -> String {
@@ -1817,13 +1853,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn niveau_du_micro_et_memoire_noyau_en_clair() {
-        assert_eq!(level_reading(-3.).1, "Trop fort : baisse le gain");
-        assert_eq!(level_reading(-6.).0, ui::RED);
-        assert_eq!(level_reading(-12.).1, "Bon niveau");
-        assert_eq!(level_reading(-24.).0, ui::GREEN);
-        assert_eq!(level_reading(-30.).0, ui::ORANGE);
-        assert_eq!(level_reading(-72.).1, "Silence");
+    fn memoire_noyau_en_clair() {
         assert_eq!(kernel_size(640), "640 Mo");
         assert_eq!(kernel_size(1024), "1,0 Go");
         assert_eq!(kernel_size(6246), "6,0 Go");
@@ -1857,5 +1887,20 @@ mod tests {
         }
         assert!(firmware_loop_reading(180, 3).0.contains("3 lentes"));
         assert_eq!(firmware_loop_reading(42, 0).0, "42 µs");
+    }
+}
+
+
+#[cfg(test)]
+mod monitor_tests {
+    use super::*;
+
+    #[test]
+    fn depart_a_cinq_et_niveau_jusqua_cent_pour_cent() {
+        assert_eq!(monitor_percent(MONITOR_START), 5.);
+        assert_eq!(monitor_level(-1.), 3);
+        assert_eq!(monitor_percent(monitor_level(42.)), 42.);
+        assert_eq!(monitor_level(100.), 255);
+        assert_eq!(monitor_level(101.), 255);
     }
 }

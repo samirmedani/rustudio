@@ -1,11 +1,10 @@
 //! Sélecteur de couleur du clavier : brouillon local, appliqué seulement au clic.
 use crate::{mixer::Mixer, ui::{self, Icon, Tone}};
 use gpui::{Bounds, ClipboardItem, Context, Div, FocusHandle, KeyDownEvent, MouseButton, Pixels, Point, SharedString, Stateful, canvas, div, linear_color_stop, linear_gradient, prelude::*, px};
-use serde_json::json;
 use std::{cell::Cell, rc::Rc};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Target { Effect(u8), Brush }
+pub(crate) enum Target { Effect(u8), Brush, Gradient }
 
 pub(crate) struct Picker {
     target: Target,
@@ -99,13 +98,16 @@ impl Mixer {
     }
 
     fn apply_colour_picker(&mut self, cx: &mut Context<Self>) {
+        if self.keyboard.busy { return; }
         let Some(p) = self.keyboard.picker.as_ref() else { return };
         let Some(colour) = parse_hex(&p.text) else { return };
-        let text = format!("#{colour:06X}");
         match p.target {
-            Target::Effect(effect) => self.keyboard_send(json!({"effect": effect, "colour": text}), "Couleur appliquée", cx),
-            Target::Brush => { self.keyboard.brush = Some(text); cx.notify(); }
+            Target::Effect(effect) => self.keyboard_edit_effect(effect, crate::keyboard::EffectSetting::Colour(colour), cx),
+            Target::Brush => self.keyboard.paint.set_brush(colour),
+            Target::Gradient => self.keyboard.paint.set_second(colour),
         }
+        self.keyboard.picker = None;
+        cx.notify();
     }
 
     pub(crate) fn colour_picker(&self, target: Target, current: &str, cx: &mut Context<Self>) -> Div {
@@ -113,8 +115,13 @@ impl Mixer {
         let opened = self.keyboard.picker.as_ref().filter(|p| p.target == target);
         let is_open = opened.is_some();
         let current = current.to_owned();
+        let (id, label, apply) = match target {
+            Target::Effect(_) => ("keyboard-custom-effect", "Couleur personnalisée", "Prévisualiser la couleur"),
+            Target::Brush => ("keyboard-custom-brush", "Couleur personnalisée", "Utiliser pour le pinceau"),
+            Target::Gradient => ("keyboard-custom-gradient", "Seconde couleur", "Utiliser pour les motifs"),
+        };
         let mut root = div().flex().flex_col().max_w(px(360.)).gap(px(10.)).child(
-            ui::pill(SharedString::from(match target { Target::Effect(_) => "keyboard-custom-effect", Target::Brush => "keyboard-custom-brush" }), Some(Icon::Palette), if is_open { "Masquer le sélecteur" } else { "Couleur personnalisée" }, Tone::Plain)
+            ui::pill(SharedString::from(id), Some(Icon::Palette), if is_open { "Masquer le sélecteur" } else { label }, Tone::Plain)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.keyboard.picker = if is_open { None } else {
                         let (h, s, v) = hsv(parse_hex(&current).unwrap_or(0x0071e3));
@@ -138,7 +145,7 @@ impl Mixer {
         for (n, label) in ["Rouge", "Vert", "Bleu"].into_iter().enumerate() {
             let shift = (2 - n) * 8;
             let value = ((colour >> shift) & 255) as f64;
-            let scope = match target { Target::Effect(id) => format!("effect-{id}"), Target::Brush => "brush".into() };
+            let scope = match target { Target::Effect(id) => format!("effect-{id}"), Target::Brush => "brush".into(), Target::Gradient => "gradient".into() };
             root = root.child(self.slider_row(&format!("keyboard-rgb-{scope}-{n}"), label, value, (0., 255.), 1., |v| format!("{v:.0}"), true, move |this, value, cx| {
                 if let Some(p) = this.keyboard.picker.as_mut().filter(|p| p.target == target) {
                     let colour = (p.colour() & !(255 << shift)) | ((value as u32) << shift);
@@ -176,7 +183,7 @@ impl Mixer {
         root.child(ui::label("Code hexadécimal"))
             .child(div().flex().items_center().gap(px(8.)).child(div().flex_none().size(px(36.)).rounded(px(9.)).border_1().border_color(ui::alpha(ui::INK, 0.15)).bg(raw(colour))).child(field))
             .when(!valid, |d| d.child(ui::caption("Saisis un code de 3 ou 6 caractères, par exemple #64D2FF.").text_color(ui::rgb(ui::RED_TEXT))))
-            .child(ui::pill("keyboard-colour-apply", Some(Icon::Check), if target == Target::Brush { "Utiliser pour le pinceau" } else { "Appliquer la couleur" }, Tone::Primary)
+            .child(ui::pill("keyboard-colour-apply", Some(Icon::Check), apply, Tone::Primary)
                 .when(!valid || !enabled, |d| d.opacity(0.5))
                 .when(valid && enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.apply_colour_picker(cx)))))
     }

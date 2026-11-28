@@ -315,6 +315,112 @@ pub(crate) fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
     }
 }
 
+/// Détecte une raie forte et stable dans le signal du micro, sans émettre de signal de test.
+#[cfg(any(windows, test))]
+struct FeedbackGuard {
+    rate: u32,
+    samples: Vec<f64>,
+    imaginary: Vec<f64>,
+    window: Vec<f64>,
+    used: usize,
+    peak: usize,
+    consecutive: usize,
+}
+
+#[cfg(any(windows, test))]
+impl FeedbackGuard {
+    const BLOCK: usize = 2048;
+
+    fn new(rate: u32) -> Self {
+        Self {
+            rate,
+            samples: vec![0.; Self::BLOCK],
+            imaginary: vec![0.; Self::BLOCK],
+            window: (0..Self::BLOCK)
+                .map(|i| 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / Self::BLOCK as f64).cos())
+                .collect(),
+            used: 0,
+            peak: 0,
+            consecutive: 0,
+        }
+    }
+
+    fn push(&mut self, sample: f32) -> bool {
+        self.samples[self.used] = f64::from(if sample.is_finite() { sample } else { 0. });
+        self.used += 1;
+        if self.used < Self::BLOCK {
+            return false;
+        }
+        self.used = 0;
+        let rms = (self.samples.iter().map(|s| s * s).sum::<f64>() / Self::BLOCK as f64).sqrt();
+        if rms < 0.18 {
+            self.consecutive = 0;
+            return false;
+        }
+        for (sample, window) in self.samples.iter_mut().zip(&self.window) {
+            *sample *= window;
+        }
+        self.imaginary.fill(0.);
+        fft(&mut self.samples, &mut self.imaginary, false);
+        let power = |k: usize| self.samples[k].powi(2) + self.imaginary[k].powi(2);
+        let hz = |bin: usize| bin as f64 * self.rate as f64 / Self::BLOCK as f64;
+        let half = Self::BLOCK / 2;
+        let Some(peak) = (2..half - 1)
+            .filter(|&k| (350. ..=12_000.).contains(&hz(k)))
+            .max_by(|&a, &b| power(a).total_cmp(&power(b)))
+        else {
+            return false;
+        };
+        let total = (1..half).map(power).sum::<f64>();
+        let tone = (peak - 1..=peak + 1).map(power).sum::<f64>();
+        if tone < 0.82 * total {
+            self.consecutive = 0;
+            return false;
+        }
+        self.consecutive = if peak.abs_diff(self.peak) <= 1 { self.consecutive + 1 } else { 1 };
+        self.peak = peak;
+        // Six blocs à 48 kHz, soit environ 250 ms. Après une alerte, exige une nouvelle séquence.
+        let blocks = (self.rate as usize).div_ceil(4 * Self::BLOCK).max(3);
+        if self.consecutive >= blocks {
+            self.consecutive = 0;
+            return true;
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::FeedbackGuard;
+
+    fn push_signal(rate: u32, signal: impl Fn(f64) -> f32) -> Vec<usize> {
+        let mut guard = FeedbackGuard::new(rate);
+        (0..rate as usize)
+            .filter(|&i| guard.push(signal(i as f64 / f64::from(rate))))
+            .collect()
+    }
+
+    fn tone(time: f64, hz: f64, amplitude: f64) -> f32 {
+        (amplitude * (std::f64::consts::TAU * hz * time).sin()) as f32
+    }
+
+    #[test]
+    fn detects_a_sustained_loud_tone_and_clears_after_a_reduction() {
+        for rate in [44_100, 48_000, 96_000] {
+            let hits = push_signal(rate, |time| tone(time, 2310., if time < 0.4 { 0.65 } else { 0.03 }));
+            assert_eq!(hits.len(), 1);
+            assert!(hits[0] > rate as usize / 6 && hits[0] < rate as usize / 3);
+        }
+    }
+
+    #[test]
+    fn ignores_short_peaks_quiet_tones_and_voice_like_harmonics() {
+        assert!(push_signal(48_000, |t| tone(t, 2310., 0.08)).is_empty());
+        assert!(push_signal(48_000, |t| if t < 0.10 { tone(t, 2310., 0.8) } else { 0. }).is_empty());
+        assert!(push_signal(48_000, |t| tone(t, 220., 0.28) + tone(t, 440., 0.25) + tone(t, 660., 0.25)).is_empty());
+    }
+}
+
 /// Corrélation croisée par FFT : c[lag] = Σ rec[lag + i] · reference[i].
 fn xcorr(rec: &[f32], reference: &[f32]) -> Vec<f64> {
     let mut n = 1;
@@ -686,6 +792,16 @@ pub(crate) mod win {
 
     /// Joue un signal mono sur une sortie ; make reçoit la fréquence du mixeur Windows.
     unsafe fn play_buffer(id: &str, make: &dyn Fn(u32) -> Vec<f32>, started: &mut dyn FnMut(u32)) -> Result<(), String> {
+        play_buffer_until(id, make, started, &|| false)
+    }
+
+    unsafe fn play_buffer_until(
+        id: &str,
+        make: &dyn Fn(u32) -> Vec<f32>,
+        started: &mut dyn FnMut(u32),
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), String> {
+        if stopped() { return Ok(()); }
         let dev = device(id)?;
         let (client, f) = open_mode(&dev, 0, false)?;
         let render: IAudioRenderClient = client.GetService().map_err(|e| e.to_string())?;
@@ -711,11 +827,13 @@ pub(crate) mod win {
             render.ReleaseBuffer(n, 0).map_err(|e| e.to_string())
         };
         fill(size, &mut pos)?;
+        if stopped() { return Ok(()); }
         client.Start().map_err(|e| e.to_string())?;
         started(f.rate);
         let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
+        while !stopped() {
             std::thread::sleep(Duration::from_millis(10));
+            if stopped() { break; }
             let pad = client.GetCurrentPadding().map_err(|e| e.to_string())?;
             if (pos >= data.len() && pad == 0) || Instant::now() > deadline {
                 break;
@@ -741,6 +859,35 @@ pub(crate) mod win {
         record_from(input.id, secs, stop)
     }
 
+    pub fn monitor_feedback(
+        requested: Arc<std::sync::atomic::AtomicU32>,
+        mut detected: impl FnMut() + Send + 'static,
+    ) -> Result<(), String> {
+        com(move || unsafe {
+            if requested.load(Ordering::Relaxed) == 0 {
+                return Ok(());
+            }
+            let input = goxlr(true, crate::audio::MIC).ok_or("Windows ne voit pas l’entrée Chat Mic de la GoXLR.")?;
+            let guard = std::cell::RefCell::new(None);
+            listen_until(
+                &input.id, false, f64::INFINITY,
+                &mut |packet, channels| {
+                    let mut guard = guard.borrow_mut();
+                    let Some(guard): Option<&mut super::FeedbackGuard> = guard.as_mut() else { return };
+                    for frame in packet.chunks_exact(channels as usize) {
+                        let sample = frame.iter().sum::<f32>() / f32::from(channels);
+                        if guard.push(sample) {
+                            detected();
+                        }
+                    }
+                },
+                &|| requested.load(Ordering::Relaxed) == 0,
+                &mut |rate| *guard.borrow_mut() = Some(super::FeedbackGuard::new(rate)),
+            )?;
+            Ok(())
+        }).join().unwrap_or_else(|_| Err("Surveillance du retour interrompue.".into()))
+    }
+
     /// Enregistre une entrée de Windows en mode partagé : le son tel que les applis le reçoivent, effets compris.
     pub fn record_from(id: String, secs: f64, stop: Arc<AtomicBool>) -> Result<(Vec<f32>, u32), String> {
         com(move || unsafe {
@@ -755,11 +902,14 @@ pub(crate) mod win {
         }).join().unwrap_or_else(|_| Err("Enregistrement interrompu.".into()))
     }
 
-    pub fn play_default(samples: Vec<f32>, rate: u32) -> Result<(), String> {
+    pub fn play_voice_preview(samples: Vec<f32>, rate: u32, stop: Arc<AtomicBool>) -> Result<(), String> {
         com(move || unsafe {
             let id = default_render()?;
-            play_buffer(&id, &|r| resample(&samples, rate, r), &mut |_| {})
-        }).join().unwrap_or_else(|_| Err("Lecture interrompue.".into()))
+            play_buffer_until(
+                &id, &|r| super::quiet_voice_preview(&resample(&samples, rate, r), r),
+                &mut |_| {}, &|| stop.load(Ordering::Relaxed),
+            )
+        }).join().unwrap_or_else(|_| Err("Réécoute interrompue.".into()))
     }
 
     pub fn echo() -> Value {
@@ -1003,6 +1153,43 @@ pub(crate) mod win {
 }
 
 
+/// Atténue la réécoute, sans remonter une prise faible, et adoucit ses deux bords.
+#[cfg(any(windows, test))]
+fn quiet_voice_preview(samples: &[f32], rate: u32) -> Vec<f32> {
+    const PEAK_LIMIT: f32 = 0.05;
+    let peak = samples.iter().copied().filter(|x| x.is_finite()).map(f32::abs).fold(0.0, f32::max);
+    let gain = (PEAK_LIMIT / peak.max(PEAK_LIMIT)).min(0.25);
+    let fade = (rate as usize * 15 / 1000).max(1);
+    samples.iter().enumerate().map(|(i, &sample)| {
+        if !sample.is_finite() { return 0.0; }
+        let edge = i.min(samples.len() - 1 - i).min(fade);
+        sample * gain * (edge as f32 / fade as f32)
+    }).collect()
+}
+
+#[cfg(windows)]
+pub fn play_voice_preview(samples: Vec<f32>, rate: u32, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
+    win::play_voice_preview(samples, rate, stop)
+}
+
+#[cfg(not(windows))]
+pub fn play_voice_preview(_samples: Vec<f32>, _rate: u32, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
+    Err("Disponible sous Windows.".into())
+}
+
+pub fn monitor_feedback(
+    requested: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    detected: impl FnMut() + Send + 'static,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    return win::monitor_feedback(requested, detected);
+    #[cfg(not(windows))]
+    {
+        let _ = (requested, detected);
+        Err("Disponible sous Windows.".into())
+    }
+}
+
 /// Enregistre Chat Mic (mono) jusqu'à secs ou l'arrêt demandé.
 #[cfg(windows)]
 pub fn record_mic(secs: f64, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
@@ -1013,12 +1200,6 @@ pub fn record_mic(secs: f64, stop: std::sync::Arc<std::sync::atomic::AtomicBool>
 #[cfg(windows)]
 pub fn record_input(id: &str, secs: f64, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
     win::record_from(id.to_owned(), secs, stop)
-}
-
-/// Rejoue un enregistrement sur la sortie par défaut de Windows.
-#[cfg(windows)]
-pub fn play_default(samples: Vec<f32>, rate: u32) -> Result<(), String> {
-    win::play_default(samples, rate)
 }
 
 /// Test d'écho : trois bips joués dans Chat, Chat Mic écouté en même temps.
@@ -1079,10 +1260,6 @@ pub fn record_mic(_secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBoo
 }
 #[cfg(not(windows))]
 pub fn record_input(_id: &str, _secs: f64, _stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(Vec<f32>, u32), String> {
-    Err("Disponible sous Windows.".into())
-}
-#[cfg(not(windows))]
-pub fn play_default(_samples: Vec<f32>, _rate: u32) -> Result<(), String> {
     Err("Disponible sous Windows.".into())
 }
 #[cfg(not(windows))]
@@ -1319,5 +1496,28 @@ mod tests {
         s.add(0, 5, Some(u64::MAX), Some(0), &[], true);
         assert_eq!(s.packets, packets, "un tampon vide ne fournit aucune position valide");
         assert_eq!(s.timestamp_errors, 1);
+    }
+}
+
+
+#[cfg(test)]
+mod voice_preview_tests {
+    use super::quiet_voice_preview;
+
+    #[test]
+    fn une_relecture_forte_est_bornee_et_fondue() {
+        let mut input = vec![1.0; 1_600];
+        input[799] = f32::NAN;
+        input[801] = -2.0;
+        let output = quiet_voice_preview(&input, 48_000);
+        assert_eq!((output[0], output[799], output[1599]), (0.0, 0.0, 0.0));
+        assert_eq!(output[801], -0.05);
+        assert!(output.iter().all(|v| v.is_finite() && v.abs() <= 0.05));
+    }
+
+    #[test]
+    fn le_souffle_n_est_pas_remonte() {
+        assert_eq!(quiet_voice_preview(&[0.004; 32], 1_000)[16], 0.001);
+        assert!(quiet_voice_preview(&[], 48_000).is_empty());
     }
 }
