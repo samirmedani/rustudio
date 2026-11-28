@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# L'installeur et l'APO doivent démarrer sur une installation Windows vierge.
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -461,7 +461,7 @@ impl Ctl {
             mouse: crate::mouse::MouseHub::new(simulated),
             keyboard: crate::keyboard::KeyboardHub::new(simulated),
             eqapo: crate::eqapo::EqApo::new(&cfg, simulated),
-            winmic: crate::winmic::WinMicHub::new(persist.then(|| cfg.data_dir.join("micro.json"))),
+            winmic: crate::winmic::WinMicHub::new(persist.then(|| cfg.data_dir.join("micro.json")), simulated),
             cfg,
             inner: Mutex::new(inner),
             mixer_changed: Condvar::new(),

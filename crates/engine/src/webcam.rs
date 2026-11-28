@@ -209,8 +209,7 @@ impl WebcamHub {
             .spawn(move || {
                 let mut cam: Option<Camera<Box<dyn Transport>>> = None;
                 let mut strikes: HashMap<String, (u8, Option<Instant>)> = HashMap::new();
-                loop {
-                    let Some(shared) = weak.upgrade() else { break };
+                while let Some(shared) = weak.upgrade() {
                     let locked = shared.state.lock().unwrap().locked;
                     let wait = if cam.is_some() {
                         if locked { locked_poll } else { idle_poll }

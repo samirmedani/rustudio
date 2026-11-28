@@ -136,12 +136,15 @@ impl EqApo {
     pub fn setup_running(&self) -> bool {
         self.lock().setup.as_ref().and_then(|s| s.get("running")).and_then(|v| v.as_bool()).unwrap_or(false)
     }
-    pub fn set_setup(&self, kv: &[(&str, Value)], reset: bool) {
+    pub fn begin_setup(&self,kind:&str,install:bool)->Result<(),crate::api::ApiError> {
+        let mut g=self.lock();
+        if g.setup.as_ref().is_some_and(|s|s.get("running")==Some(&Value::Bool(true))) {return Err(crate::api::ApiError::bad("Une opération audio est déjà en cours."));}
+        g.setup=json!({"running":true,"step":"Préparation…","error":null,"done":false,"kind":kind,"install":install}).as_object().cloned();
+        drop(g); self.bump(); Ok(())
+    }
+    pub fn set_setup(&self, kv: &[(&str, Value)]) {
         let mut g = self.lock();
-        if reset || g.setup.is_none() {
-            g.setup = Some(serde_json::Map::new());
-        }
-        let s = g.setup.as_mut().unwrap();
+        let s = g.setup.get_or_insert_with(serde_json::Map::new);
         for (k, v) in kv {
             s.insert(k.to_string(), v.clone());
         }

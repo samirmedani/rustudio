@@ -142,10 +142,10 @@ pub const LOGITECH_C920: ModuleDescriptor = ModuleDescriptor {
 pub const WINDOWS_MIC: ModuleDescriptor = ModuleDescriptor {
     id: "windows-mic", name: "Micro", vendor: "Windows", kind: "microphone",
     origin: ModuleOrigin::Official, author: "samirmedani", source: "crates/windows-mic", review_pr: None,
-    summary: "Volume, micro par défaut, suppression du bruit, coupe-bas et égaliseur pour n’importe quel micro de Windows.",
-    capabilities: &["mic-level", "noise-suppression", "voice-eq"],
+    summary: "Volume, suppression du bruit, égaliseur, noise gate, compresseur et limiteur pour ton micro Windows.",
+    capabilities: &["mic-level", "noise-suppression", "voice-eq", "voice-dynamics"],
     pages: &[ModulePage { id: "windows-mic", label: "Mon micro", icon: "Mic" }],
-    actions: &["settings", "setup", "remove", "noise"],
+    actions: &["settings", "setup", "remove", "noise", "attach", "detach", "native-noise"],
 };
 
 const INSTALLED: &[ModuleDescriptor] = &[GOXLR_MINI, R5_ULTRA, MK770, LOGITECH_C920, WINDOWS_MIC];

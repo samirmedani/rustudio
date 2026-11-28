@@ -1,0 +1,28 @@
+[package]
+name = "rustudio-micro-apo"
+description = "Effet de capture Windows de Rustudio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(windows)'.dependencies]
+atomic_refcell = "0.1.13"
+windows-core = "0.61"
+windows = { version = "0.61", features = [
+  "Win32_Foundation", "Win32_Media_Audio_Apo", "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem", "Win32_System_LibraryLoader",
+] }
+
+[dependencies]
+rustudio-core.workspace = true
+rustudio-windows-mic.workspace = true
+# Cette version prépare les plans FFT et leurs buffers avant le premier appel temps réel.
+nnnoiseless = { version = "=0.5.1", default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true

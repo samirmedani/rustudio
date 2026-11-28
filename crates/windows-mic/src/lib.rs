@@ -1,11 +1,14 @@
 //! Module « Micro » : n'importe quel micro de Windows (USB, jack, micro-casque, webcam), réglé depuis Rustudio.
 //!
-//! Cette crate ne touche pas au système. Elle décrit les réglages de la voix de chaque micro (gain, coupe-bas,
-//! égaliseur 5 bandes), leurs préréglages, et le fichier d'Equalizer APO qui les applique à la seule entrée
-//! visée, par son identifiant Windows (jamais par son nom : une sortie peut porter le même). Le moteur écrit ce
-//! fichier ; l'appli, dans la session de l'utilisateur, règle le volume et le micro par défaut de Windows.
+//! Les réglages et préréglages sont associés à l'identifiant Windows de chaque entrée. Le moteur publie
+//! les commandes de l'effet et reçoit ses vumètres par mémoire partagée. Sous Windows, ce module gère
+//! aussi le branchement, la restauration et leur vérification sur le périphérique de capture.
+//! Les configurations créées avec Equalizer APO sont conservées jusqu'à la migration demandée.
 //!
 //! La voix reste naturelle par défaut : aucun traitement tant que l'utilisateur ne l'a pas activé pour ce micro.
+mod dynamics;
+pub use dynamics::Dynamics;
+pub mod control;
 use rustudio_core::micns::is_guid;
 use rustudio_core::value::{clamp, get, has, truthy};
 use serde::{Deserialize, Serialize};
@@ -57,8 +60,9 @@ pub struct Preset {
     pub eq: [i32; 5],
 }
 
-pub const PRESETS: [Preset; 5] = [
+pub const PRESETS: [Preset; 6] = [
     Preset { id: "natural", label: "Naturel", desc: "Ta voix telle quelle, sans les grondements du bureau.", hpf_hz: 80, eq: [0, 0, 0, 0, 0] },
+    Preset { id: "streamer", label: "Streamer", desc: "Atténue les pauses et garde la voix régulière pendant les appels.", hpf_hz: 80, eq: [0, -2, 0, 2, 0] },
     Preset { id: "warm", label: "Voix chaude", desc: "Plus de corps et de rondeur, idéal pour un micro fin.", hpf_hz: 80, eq: [3, -1, 0, 1, 0] },
     Preset { id: "radio", label: "Radio", desc: "Graves pleins et voix en avant, comme un animateur radio.", hpf_hz: 100, eq: [4, -3, -1, 3, 2] },
     Preset { id: "clear", label: "Clair", desc: "Voix nette pour Discord et les visios, sans effet carton.", hpf_hz: 100, eq: [-1, -3, 0, 3, 1] },
@@ -73,8 +77,15 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Voice {
-    /// Traitement actif sur ce micro (Equalizer APO) ; coupé par défaut.
+    /// Traitement de voix actif sur ce micro, coupé par défaut.
     pub enabled: bool,
+    pub dynamics: Dynamics,
+    pub noise: bool,
+    pub strength: i32,
+    pub grace_ms: i32,
+    /// L'utilisateur avait demandé le branchement. Permet de signaler sa perte après une mise à jour.
+    pub native_requested: bool,
+    pub safe_mode: bool,
     pub gain_db: i32,
     pub hpf: bool,
     pub hpf_hz: i32,
@@ -86,12 +97,12 @@ pub struct Voice {
 
 impl Default for Voice {
     fn default() -> Self {
-        Voice { enabled: false, gain_db: 0, hpf: true, hpf_hz: HPF_DEFAULT, eq: [0; 5], preset: Some("natural".into()) }
+        Voice { enabled: false, dynamics: Dynamics::default(), noise: false, strength: 90, grace_ms: 200, native_requested: false, safe_mode: false, gain_db: 0, hpf: true, hpf_hz: HPF_DEFAULT, eq: [0; 5], preset: Some("natural".into()) }
     }
 }
 
 impl Voice {
-    /// Applique un préréglage (coupe-bas et égaliseur) ; le gain et la marche restent tels quels.
+    /// Applique le coupe-bas, l'égaliseur et la dynamique du préréglage en conservant le gain et l'activation.
     pub fn apply_preset(&mut self, id: &str) -> Result<(), String> {
         let p = preset(id).ok_or_else(|| format!("Préréglage inconnu : {id}"))?;
         self.hpf = p.hpf_hz > 0;
@@ -99,6 +110,7 @@ impl Voice {
             self.hpf_hz = p.hpf_hz;
         }
         self.eq = p.eq;
+        self.dynamics = Dynamics::preset(id);
         self.preset = Some(p.id.into());
         Ok(())
     }
@@ -148,6 +160,17 @@ impl Settings {
         self.mics.get(&guid.to_lowercase()).cloned().unwrap_or_default()
     }
 
+    pub fn store_voice(&mut self, guid: String, voice: Voice) -> Result<(), String> {
+        if !is_guid(&guid) { return Err("Micro inconnu.".into()); }
+        if self.mics.len() >= MAX_MICS && !self.mics.contains_key(&guid) {
+            let old = self.mics.iter().find(|(g,v)| !v.enabled && !v.native_requested && !v.safe_mode && self.selected.as_ref() != Some(*g))
+                .map(|(g,_)|g.clone()).ok_or("Tous les emplacements micro sont utilisés.")?;
+            self.mics.remove(&old);
+        }
+        self.mics.insert(guid,voice);
+        Ok(())
+    }
+
     /// Relit des réglages enregistrés : identifiants invalides écartés, valeurs bornées.
     pub fn sanitized(mut self) -> Settings {
         self.selected = self.selected.filter(|g| is_guid(g)).map(|g| g.to_lowercase());
@@ -156,6 +179,9 @@ impl Settings {
             v.gain_db = v.gain_db.clamp(GAIN_RANGE.0, GAIN_RANGE.1);
             v.hpf_hz = v.hpf_hz.clamp(HPF_RANGE.0, HPF_RANGE.1);
             v.eq = v.eq.map(|g| g.clamp(EQ_RANGE.0, EQ_RANGE.1));
+            v.dynamics.sanitize();
+            v.strength = v.strength.clamp(0,99);
+            v.grace_ms = v.grace_ms.clamp(0,500);
             v.preset = v.preset.filter(|p| preset(p).is_some());
             self.mics.insert(guid.to_lowercase(), v);
         }
@@ -177,7 +203,7 @@ pub fn update(src: &Value, base: &Settings) -> Result<Settings, String> {
     if has(src, "selected") {
         s.selected = Some(guid_of(get(src, "selected"))?);
     }
-    let voice_keys = ["enabled", "gain_db", "hpf", "hpf_hz", "eq", "preset"];
+    let voice_keys = ["enabled", "gain_db", "hpf", "hpf_hz", "eq", "preset", "dynamics"];
     if !voice_keys.iter().any(|k| has(src, k)) {
         return Ok(s);
     }
@@ -211,20 +237,15 @@ pub fn update(src: &Value, base: &Settings) -> Result<Settings, String> {
             v.eq[i] = g;
         }
     }
+    if let Some(patch) = src.get("dynamics") {
+        let next = v.dynamics.updated(patch)?;
+        custom |= next != v.dynamics;
+        v.dynamics = next;
+    }
     if custom {
         v.preset = None;
     }
-    s.mics.insert(guid.clone(), v);
-    if s.mics.len() > MAX_MICS {
-        // on garde les micros actifs, celui qu'on règle et celui affiché
-        let keep = |g: &String, v: &Voice| v.enabled || *g == guid || s.selected.as_ref() == Some(g);
-        let selected = s.selected.clone();
-        s.mics.retain(|g, v| v.enabled || *g == guid || selected.as_ref() == Some(g));
-        while s.mics.len() > MAX_MICS {
-            let Some(drop) = s.mics.iter().find(|(g, v)| !keep(g, v)).map(|(g, _)| g.clone()).or_else(|| s.mics.keys().find(|g| **g != guid).cloned()) else { break };
-            s.mics.remove(&drop);
-        }
-    }
+    s.store_voice(guid,v)?;
     Ok(s)
 }
 
@@ -353,3 +374,10 @@ mod tests {
         assert!(s.mics.len() <= MAX_MICS);
     }
 }
+
+#[cfg(windows)]
+pub mod mapping;
+#[cfg(windows)]
+pub mod registry;
+#[cfg(windows)]
+pub mod capture;

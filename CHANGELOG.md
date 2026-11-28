@@ -1,5 +1,15 @@
 # Nouveautés
 
+## 6.11.0 (28 novembre 2026)
+
+Rustudio 6.11.0 te permet de régler la dynamique de ton micro Windows dans la page **Mon micro**.
+
+**Nouveau**
+
+- **Dynamique de la voix**. Le noise gate atténue les pauses, le compresseur réduit les écarts de volume et le limiteur retient les crêtes. Les indicateurs montrent la réduction appliquée pendant que ton micro sert.
+- **Préréglage Streamer**. Applique un point de départ pour les appels. Tu peux ajuster chaque effet et conserver tes réglages pour ce micro.
+- **Effet micro Rustudio**. Tu peux brancher le traitement sur une entrée Windows compatible ou le retirer depuis la même page. La réduction du bruit par IA se règle séparément.
+
 ## 6.10.0 (28 novembre 2026)
 
 Rustudio 6.10.0 ajoute le module Micro : règle n’importe quel micro de ton PC (USB, jack, micro-casque ou webcam) depuis une seule page, pour toutes tes applis à la fois.

@@ -54,7 +54,7 @@ Chaque module apporte les contrôles propres à son matériel. Dans **Modules**,
 | --- | --- | --- |
 | [Attack Shark R5 Ultra](docs/R5-ULTRA.md) | DPI par axe, fréquence, veille et capteur ; état de la batterie | Récepteur 2,4 GHz testé sur la souris ; USB testé en simulation |
 | [Cooler Master MK770](docs/MK770.md) | Effets lumineux, luminosité, vitesse, couleur et couleur par touche | USB testé sur le clavier ; 2,4 GHz et Bluetooth non pris en charge |
-| [Micro](docs/MICRO.md) | N’importe quel micro de Windows : volume, micro par défaut, suppression du bruit, coupe-bas, gain et égaliseur de la voix | Tout micro vu par Windows ; Equalizer APO installé à la demande |
+| [Micro](docs/MICRO.md) | Volume du micro, suppression du bruit, égaliseur, noise gate, compresseur et limiteur | Entrées Windows compatibles avec les effets de capture |
 | [TC-Helicon GoXLR Mini](docs/GOXLR-MINI.md) | Mixeur, micro, routage, éclairage, scènes, égaliseur casque et diagnostic audio | Pilote officiel TC-Helicon ; firmware 1.2.x testé, 1.3 pris en charge |
 
 **Tu ne vois pas ton appareil ?** [Demande un module](https://github.com/samirmedani/rustudio/issues/new?template=appareil.yml). Indique la marque, le modèle, le mode de connexion et le réglage qui te serait le plus utile. Une fiche « À contribuer » dans le [catalogue](library/index.json) indique une demande, pas une compatibilité.

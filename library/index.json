@@ -144,12 +144,12 @@
       "builtin": true,
       "usb": [],
       "source": "crates/windows-mic",
-      "summary": "N’importe quel micro de Windows (USB, jack, micro-casque, webcam) : volume, micro par défaut, test en réécoute, suppression du bruit par IA, coupe-bas, gain et égaliseur 5 bandes avec préréglages.",
+      "summary": "N’importe quel micro de Windows (USB, jack, micro-casque, webcam) : volume, micro par défaut, test en réécoute, suppression du bruit par IA, coupe-bas, égaliseur 5 bandes, noise gate, compresseur et limiteur.",
       "features": [
         "Volume Windows",
         "Micro par défaut",
         "Suppression du bruit",
-        "Égaliseur voix",
+        "Égaliseur voix", "Dynamique",
         "Préréglages"
       ],
       "author": "samirmedani",

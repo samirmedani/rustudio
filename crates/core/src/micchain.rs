@@ -29,19 +29,23 @@ fn db256(db: f64) -> i32 {
 }
 
 /// Coefficient Q30 d'un filtre à un pôle de constante de temps `ms`, au rythme des sous-blocs.
-fn smoothing(ms: f64) -> i32 {
-    let k = 1.0 - (-1.0 / (ms.max(0.2) / 1000.0 * CONTROL_HZ)).exp();
+fn smoothing(ms: f64) -> i32 { smoothing_at(ms, FS) }
+
+pub fn smoothing_at(ms: f64, rate: f64) -> i32 {
+    let k = 1.0 - (-1.0 / (ms.max(0.2) / 1000.0 * (rate / 8.0))).exp();
     (k * (1u64 << 30) as f64).round() as i32
 }
 
 /// Biquad normalisé (a0 = 1) en Q28, depuis [b0, b1, b2, a0, a1, a2].
-fn fixed(c: [f64; 6]) -> Biquad {
+pub fn fixed(c: [f64; 6]) -> Biquad {
     let a0 = c[3];
     Biquad { b0: q28(c[0] / a0), b1: q28(c[1] / a0), b2: q28(c[2] / a0), a1: q28(c[4] / a0), a2: q28(c[5] / a0) }
 }
 
-fn high_pass(f0: f64, q: f64) -> [f64; 6] {
-    let w0 = 2.0 * std::f64::consts::PI * f0 / FS;
+fn high_pass(f0: f64, q: f64) -> [f64; 6] { high_pass_at(f0, q, FS) }
+
+pub fn high_pass_at(f0: f64, q: f64, rate: f64) -> [f64; 6] {
+    let w0 = 2.0 * std::f64::consts::PI * f0.min(rate * 0.49) / rate;
     let (cw, alpha) = (w0.cos(), w0.sin() / (2.0 * q));
     [(1.0 + cw) / 2.0, -(1.0 + cw), (1.0 + cw) / 2.0, 1.0 + alpha, -2.0 * cw, 1.0 - alpha]
 }

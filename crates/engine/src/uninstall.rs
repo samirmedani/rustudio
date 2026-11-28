@@ -44,7 +44,20 @@ pub fn run(args: &[String]) -> i32 {
     if !dir.ends_with("Rustudio") {
         return 1; // garde-fou : on n'efface que le dossier de Rustudio
     }
-    let _ = crate::service::uninstall();
+    let restore_inputs = || {
+        if let Err(e) = crate::native_mic::uninstall_effects() {
+            crate::logf!("Désinstallation du traitement micro : {e}");
+            if !has("--quiet") { message(&format!("Windows n’a pas pu restaurer les micros. {e}")); }
+            return false;
+        }
+        true
+    };
+    if !restore_inputs() { return 1; }
+    if let Err(e) = crate::service::uninstall() {
+        crate::logf!("Désinstallation du service : {e}");
+        if !has("--quiet") { message(&format!("Windows n’a pas pu retirer le service Rustudio. {e}")); }
+        return 1;
+    }
     for name in ["Rustudio.exe", "rustudio-engine.exe"] {
         for (pid, path) in crate::win::processes_named(name) {
             if crate::apply::path_under(&path, &dir) {
@@ -53,6 +66,9 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
     std::thread::sleep(Duration::from_millis(500));
+    // Une commande de branchement déjà engagée pouvait aboutir pendant l’arrêt.
+    // Le dernier contrôle précède la suppression des DLL et de l’entrée de désinstallation.
+    if !restore_inputs() { return 1; }
     crate::win::powershell(
         "Remove-Item (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Rustudio.lnk') -Force -ErrorAction SilentlyContinue; \
          Remove-Item (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Rustudio.lnk') -Force -ErrorAction SilentlyContinue; \

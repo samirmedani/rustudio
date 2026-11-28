@@ -1,9 +1,4 @@
-//! Page « Mon micro » (module Micro) : n'importe quel micro de Windows. Le volume et le micro par défaut se
-//! règlent ici même, dans la session de l'utilisateur ; la voix (gain, coupe-bas, égaliseur) et la suppression du
-//! bruit passent par le moteur, qui écrit la configuration d'Equalizer APO.
-//!
-//! Le vumètre et le test enregistrent le micro en mode partagé : on entend et on mesure ce que Discord ou OBS
-//! reçoivent, traitements compris. Quitter la page ferme la capture.
+//! Réglages du micro Windows et suivi de son effet de capture dans la session utilisateur.
 use crate::{
     desktop::{Page, hint},
     goxlr::Section,
@@ -28,8 +23,8 @@ const CURVE_POINTS: usize = 40;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Ask {
     Setup,
-    Noise,
-    Remove,
+    Noise(bool),
+    Remove(bool),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -50,10 +45,14 @@ pub struct WinMicPage {
     defaults: (Option<String>, Option<String>),
     /// Volume Windows du micro affiché ; en simulation, une valeur locale.
     level: Option<audio::Level>,
+    advanced: bool,
     level_busy: bool,
     level_pending: Option<f32>,
     busy: bool,
-    pending: Option<(&'static str, Value)>,
+    pending: std::collections::VecDeque<(&'static str, Value)>,
+    revision: u64,
+    refreshing: bool,
+    reading_meters: bool,
     notice: Option<(bool, String)>,
     monitor: Option<spectrum::Monitor>,
     frame: spectrum::Frame,
@@ -62,7 +61,7 @@ pub struct WinMicPage {
     poll_gen: u64,
     test: Test,
     test_stop: Arc<AtomicBool>,
-    pub(crate) ask: Option<Ask>,
+    ask: Option<(Ask, String)>,
 }
 
 /// Identifiant IMMDevice d'une entrée de Windows, depuis son identifiant de registre « {…} ».
@@ -110,6 +109,9 @@ impl WinMicPage {
     }
     fn capture(&self, guid: &str) -> Option<&Value> {
         self.live()["captures"].as_array()?.iter().find(|c| c["guid"].as_str().is_some_and(|g| g.eq_ignore_ascii_case(guid)))
+    }
+    fn confirm(&mut self, action: Ask) {
+        self.ask = self.selected().map(|g|(action,g));
     }
     fn setup_running(&self) -> bool {
         self.live()["setup"]["running"] == true
@@ -162,6 +164,7 @@ impl Mixer {
                                 cx.notify();
                             }
                         }
+                        if tick % 2 == 0 { this.winmic_read_meters(cx); }
                         if tick % 20 == 0 {
                             this.winmic_refresh(cx);
                         }
@@ -193,11 +196,33 @@ impl Mixer {
         }
     }
 
+    fn winmic_read_meters(&mut self, cx: &mut Context<Self>) {
+        if self.winmic.reading_meters || self.winmic.live()["native"]["attached"] != true { return; }
+        let Some(guid) = self.winmic.selected() else { return };
+        self.winmic.reading_meters = true;
+        let client = self.client.clone();
+        // Les accolades d'un GUID ne sont pas normalisées de la même façon par tous les clients HTTP.
+        let path = format!("{MODULE}/meters?device={}",guid.trim_matches(['{','}']));
+        let work = cx.background_executor().spawn(async move { client.get(&path).ok() });
+        cx.spawn(async move |this,cx| {
+            let levels = work.await.and_then(|v|v.get("levels").cloned()).unwrap_or(Value::Null);
+            let _ = this.update(cx, |this,cx| {
+                this.winmic.reading_meters=false;
+                if this.winmic.active && this.winmic.selected().as_ref() == Some(&guid)
+                    && let Some(view) = this.winmic.view.as_mut()
+                    && view["live"]["native"].is_object() && view["live"]["native"]["levels"] != levels {
+                    view["live"]["native"]["levels"] = levels;
+                    cx.notify();
+                }
+            });
+        }).detach();
+    }
+
     /// Relit l'état du module, les micros par défaut et le volume Windows du micro affiché.
     fn winmic_refresh(&mut self, cx: &mut Context<Self>) {
-        if self.winmic.busy {
-            return;
-        }
+        if self.winmic.busy || self.winmic.refreshing { return; }
+        self.winmic.refreshing = true;
+        let rev = self.winmic.revision;
         let client = self.client.clone();
         let live = client.is_live();
         let work = cx.background_executor().spawn(async move {
@@ -215,7 +240,8 @@ impl Mixer {
         cx.spawn(async move |this, cx| {
             let (view, defaults, level) = work.await;
             let _ = this.update(cx, |this, cx| {
-                if this.winmic.busy {
+                this.winmic.refreshing = false;
+                if this.winmic.busy || !this.winmic.active || rev != this.winmic.revision {
                     return;
                 }
                 let before = this.winmic.selected();
@@ -238,15 +264,19 @@ impl Mixer {
     }
 
     /// Envoie une commande au module ; pendant un envoi, les réglages suivants se fusionnent et partent ensuite.
-    pub(crate) fn winmic_send(&mut self, action: &'static str, body: Value, cx: &mut Context<Self>) {
+    pub(crate) fn winmic_send(&mut self, action: &'static str, mut body: Value, cx: &mut Context<Self>) {
+        if body.get("device").is_none() && body.get("selected").is_none() {
+            if let Some(g)=self.winmic.selected(){body["device"]=json!(g);}
+        }
         if self.winmic.busy {
-            match self.winmic.pending.as_mut() {
-                Some((a, b)) if *a == "settings" && action == "settings" => merge(b, &body),
-                _ => self.winmic.pending = Some((action, body)),
+            match self.winmic.pending.back_mut() {
+                Some((a, b)) if *a == "settings" && action == "settings" && b.get("device").is_some() && b["device"] == body["device"] && b.get("selected").is_none() && body.get("selected").is_none() && b.get("preset").is_none() && body.get("preset").is_none() => merge(b, &body),
+                _ => self.winmic.pending.push_back((action, body)),
             }
             return;
         }
         self.winmic.busy = true;
+        self.winmic.revision = self.winmic.revision.wrapping_add(1);
         self.winmic.notice = None;
         // l'écran suit tout de suite le réglage, sans attendre le moteur
         if action == "settings"
@@ -288,7 +318,7 @@ impl Mixer {
                     this.winmic_sync_monitor();
                     this.winmic_refresh(cx);
                 }
-                if let Some((a, b)) = this.winmic.pending.take() {
+                if let Some((a, b)) = this.winmic.pending.pop_front() {
                     this.winmic_send(a, b, cx);
                 }
                 cx.notify();
@@ -430,36 +460,35 @@ impl Mixer {
 
     /// Confirmation au-dessus de la page : Equalizer APO s'installe ou se retire, le son de Windows redémarre.
     pub(crate) fn winmic_confirm_box(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let ask = self.winmic.ask?;
-        let apo = self.winmic.live()["apo"] == true;
+        let (ask, guid) = self.winmic.ask.clone()?;
         let (title, label, mut text): (&str, &str, Vec<SharedString>) = match ask {
             Ask::Setup => ("Traiter la voix de ce micro ?", "Activer", vec![
-                "Rustudio branche Equalizer APO sur l’entrée de ce micro dans Windows : Discord, OBS et tes jeux reçoivent ta voix réglée.".into(),
+                "Rustudio branche son effet sur ce micro. Les applications qui utilisent les effets Windows reçoivent ta voix réglée.".into(),
             ]),
-            Ask::Noise => ("Activer la suppression du bruit ?", "Activer", vec![
-                "Rustudio télécharge RNNoise, le filtre « Suppression du bruit » d’OBS (14 Mo, vérifié), et le branche sur ce micro. Il tourne sur ton processeur : moins de 1 %, 10 ms de latence.".into(),
+            Ask::Noise(on) => (if on {"Activer la suppression du bruit ?"} else {"Couper la suppression du bruit ?"}, "Appliquer", vec![
+                "Le filtre RNNoise fonctionne sur ton PC. Il ajoute environ 20 ms à la dynamique pendant son utilisation.".into(),
             ]),
-            Ask::Remove => ("Retirer Rustudio de ce micro ?", "Retirer", vec![
+            Ask::Remove(_) => ("Retirer Rustudio de ce micro ?", "Retirer", vec![
                 "Ta voix repart telle que Windows la capte : sans égaliseur ni suppression du bruit. Tes réglages restent gardés pour plus tard.".into(),
             ]),
         };
-        if !apo && ask != Ask::Remove {
-            text.push("Equalizer APO, le module libre qui applique les réglages dans Windows, est d’abord installé (12 Mo, vérifié).".into());
+        if self.winmic.live()["legacy"]==true && !matches!(ask,Ask::Remove(_)) {
+            text.push("Les réglages Rustudio de ce micro passent sur le nouvel effet. Les autres périphériques gardent leur configuration.".into());
         }
         text.push("Le son de Windows redémarre : environ 2 secondes de silence.".into());
         let cancel = ui::pill("winmic-ask-cancel", None, "Annuler", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
             this.winmic.ask = None;
             cx.notify();
         }));
-        let ok = ui::pill("winmic-ask-ok", None, label, if ask == Ask::Remove { Tone::Danger } else { Tone::Primary }).on_click(cx.listener(move |this, _, _, cx| {
+        let ok = ui::pill("winmic-ask-ok", None, label, if matches!(ask,Ask::Remove(_)) { Tone::Danger } else { Tone::Primary }).on_click(cx.listener(move |this, _, _, cx| {
             this.winmic.ask = None;
             match ask {
-                Ask::Setup => this.winmic_send("setup", json!({}), cx),
-                Ask::Noise => this.winmic_send("noise", json!({"enabled": true}), cx),
-                Ask::Remove => this.winmic_send("remove", json!({}), cx),
+                Ask::Setup => this.winmic_send("attach", json!({"device":guid}), cx),
+                Ask::Noise(on) => this.winmic_send("native-noise", json!({"device":guid,"enabled": on}), cx),
+                Ask::Remove(native) => this.winmic_send(if native {"detach"} else {"remove"}, json!({"device":guid}), cx),
             }
         }));
-        Some(ui::dialog(if ask == Ask::Remove { Icon::Alert } else { Icon::Mic }, if ask == Ask::Remove { ui::ORANGE } else { ui::ACCENT }, title, text, vec![cancel.into_any_element(), ok.into_any_element()]))
+        Some(ui::dialog(if matches!(ask,Ask::Remove(_)) { Icon::Alert } else { Icon::Mic }, if matches!(ask,Ask::Remove(_)) { ui::ORANGE } else { ui::ACCENT }, title, text, vec![cancel.into_any_element(), ok.into_any_element()]))
     }
 
     pub(crate) fn winmic_view(&self, width: f32, cx: &mut Context<Self>) -> Div {
@@ -479,6 +508,11 @@ impl Mixer {
             root = root.child(ui::notice(false, format!("Échec : {e}")));
         }
         let wide = width >= 900.;
+        if w.live()["native"]["safe_mode"]==true {
+            root=root.child(ui::status("Mode de secours. Les effets Windows précédents ont été rétablis.".to_owned(),State::Warn));
+        } else if w.live()["native"]["lost"]==true {
+            root=root.child(ui::status("Windows a débranché l’effet. Tu peux le rétablir dans Ta voix.".to_owned(),State::Warn));
+        }
         root = root.child(self.winmic_hero(&guid, wide, cx));
         if w.capture(&guid).is_some_and(|c| c["goxlr"] == true) {
             root = root.child(
@@ -494,7 +528,7 @@ impl Mixer {
             );
         }
         let left = vec![self.winmic_voice(cx).into_any_element(), self.winmic_noise(cx).into_any_element()];
-        let right = vec![self.winmic_eq(cx).into_any_element(), self.winmic_test_card(cx).into_any_element()];
+        let right = vec![self.winmic_eq(cx).into_any_element(), self.winmic_dynamics(cx).into_any_element(), self.winmic_test_card(cx).into_any_element()];
         root.child(ui::settings_columns(width, left, right))
     }
 
@@ -575,15 +609,16 @@ impl Mixer {
         let installed = w.live()["installed"] == true;
         let busy = w.busy || w.setup_running();
         let mut p = ui::section(Icon::Wave, 0x5856d6, "Ta voix", Some(if v.enabled && installed { "Appliquée à toutes tes applis".into() } else { "Coupée : voix naturelle".into() }));
-        if !installed {
-            return p
+        if w.live()["native"]["attached"] != true {
+            p = p
                 .child(hint("Donne à ta voix plus de corps ou de clarté et retire les grondements du bureau, pour Discord, OBS et tes jeux à la fois. Rustudio règle l’entrée du micro dans Windows, sans logiciel à garder ouvert."))
-                .child(div().flex().child(ui::pill("winmic-setup", Some(Icon::Plug), "Activer le traitement de ma voix", Tone::Primary).on_click(cx.listener(move |this, _, _, cx| {
+                .child(div().flex().child(ui::pill("winmic-setup", Some(Icon::Plug), if installed {"Passer à l’effet Rustudio"} else {"Activer le traitement de ma voix"}, Tone::Primary).on_click(cx.listener(move |this, _, _, cx| {
                     if !busy {
-                        this.winmic.ask = Some(Ask::Setup);
+                        this.winmic.confirm(Ask::Setup);
                         cx.notify();
                     }
                 }))));
+            if !installed {return p;}
         }
         let on = v.enabled;
         p = p.child(ui::list_row(None, if on { "Traitement actif" } else { "Traitement coupé" }, Some("Coupé, ta voix part telle que le micro la capte.".into()), ui::toggle("winmic-enabled", on, !busy).on_click(cx.listener(move |this, _, _, cx| this.winmic_send("settings", json!({"enabled": !on}), cx))), true));
@@ -628,6 +663,52 @@ impl Mixer {
             .child(bands.when(!on, |d| d.opacity(0.45)))
     }
 
+    fn winmic_dynamics(&self, cx: &mut Context<Self>) -> Div {
+        let w = &self.winmic;
+        let voice = w.voice();
+        let d = voice.dynamics;
+        let active = w.live()["native"]["attached"] == true && voice.enabled && !w.setup_running();
+        let mut p = ui::section(Icon::Gauge, ui::GREEN, "Dynamique", None);
+        for (key, label, hint, on, meter) in [
+            ("gate", "Noise gate", "Atténue le bruit entre tes phrases.", d.gate, 1),
+            ("compressor", "Compresseur", "Rapproche le volume des passages forts et des passages doux.", d.compressor, 2),
+            ("limiter", "Limiteur", "Retient les crêtes avant qu’elles ne dépassent le plafond.", d.limiter, 4),
+        ] {
+            let id = SharedString::from(format!("winmic-dyn-{key}"));
+            let toggle = ui::toggle(id, on, active).on_click(cx.listener(move |this, _, _, cx| {
+                if active { this.winmic_send("settings", json!({"dynamics": {(key): !on}}), cx); }
+            }));
+            p = p.child(ui::list_row(None, label, Some(hint.into()), toggle, false));
+            if let Some(db) = w.live()["native"]["levels"].get(meter).and_then(Value::as_f64) {
+                p = p.child(crate::mic_wizard::dsp_meter_pill("Réduction", db, on && active, ui::GREEN));
+            }
+            let (field, name, value, range) = match key {
+                "gate" => ("threshold","Seuil d’ouverture",d.threshold,(-80.,-15.)),
+                "compressor" => ("comp_db","Seuil de compression",d.comp_db,(-48.,-3.)),
+                _ => ("ceiling","Plafond de sortie",d.ceiling,(-12.,0.)),
+            };
+            p = p.child(self.slider_row(field, name, value.into(), range, 1., |x| format!("{} dBFS", fmt_db(x)), on && active,
+                move |this, x, cx| this.winmic_send("settings", json!({"dynamics": {(field): x.round() as i32}}), cx), cx));
+        }
+        p = p.child(ui::pill("winmic-advanced", None, if w.advanced { "Masquer les réglages avancés" } else { "Réglages avancés" }, Tone::Plain)
+            .on_click(cx.listener(|this, _, _, cx| {this.winmic.advanced = !this.winmic.advanced; cx.notify();})));
+        if w.advanced {
+            for (key,name,value,range,unit,on) in [
+                ("depth","Atténuation du gate",d.depth,(6.,80.),"dB",d.gate),
+                ("hold_ms","Maintien en fin de phrase",d.hold_ms,(0.,500.),"ms",d.gate),
+                ("ratio","Ratio de compression",d.ratio,(1.,20.),":1",d.compressor),
+                ("attack_ms","Attaque du compresseur",d.attack_ms,(1.,80.),"ms",d.compressor),
+                ("release_ms","Relâchement du compresseur",d.release_ms,(10.,600.),"ms",d.compressor),
+                ("makeup","Gain après compression",d.makeup,(0.,12.),"dB",d.compressor),
+                ("deesser","Atténuation des sifflantes",d.deesser,(0.,100.),"%",true),
+            ] {
+                p = p.child(self.slider_row(key,name,value.into(),range,1.,move |x|format!("{} {unit}",x.round()),active && on,
+                    move |this,x,cx|this.winmic_send("settings",json!({"dynamics":{(key):x.round() as i32}}),cx),cx));
+            }
+        }
+        p
+    }
+
     /// Suppression du bruit (RNNoise, comme OBS), sur ce micro.
     fn winmic_noise(&self, cx: &mut Context<Self>) -> Div {
         let w = &self.winmic;
@@ -637,24 +718,23 @@ impl Mixer {
         let mut p = ui::section(Icon::Sparkles, 0x5856d6, "Suppression du bruit (IA)", Some("Comme OBS · sur ton PC".into()))
             .child(hint("Enlève les ventilateurs, le clavier et le souffle, même pendant que tu parles."))
             .child(ui::list_row(None, if on { "Active sur ce micro" } else { "Coupée" }, None, ui::toggle("winmic-ns", on, !busy).on_click(cx.listener(move |this, _, _, cx| {
-                let live = this.winmic.live();
-                let ready = live["apo"] == true && live["plugin"] == true && live["installed"] == true;
-                if !on && !ready {
-                    this.winmic.ask = Some(Ask::Noise);
-                    cx.notify();
+                if busy {return;}
+                if on && this.winmic.live()["native"]["attached"]!=true {
+                    this.winmic_send("noise",json!({"enabled":false}),cx);
                 } else {
-                    this.winmic_send("noise", json!({"enabled": !on}), cx);
+                    this.winmic.confirm(Ask::Noise(!on));cx.notify();
                 }
             })), true));
-        if let Some(other) = ns["elsewhere"].as_str() {
-            p = p.child(ui::caption(format!("Elle tourne sur « {other} » : l’activer ici la déplace sur ce micro.")));
+        if w.live()["native"]["attached"]!=true && let Some(other) = ns["elsewhere"].as_str() {
+            p = p.child(ui::caption(format!("L’ancien filtre est actif sur « {other} ».")));
         }
         if on {
+            let action=if w.live()["native"]["attached"] == true {"native-noise"} else {"noise"};
             let strength = ns["strength"].as_f64().unwrap_or(90.);
             let grace = ns["grace_ms"].as_f64().unwrap_or(200.);
             p = p
-                .child(self.slider_row("winmic-ns-strength", "Intensité : plus haut, le bruit entre tes mots disparaît", strength, (50., 99.), 1., |x| format!("{} %", x.round()), !busy, |this, x, cx| this.winmic_send("noise", json!({"strength": x.round() as i64}), cx), cx))
-                .child(self.slider_row("winmic-ns-grace", "Maintien après ta voix (fins de mots)", grace, (0., 500.), 10., |x| format!("{} ms", x.round()), !busy, |this, x, cx| this.winmic_send("noise", json!({"grace_ms": x.round() as i64}), cx), cx));
+                .child(self.slider_row("winmic-ns-strength", "Intensité : plus haut, le bruit entre tes mots disparaît", strength, (50., 99.), 1., |x| format!("{} %", x.round()), !busy, move |this, x, cx| this.winmic_send(action, json!({"strength": x.round() as i64}), cx), cx))
+                .child(self.slider_row("winmic-ns-grace", "Maintien après ta voix (fins de mots)", grace, (0., 500.), 10., |x| format!("{} ms", x.round()), !busy, move |this, x, cx| this.winmic_send(action, json!({"grace_ms": x.round() as i64}), cx), cx));
         }
         p
     }
@@ -678,11 +758,12 @@ impl Mixer {
             })
             .child(div().flex().items_center().gap(px(6.)).child(ui::pill("winmic-test", Some(if running { Icon::Stop } else { Icon::Play }), if running { "Arrêter" } else { "Enregistrer puis réécouter" }, if running { Tone::Plain } else { Tone::Primary }).on_click(cx.listener(|this, _, _, cx| this.winmic_test(cx)))))
             .child(ui::caption("Avec un casque, pour ne pas reprendre le son des enceintes."));
-        if installed {
+        if installed || w.live()["native"]["requested"] == true || w.live()["native"]["safe_mode"] == true {
             p = p.child(
                 div().pt(px(6.)).border_t_1().border_color(alpha(ui::INK, 0.07)).flex().items_center().gap(px(10.)).child(ui::caption("Rustudio est branché sur ce micro dans Windows.").flex_1().min_w(px(0.))).child(ui::pill("winmic-remove", Some(Icon::Close), "Retirer", Tone::Plain).on_click(cx.listener(|this, _, _, cx| {
                     if !this.winmic.setup_running() {
-                        this.winmic.ask = Some(Ask::Remove);
+                        let n=&this.winmic.live()["native"];
+                        this.winmic.confirm(Ask::Remove(n["requested"]==true || n["attached"]==true || n["safe_mode"]==true));
                         cx.notify();
                     }
                 }))),

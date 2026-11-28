@@ -9,6 +9,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 struct Waiter<'a>(&'a AtomicUsize);
+impl<'a> Waiter<'a> {
+    fn acquire(counter: &'a AtomicUsize) -> Result<Self, ApiError> {
+        let mut n = counter.load(Ordering::Relaxed);
+        while n < 2 {
+            match counter.compare_exchange_weak(n, n + 1, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => return Ok(Self(counter)),
+                Err(actual) => n = actual,
+            }
+        }
+        Err(ApiError { status: 429, msg: "trop de lecteurs du mixeur".into() })
+    }
+}
 impl Drop for Waiter<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Relaxed);
@@ -38,15 +50,7 @@ impl Ctl {
         if let Some(after) = after.filter(|&cursor| self.mixer_cursor(&g) == cursor) {
             // Le serveur a huit travailleurs. Les lectures suspendues ne peuvent jamais les
             // monopoliser : on conserve les autres pour les commandes, l'UI et le diagnostic.
-            self.mixer_waiters
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                    (n < 2).then_some(n + 1)
-                })
-                .map_err(|_| ApiError {
-                    status: 429,
-                    msg: "trop de lecteurs du mixeur".into(),
-                })?;
-            let _slot = Waiter(&self.mixer_waiters);
+            let _slot = Waiter::acquire(&self.mixer_waiters)?;
             g = self
                 .mixer_changed
                 .wait_timeout_while(g, Duration::from_millis(750), |g| {

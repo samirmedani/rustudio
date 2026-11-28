@@ -58,6 +58,9 @@ jobs:
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1
+      - name: Contrat COM de l’effet micro sur buffers silencieux
+        shell: pwsh
+        run: ./scripts/test-micro.ps1
       - name: Appli native sur la démonstration (toutes les pages et commandes)
         shell: pwsh
         run: |

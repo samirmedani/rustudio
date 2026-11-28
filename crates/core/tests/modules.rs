@@ -46,7 +46,7 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     assert_eq!(webcam.actions, ["settings", "preset", "reset", "lock", "refresh"]);
     let mic = modules::find("windows-mic").unwrap();
     assert_eq!(mic.kind, "microphone");
-    assert_eq!(mic.actions, ["settings", "setup", "remove", "noise"]);
+    assert_eq!(mic.actions, ["settings", "setup", "remove", "noise", "attach", "detach", "native-noise"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");
     }

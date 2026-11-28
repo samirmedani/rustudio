@@ -63,6 +63,15 @@ pub fn compose_notes(latest: &str, older: &[(String, String)]) -> String {
     s.chars().take(60_000).collect()
 }
 
+fn verify_micro_artifact(root:&Path, manifest:Option<&Value>)->Result<(),UpdateError> {
+    const DLL:&str="rustudio_micro_apo.dll";
+    let sha=sha256_file(&root.join(DLL)).map_err(|_|uerr("archive","La DLL micro manque dans l’archive."))?;
+    if manifest.and_then(|m|m["files"][DLL].as_str())!=Some(&sha) {
+        return Err(uerr("corrupted","L’empreinte de la DLL micro ne correspond pas au manifeste."));
+    }
+    Ok(())
+}
+
 pub fn sha256_hex(data: &[u8]) -> String {
     let d = Sha256::digest(data);
     d.iter().map(|b| format!("{b:02x}")).collect()
@@ -620,6 +629,9 @@ impl Updater {
         if !missing.is_empty() {
             return Err(uerr("archive", format!("Archive incomplète : {}", missing.join(", "))));
         }
+        if !semver::lt(&mver,"6.11.0") {
+            verify_micro_artifact(&new,man.as_ref())?;
+        }
         if self.cancelled() {
             return Err(uerr("cancelled", ""));
         }
@@ -642,6 +654,9 @@ impl Updater {
             logf!("Mise à jour {} → {mver} prête : remplacement des fichiers", self.current());
         }
         let launch = self.launcher.lock().unwrap();
+        #[cfg(windows)] if launch.is_none() && downgrade && semver::lt(&mver,"6.11.0") {
+            crate::native_mic::uninstall_effects().map_err(|e|uerr("audio",format!("Restauration des micros avant le retour : {e}")))?;
+        }
         match launch.as_ref() {
             Some(f) => f(&new, &work).map_err(|e| uerr("launch", e))?,
             None => crate::win::schtasks_run_system(UPDATE_TASK, &new.join("rustudio-engine.exe").to_string_lossy(), "apply-update")
@@ -989,5 +1004,24 @@ mod notes_tests {
         assert_eq!(err.code, "archive");
         assert!(!dest.join("payload.bin").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod micro_package_tests {
+    use super::*;
+    #[test]
+    fn effet_micro_obligatoire_et_empreinte_interne_verifiee() {
+        let dir=std::env::temp_dir().join(format!("rustudio-apo-paquet-{}",std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file="rustudio_micro_apo.dll";
+        let manifest=json!({"files":{(file):sha256_hex(b"dll")}});
+        assert_eq!(verify_micro_artifact(&dir,Some(&manifest)).unwrap_err().code,"archive");
+        std::fs::write(dir.join(file),b"dll").unwrap();
+        assert!(verify_micro_artifact(&dir,Some(&manifest)).is_ok());
+        std::fs::write(dir.join(file),b"autre").unwrap();
+        assert_eq!(verify_micro_artifact(&dir,Some(&manifest)).unwrap_err().code,"corrupted");
+        assert_eq!(verify_micro_artifact(&dir,None).unwrap_err().code,"corrupted");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

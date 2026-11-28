@@ -94,14 +94,27 @@ pub fn uninstall() -> Result<(), String> {
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(|e| e.to_string())?;
     let svc = match mgr.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE) {
         Ok(s) => s,
-        Err(_) => return Ok(()),
+        Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1060) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
     };
-    let _ = svc.stop();
-    for _ in 0..40 {
-        if svc.query_status().map(|s| s.current_state == ServiceState::Stopped).unwrap_or(true) {
-            break;
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut stop_requested = false;
+    loop {
+        let state = svc.query_status().map_err(|e| e.to_string())?.current_state;
+        if state == ServiceState::Stopped {
+            return svc.delete().map_err(|e| e.to_string());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Le service Rustudio est toujours en cours d’arrêt.".into());
+        }
+        if !stop_requested && state != ServiceState::StopPending {
+            match svc.stop() {
+                Ok(_) => stop_requested = true,
+                // Le service change d’état entre la lecture et la commande.
+                Err(windows_service::Error::Winapi(e)) if matches!(e.raw_os_error(), Some(1061 | 1062)) => {}
+                Err(e) => return Err(e.to_string()),
+            }
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    svc.delete().map_err(|e| e.to_string())
 }

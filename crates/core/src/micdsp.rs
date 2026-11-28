@@ -19,7 +19,7 @@
 #![allow(dead_code)]
 
 pub const BLOCK: usize = 32;
-const SUB: usize = 8;
+pub const SUB: usize = 8;
 pub const STAGES: u8 = 3;
 /// Mots de 32 bits du réglage envoyé au firmware.
 pub const WORDS: usize = 64;
@@ -286,8 +286,6 @@ pub struct Chain {
     deess_gain: i32,
     limit_db: i32,
     limit_gain: i32,
-    /// aigus du bloc (de-esser)
-    highs: [i32; BLOCK],
     /// réduction la plus forte depuis le dernier relevé (dB × 256, positive) : gate, compresseur, de-esser,
     /// limiteur
     pub reduction: [i32; 4],
@@ -309,7 +307,6 @@ impl Default for Chain {
             deess_gain: UNITY,
             limit_db: 0,
             limit_gain: UNITY,
-            highs: [0; BLOCK],
             reduction: [0; 4],
         }
     }
@@ -319,6 +316,13 @@ impl Chain {
     /// Une étape du bloc : 0 coupe-bas, gate et bandes 1 à 3 ; 1 bandes 4 à 6 et compresseur ; 2 de-esser et
     /// limiteur. Le bloc ressort à la pleine échelle 24 bits après l'étape 2.
     pub fn stage(&mut self, p: &Params, stage: u8, block: &mut [i32; BLOCK]) {
+        self.stage_samples(p, stage, block);
+        if stage >= 2 {
+            for x in block { *x = (*x).clamp(-FULL, FULL); }
+        }
+    }
+
+    fn stage_samples(&mut self, p: &Params, stage: u8, block: &mut [i32]) {
         match stage {
             0 => {
                 if p.flags & FLAG_HPF != 0 {
@@ -344,9 +348,6 @@ impl Chain {
                 if p.flags & FLAG_LIMIT != 0 {
                     self.limiter(p, block);
                 }
-                for x in block.iter_mut() {
-                    *x = (*x).clamp(-FULL, FULL);
-                }
             }
         }
     }
@@ -358,7 +359,14 @@ impl Chain {
         }
     }
 
-    fn bands(&mut self, p: &Params, block: &mut [i32; BLOCK], bands: core::ops::Range<usize>) {
+    /// Une unité de contrôle, en gardant la marge pour le limiteur à anticipation du PC.
+    pub fn process_quantum(&mut self, p: &Params, samples: &mut [i32; SUB]) {
+        for stage in 0..STAGES {
+            self.stage_samples(p, stage, samples);
+        }
+    }
+
+    fn bands(&mut self, p: &Params, block: &mut [i32], bands: core::ops::Range<usize>) {
         for n in bands {
             if p.flags & (FLAG_EQ0 << n) == 0 {
                 continue;
@@ -377,7 +385,7 @@ impl Chain {
         }
     }
 
-    fn gate(&mut self, p: &Params, block: &mut [i32; BLOCK]) {
+    fn gate(&mut self, p: &Params, block: &mut [i32]) {
         for sub in block.chunks_exact_mut(SUB) {
             let level = level_db(peak(sub));
             if level >= p.gate_threshold {
@@ -400,7 +408,7 @@ impl Chain {
         }
     }
 
-    fn compressor(&mut self, p: &Params, block: &mut [i32; BLOCK]) {
+    fn compressor(&mut self, p: &Params, block: &mut [i32]) {
         // coude doux de 6 dB
         const HALF_KNEE: i32 = 3 * 256;
         for sub in block.chunks_exact_mut(SUB) {
@@ -424,13 +432,13 @@ impl Chain {
         }
     }
 
-    fn deesser(&mut self, p: &Params, block: &mut [i32; BLOCK]) {
-        for (h, &x) in self.highs.iter_mut().zip(block.iter()) {
-            *h = biquad(&p.deess_hp, &mut self.deess_hp, x);
-        }
-        let all = self.highs;
-        for (sub, highs) in block.chunks_exact_mut(SUB).zip(all.chunks_exact(SUB)) {
-            let high = level_db(peak(highs));
+    fn deesser(&mut self, p: &Params, block: &mut [i32]) {
+        for sub in block.chunks_exact_mut(SUB) {
+            let mut high_peak = 0;
+            for &sample in sub.iter() {
+                high_peak = high_peak.max(biquad(&p.deess_hp, &mut self.deess_hp, sample).unsigned_abs());
+            }
+            let high = level_db(high_peak);
             let excess = high - level_db(peak(sub)) + p.deess_offset;
             let target = if excess > 0 && high > p.deess_floor {
                 -(((i64::from(excess) * i64::from(p.deess_scale)) >> 8) as i32).min(p.deess_max)
@@ -447,7 +455,7 @@ impl Chain {
         }
     }
 
-    fn limiter(&mut self, p: &Params, block: &mut [i32; BLOCK]) {
+    fn limiter(&mut self, p: &Params, block: &mut [i32]) {
         for sub in block.chunks_exact_mut(SUB) {
             let over = level_db(peak(sub)) - p.limit_ceiling;
             let target = if over > 0 { -over } else { 0 };

@@ -38,6 +38,9 @@ jobs:
       - name: Paquet
         shell: pwsh
         run: ./scripts/build-release.ps1
+      - name: Contrat COM de l’effet micro sur buffers silencieux
+        shell: pwsh
+        run: ./scripts/test-micro.ps1
       - name: Passage depuis GoXLR Mini 4.8.0
         shell: pwsh
         run: ./scripts/migration-test.ps1

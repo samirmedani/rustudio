@@ -49,7 +49,7 @@ if (-not $env:GPUI_FXC_PATH) {
 }
 Push-Location $root
 try {
-  cargo build --release --locked -p rustudio-engine -p rustudio-app
+  cargo build --release --locked -p rustudio-engine -p rustudio-app -p rustudio-micro-apo
   if ($LASTEXITCODE -ne 0) { throw 'Compilation du moteur ou de l appli echouee' }
   $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root 'target' }
   $bin = Join-Path $target 'release'
@@ -58,6 +58,7 @@ try {
   $stage = Fresh (Join-Path $Out 'payload')
   Copy-Item (Join-Path $bin 'rustudio-engine.exe') $stage
   Copy-Item (Join-Path $bin 'Rustudio.exe') $stage
+  Copy-Item (Join-Path $bin 'rustudio_micro_apo.dll') $stage
   Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'LICENSE.txt')
   Copy-Item (Join-Path $root 'THIRD-PARTY-NOTICES.md') $stage
   Write-Manifest $stage 'Rustudio' $version $commit

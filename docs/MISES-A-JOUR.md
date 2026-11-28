@@ -63,3 +63,8 @@ Page Versions, « Nouveautés de cette version » : la même fenêtre pour la ve
 
 `RUSTUDIO_PREVIEW_SHEET=update|downloading|failed|done|current` ouvre la fenêtre dans cet état au démarrage
 (développement). Le banc `labs/visible/shots.py --sheet=update versions` capture la fenêtre de démonstration.
+
+
+## Effet micro depuis la version 6.11.0
+
+Le manifeste contient l’empreinte SHA-256 de `rustudio_micro_apo.dll`. Windows charge une copie propre à cette empreinte. Une mise à jour peut ainsi remplacer les fichiers de l’application quand un logiciel garde le micro ouvert. Les entrées déjà branchées utilisent la nouvelle DLL après le redémarrage du graphe. Un retour confirmé vers une version antérieure à 6.11 restaure les effets Windows des entrées gérées.

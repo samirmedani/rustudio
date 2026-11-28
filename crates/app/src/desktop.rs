@@ -193,7 +193,7 @@ impl Page {
             Page::WebcamImage => "Aperçu vidéo en direct, luminosité, contraste, saturation, netteté et balance des blancs.",
             Page::WebcamOptics => "Aperçu vidéo en direct, exposition manuelle, focus, zoom et cadrage.",
             Page::WebcamInfo => "Voyant LED, maintien anti-réinitialisation et fiche technique C920.",
-            Page::WinMic => "Volume, micro de Windows, suppression du bruit et égaliseur de ta voix, pour toutes tes applis.",
+            Page::WinMic => "Volume, réduction du bruit, égaliseur et dynamique de ta voix.",
             Page::Go(Section::Microphone) => "Détection, gain et traitement de ta voix.",
             Page::Go(Section::Headphones) => "Égaliseur, correction et styles de ton casque.",
             Page::Go(Section::Routing) => "Choisis quelles sorties reçoivent chaque entrée.",

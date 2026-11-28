@@ -83,6 +83,16 @@ impl Ctl {
         self.hp_apply();
         self.ns_apply();
         self.winmic_apply();
+        #[cfg(windows)] if !self.simulated() {
+            let refresh = rustudio_windows_mic::registry::refresh_binary().map_err(|e|e.to_string())
+                .and_then(|changed|if changed {crate::native_mic::restart_audio(false)} else {Ok(())});
+            match refresh {
+                Err(e) => logf!("Mise à jour de l’effet micro : {e}"),
+                Ok(()) => if let Err(e) = rustudio_windows_mic::registry::cleanup_binary_cache() {
+                    logf!("Anciennes copies de l’effet micro : {e}");
+                },
+            }
+        }
         loop {
             std::thread::sleep(interval);
             let (auto, hp) = {
@@ -98,6 +108,7 @@ impl Ctl {
             self.hp_tick(running.as_ref());
             self.ns_apply(); // micro débranché, rebranché, ou autre micro par défaut
             self.winmic_apply();
+            self.winmic_watchdog();
         }
     }
 
@@ -128,7 +139,7 @@ impl Ctl {
             ""
         };
         let dir = self.eqapo.plugin_dir().to_string_lossy().to_string();
-        let t = target.filter(|t| t.installed && ready);
+        let t = target.filter(|t| t.installed && ready && !self.winmic.native.attached(&t.guid.to_ascii_lowercase()));
         let text = rustudio_core::micns::config_text(&ns, t.as_ref().map(|t| (t.guid.as_str(), t.channels)), &dir, why);
         self.eqapo.write_mic(&text);
     }
@@ -149,13 +160,16 @@ impl Ctl {
     /// Installe ce qu'il faut (Equalizer APO, RNNoise), branche l'entrée visée et active la suppression ; ou la
     /// retire de cette entrée.
     pub fn ns_start(self: &Arc<Self>, install: bool) -> ApiResult {
+        if self.ns_target().is_some_and(|c| self.winmic.native.managed(&c.guid.to_ascii_lowercase())) {
+            return Err(crate::api::ApiError::bad("Ce micro utilise l’effet Rustudio. Règle son anti-bruit dans Mon micro."));
+        }
         if self.eqapo.setup_running() {
             return Err(crate::api::ApiError::bad("Une opération sur Equalizer APO est déjà en cours."));
         }
-        self.eqapo.set_setup(&[("running", json!(true)), ("step", json!("Préparation…")), ("error", Value::Null), ("done", json!(false)), ("kind", json!("mic-ns")), ("install", json!(install))], true);
+        self.eqapo.begin_setup("mic-ns",install)?;
         let c = self.clone();
         std::thread::spawn(move || {
-            let step = |t: &str| c.eqapo.set_setup(&[("step", json!(t))], false);
+            let step = |t: &str| c.eqapo.set_setup(&[("step", json!(t))]);
             let r = (|| -> Result<(), String> {
                 if install {
                     if !c.eqapo.installed() {
@@ -197,10 +211,10 @@ impl Ctl {
                 Ok(())
             })();
             match r {
-                Ok(()) => c.eqapo.set_setup(&[("running", json!(false)), ("done", json!(true)), ("step", json!("Terminé"))], false),
+                Ok(()) => c.eqapo.set_setup(&[("running", json!(false)), ("done", json!(true)), ("step", json!("Terminé"))]),
                 Err(e) => {
                     logf!("Suppression du bruit : {e}");
-                    c.eqapo.set_setup(&[("running", json!(false)), ("error", json!(e))], false);
+                    c.eqapo.set_setup(&[("running", json!(false)), ("error", json!(e))]);
                 }
             }
             c.lock().version += 1;
@@ -299,7 +313,7 @@ impl Ctl {
             HpSetup::Remove => "remove",
             HpSetup::Uninstall => "uninstall",
         };
-        self.eqapo.set_setup(&[("running", json!(true)), ("step", json!("Préparation…")), ("error", Value::Null), ("done", json!(false)), ("install", json!(install)), ("kind", json!(kind))], true);
+        self.eqapo.begin_setup(kind,install)?;
         let c = self.clone();
         std::thread::spawn(move || c.hp_setup_run(mode));
         Ok(json!({"ok": true}))
@@ -307,7 +321,7 @@ impl Ctl {
 
     fn hp_setup_run(&self, mode: HpSetup) {
         let install = mode == HpSetup::Install;
-        let step = |t: &str| self.eqapo.set_setup(&[("step", json!(t))], false);
+        let step = |t: &str| self.eqapo.set_setup(&[("step", json!(t))]);
         let r = (|| -> Result<(), String> {
             let eq = self.lock().state.hp_eq.clone();
             if install {
@@ -360,10 +374,10 @@ impl Ctl {
             Ok(())
         })();
         match r {
-            Ok(()) => self.eqapo.set_setup(&[("running", json!(false)), ("done", json!(true)), ("step", json!("Terminé"))], false),
+            Ok(()) => self.eqapo.set_setup(&[("running", json!(false)), ("done", json!(true)), ("step", json!("Terminé"))]),
             Err(e) => {
                 logf!("Égaliseur du casque : {e}");
-                self.eqapo.set_setup(&[("running", json!(false)), ("error", json!(e))], false);
+                self.eqapo.set_setup(&[("running", json!(false)), ("error", json!(e))]);
             }
         }
         self.lock().version += 1;

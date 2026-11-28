@@ -373,7 +373,7 @@ fn eq_band_role(band: &str, fitted_layout: bool) -> (&'static str, &'static str)
 }
 
 /// Pastille d'activité DSP en direct (réduction mesurée en dB par le firmware Rustudio).
-fn dsp_meter_pill(label: &'static str, reduction_db: f64, enabled: bool, active_colour: u32) -> Div {
+pub(crate) fn dsp_meter_pill(label: &'static str, reduction_db: f64, enabled: bool, active_colour: u32) -> Div {
     let db = reduction_db.abs();
     let working = enabled && db >= 0.4;
     let text = if !enabled {

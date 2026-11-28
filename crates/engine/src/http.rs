@@ -85,6 +85,13 @@ pub fn handle(ctl: &Arc<Ctl>, mut req: Request) {
                 "/overlay" | "/overlay.html" => return respond(req, OVERLAY_HTML, "text/html; charset=utf-8", 200),
                 "/icon.png" => return respond(req, ICON_PNG, "image/png", 200),
                 "/api/live" => ctl.live_snapshot(query.split('&').any(|q| q == "level=1")),
+                "/api/modules/windows-mic/meters" => {
+                    if hdr(&req, API_HEADER) != Some("1") { return json_resp(req, &json!({"error":"requête refusée"}), 403); }
+                    let Some(guid) = query.strip_prefix("device=").filter(|g|g.len()==36).map(|g|format!("{{{g}}}")).filter(|g| rustudio_core::micns::is_guid(g)) else {
+                        return json_resp(req, &json!({"error":"identifiant de micro invalide"}), 400);
+                    };
+                    json!({"levels":ctl.winmic.native.levels(&guid.to_ascii_lowercase())})
+                }
                 "/api/modules/goxlr-mini/mixer" => {
                     if hdr(&req, API_HEADER) != Some("1") {
                         return json_resp(req, &json!({"error": "requête refusée"}), 403);

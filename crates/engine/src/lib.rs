@@ -18,6 +18,7 @@ pub mod keyboard;
 pub mod webcam;
 pub mod winmic;
 mod mixer;
+mod native_mic;
 pub mod net;
 #[cfg(windows)]
 pub mod service;

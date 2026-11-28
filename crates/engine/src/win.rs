@@ -232,7 +232,7 @@ pub fn usb_scan() -> Option<String> {
             }
             let ids: Vec<String> =
                 String::from_utf16_lossy(&buf).split('\0').filter(|s| !s.is_empty()).map(|s| s.to_uppercase()).collect();
-            return Some(classify_usb(&ids, &lab_interfaces()));
+            Some(classify_usb(&ids, &lab_interfaces()))
         }
     }
     #[cfg(not(windows))]

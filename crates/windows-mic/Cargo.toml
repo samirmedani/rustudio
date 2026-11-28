@@ -9,3 +9,9 @@ description = "Module Micro : réglages de la voix de n'importe quel micro Windo
 rustudio-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+sha2 = "0.10"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Authorization", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_Registry"] }
+winreg = { version = "0.55", features = ["transactions"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }

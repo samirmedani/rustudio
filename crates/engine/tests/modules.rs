@@ -8,10 +8,12 @@ use std::time::Duration;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
-fn controller(simulated: bool) -> Arc<Ctl> {
+fn controller(simulated: bool) -> Arc<Ctl> { controller_with_store(simulated, false) }
+
+fn controller_with_store(simulated: bool,persist:bool) -> Arc<Ctl> {
     let dir = std::env::temp_dir().join(format!("rustudio-modules-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     let cfg = Config { simulate: simulated, port: 0, data_dir: dir.clone(), base_dir: dir, supervised: false, engine_restarts: 0 };
-    Ctl::new(cfg, Box::new(|| panic!("une vue de module ne doit jamais charger le pilote")), None, false)
+    Ctl::new(cfg, Box::new(|| panic!("une vue de module ne doit jamais charger le pilote")), None, persist)
 }
 
 fn request(ctl: &Arc<Ctl>, path: &str, body: Option<Value>, authorized: bool, host: Option<&str>) -> (u16, Value) {
@@ -366,4 +368,70 @@ fn micro_windows_reglages_branchement_suppression_du_bruit_et_retrait() {
     assert_eq!(code, 404);
     let (code, _) = request(&ctl, "/api/modules/windows-mic/settings", Some(json!({"gain_db": 2})), false, None);
     assert_eq!(code, 403);
+}
+
+#[test]
+fn micro_natif_depuis_http_et_rappel_des_reglages() {
+    let ctl=controller_with_store(true,true);
+    const USB:&str="{00000000-0000-0000-0000-0000000005b0}";
+    let cmd=|k:&str,p:Value|request(&ctl,&format!("/api/modules/windows-mic/{k}"),Some(p),true,None);
+    assert_eq!(cmd("native-noise",json!({"device":USB,"enabled":false})).0,400);
+    assert_eq!(request(&ctl,"/api/modules/windows-mic/state",None,false,None).1["live"]["native"]["attached"],false);
+    assert_eq!(cmd("attach",json!({"device":"invalid"})).0,400);
+    assert_eq!(cmd("attach",json!({"device":"{00000000-0000-0000-0000-000000000777}"})).0,400);
+    assert_eq!(cmd("settings",json!({"device":USB,"preset":"streamer"})).1["state"]["voice"]["enabled"],false);
+    assert_eq!(request(&ctl,"/api/modules/windows-mic/attach",Some(json!({"device":USB})),false,None).0,403);
+    assert_eq!(cmd("attach",json!({"device":USB})).0,200);
+    let on=micro_after_setup(&ctl);
+    assert_eq!(on["live"]["native"]["attached"],true);
+    assert_eq!(on["state"]["voice"]["dynamics"]["gate"],true);
+    assert_eq!(on["live"]["apo"],false);
+    assert_eq!(cmd("settings",json!({"device":USB,"dynamics":{"ratio":9}})).1["state"]["voice"]["dynamics"]["ratio"],9);
+    assert_eq!(cmd("settings",json!({"device":USB,"dynamics":{"ratio":"x"}})).0,400);
+    assert_eq!(cmd("native-noise",json!({"device":USB,"enabled":"yes"})).0,400);
+    assert_eq!(cmd("native-noise",json!({"device":USB,"enabled":true})).0,200);
+    assert_eq!(micro_after_setup(&ctl)["live"]["ns"]["enabled"],true);
+    assert_eq!(cmd("native-noise",json!({"device":USB,"strength":76})).1["live"]["ns"]["strength"],76);
+    let path="/api/modules/windows-mic/meters?device=00000000-0000-0000-0000-0000000005b0";
+    assert_eq!(request(&ctl,path,None,false,None).0,403);
+    assert_eq!(request(&ctl,path,None,true,None),(200,json!({"levels":null})));
+    assert_eq!(request(&ctl,"/api/modules/windows-mic/meters?device=invalid",None,true,None).0,400);
+    assert_eq!(cmd("detach",json!({"device":USB})).0,200);
+    let off=micro_after_setup(&ctl);
+    assert_eq!(off["live"]["native"]["attached"],false);
+    assert_eq!(off["state"]["voice"]["dynamics"]["ratio"],9);
+    assert_eq!(off["live"]["ns"]["enabled"],false);
+    let reloaded=Ctl::new(ctl.cfg.clone(),Box::new(||panic!("accès matériel")), None,true);
+    let state=request(&reloaded,"/api/modules/windows-mic/state",None,false,None).1;
+    assert_eq!(state["state"]["voice"]["dynamics"]["ratio"],9);
+    assert_eq!(state["live"]["installed"],false);
+    std::fs::remove_dir_all(&ctl.cfg.data_dir).unwrap();
+}
+
+#[test]
+fn micro_migration_et_perte_du_branchement_apres_redemarrage() {
+    const USB: &str="{00000000-0000-0000-0000-0000000005b0}";
+    let ctl=controller_with_store(true,true);
+    let command=|name:&str,body:Value|request(&ctl,&format!("/api/modules/windows-mic/{name}"),Some(body),true,None);
+    assert_eq!(command("setup",json!({"device":USB})).0,200);
+    micro_after_setup(&ctl);
+    assert_eq!(command("noise",json!({"enabled":true,"device":USB})).0,200);
+    micro_after_setup(&ctl);
+    assert_eq!(command("noise",json!({"strength":82,"device":USB})).0,200);
+    assert_eq!(command("attach",json!({"device":USB})).0,200);
+    let migrated=micro_after_setup(&ctl);
+    assert_eq!(migrated["live"]["native"]["attached"],true);
+    assert_eq!(migrated["live"]["ns"]["strength"],82);
+    assert_eq!(migrated["live"]["ns"]["enabled"],true);
+    assert_eq!(ctl.snapshot()["state"]["mic_ns"]["enabled"],false);
+    let legacy=std::fs::read_to_string(ctl.cfg.data_dir.join("eqapo-sim/config/rustudio-micro-voix.txt")).unwrap();
+    assert!(!legacy.contains("Device:"));
+    // Le nouveau simulateur a conservé micro.json, mais ses entrées Windows sont vierges.
+    let rebooted=Ctl::new(ctl.cfg.clone(),Box::new(||panic!("accès matériel")),None,true);
+    let lost=request(&rebooted,"/api/modules/windows-mic/state",None,false,None).1;
+    assert_eq!(lost["live"]["native"]["lost"],true);
+    assert_eq!(lost["live"]["native"]["attached"],false);
+    assert_eq!(request(&rebooted,"/api/modules/windows-mic/attach",Some(json!({"device":USB})),true,None).0,200);
+    assert_eq!(micro_after_setup(&rebooted)["live"]["native"]["lost"],false);
+    std::fs::remove_dir_all(&ctl.cfg.data_dir).unwrap();
 }

@@ -147,13 +147,13 @@ fn human(e: &str) -> String {
 
 fn cable_present(simulated: bool) -> Option<bool> {
     if simulated { return None; }
-    #[cfg(windows)] { return rustudio_attack_shark::cable_present(); }
+    #[cfg(windows)] { rustudio_attack_shark::cable_present() }
     #[cfg(not(windows))] { None }
 }
 
 fn open(simulated: bool) -> Result<Box<dyn Transport>, String> {
     if simulated { return Ok(Box::new(rustudio_attack_shark::sim::Sim::default())); }
-    #[cfg(windows)] { return rustudio_attack_shark::Hid::open().map(|h| Box::new(h) as Box<dyn Transport>); }
+    #[cfg(windows)] { rustudio_attack_shark::Hid::open().map(|h| Box::new(h) as Box<dyn Transport>) }
     #[cfg(not(windows))] { Err("Le module R5 Ultra réel nécessite Windows".into()) }
 }
 
