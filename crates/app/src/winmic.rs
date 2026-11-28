@@ -9,6 +9,7 @@ use gpui::{AnyElement, Context, Div, FontWeight, SharedString, div, prelude::*, 
 use rustudio_windows_desktop::{audio, soundcheck, spectrum};
 use rustudio_windows_mic as wm;
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -47,9 +48,9 @@ pub struct WinMicPage {
     level: Option<audio::Level>,
     advanced: bool,
     level_busy: bool,
-    level_pending: Option<f32>,
+    level_pending: VecDeque<(String, f32)>,
     busy: bool,
-    pending: std::collections::VecDeque<(&'static str, Value)>,
+    pending: VecDeque<(&'static str, Value)>,
     revision: u64,
     refreshing: bool,
     reading_meters: bool,
@@ -115,6 +116,30 @@ impl WinMicPage {
     }
     fn setup_running(&self) -> bool {
         self.live()["setup"]["running"] == true
+    }
+
+    fn queue_level(&mut self, guid: String, scalar: f32) {
+        if let Some((_, value)) = self.level_pending.iter_mut().find(|(id, _)| id.eq_ignore_ascii_case(&guid)) {
+            *value = scalar;
+        } else {
+            self.level_pending.push_back((guid, scalar));
+        }
+    }
+
+    fn preview_settings(&mut self, body: &Value) {
+        let Some(guid) = self.selected() else { return };
+        if body.get("selected").is_some() || !body["device"].as_str().is_some_and(|id| id.eq_ignore_ascii_case(&guid)) {
+            return;
+        }
+        let base = wm::Settings {
+            selected: Some(guid.clone()),
+            mics: [(guid.to_ascii_lowercase(), self.voice())].into(),
+        };
+        if let Ok(next) = wm::update(body, &base)
+            && let Some(view) = self.view.as_mut()
+        {
+            view["state"]["voice"] = json!(next.voice(&guid));
+        }
     }
 }
 
@@ -279,22 +304,8 @@ impl Mixer {
         self.winmic.revision = self.winmic.revision.wrapping_add(1);
         self.winmic.notice = None;
         // l'écran suit tout de suite le réglage, sans attendre le moteur
-        if action == "settings"
-            && let Some(view) = self.winmic.view.as_mut()
-        {
-            let mut voice = view["state"]["voice"].clone();
-            let mut patch = body.clone();
-            if let Some(eq) = patch.get("eq").cloned().filter(Value::is_object) {
-                let mut arr = voice["eq"].clone();
-                for (i, b) in wm::BANDS.iter().enumerate() {
-                    if let Some(g) = eq.get(b.key) {
-                        arr[i] = g.clone();
-                    }
-                }
-                patch["eq"] = arr;
-            }
-            merge(&mut voice, &patch);
-            view["state"]["voice"] = voice;
+        if action == "settings" {
+            self.winmic.preview_settings(&body);
         }
         let client = self.client.clone();
         let work = cx.background_executor().spawn(async move {
@@ -330,17 +341,20 @@ impl Mixer {
 
     /// Volume Windows : appliqué dans la session de l'utilisateur, un réglage à la fois, le dernier gagne.
     fn winmic_set_level(&mut self, scalar: f32, cx: &mut Context<Self>) {
+        let Some(guid) = self.winmic.selected() else { return };
         if let Some(l) = self.winmic.level.as_mut() {
             l.scalar = scalar;
             l.db = None;
         }
-        if !self.client.is_live() {
-            cx.notify();
-            return;
+        if self.client.is_live() {
+            self.winmic_write_level(guid, scalar, cx);
         }
-        let Some(guid) = self.winmic.selected() else { return };
+        cx.notify();
+    }
+
+    fn winmic_write_level(&mut self, guid: String, scalar: f32, cx: &mut Context<Self>) {
         if self.winmic.level_busy {
-            self.winmic.level_pending = Some(scalar);
+            self.winmic.queue_level(guid, scalar);
             return;
         }
         self.winmic.level_busy = true;
@@ -353,13 +367,14 @@ impl Mixer {
             let (r, level) = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.winmic.level_busy = false;
-                if let Some(next) = this.winmic.level_pending.take() {
-                    this.winmic_set_level(next, cx);
-                    return;
-                }
                 match r {
-                    Ok(()) => this.winmic.level = level,
-                    Err(e) => this.winmic.notice = Some((false, format!("Windows refuse le volume : {e}"))),
+                    Ok(()) if this.winmic.selected().as_ref() == Some(&guid)
+                        && !this.winmic.level_pending.iter().any(|(g, _)| g == &guid) => this.winmic.level = level,
+                    Ok(()) => {}
+                    Err(e) => this.winmic.notice = Some((false, format!("Windows refuse le volume du micro {guid} ({e})."))),
+                }
+                if let Some((target, value)) = this.winmic.level_pending.pop_front() {
+                    this.winmic_write_level(target, value, cx);
                 }
                 cx.notify();
             });
@@ -388,12 +403,13 @@ impl Mixer {
             let (r, level) = work.await;
             let _ = this.update(cx, |this, cx| {
                 match r {
-                    Ok(()) => {
+                    Ok(()) if this.winmic.selected().as_ref() == Some(&guid) => {
                         this.winmic.level = level.or(this.winmic.level);
                         if what == "default" {
                             this.winmic.notice = Some((true, "Windows utilise maintenant ce micro, pour les applis comme pour les appels.".into()));
                         }
                     }
+                    Ok(()) => {}
                     Err(e) => this.winmic.notice = Some((false, format!("Windows refuse : {e}"))),
                 }
                 this.winmic_refresh(cx);
@@ -799,4 +815,40 @@ fn curve(v: &wm::Voice) -> Div {
     }
     let axis = div().flex().justify_between().text_size(px(11.)).text_color(rgb(ui::TEXT3)).child("Graves").child("Médiums").child("Aigus");
     div().flex().flex_col().gap(px(6.)).child(div().relative().child(bars).child(div().absolute().left_0().right_0().top(px(HALF)).h(px(1.)).bg(alpha(ui::INK, 0.12)))).child(axis)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: &str = "{aaaaaaaa-0000-0000-0000-000000000001}";
+    const B: &str = "{bbbbbbbb-0000-0000-0000-000000000002}";
+
+    #[test]
+    fn le_dernier_volume_est_conserve_pour_chaque_entree() {
+        let mut page = WinMicPage::default();
+        page.queue_level(A.into(), 0.3);
+        page.queue_level(B.into(), 0.7);
+        page.queue_level(A.to_uppercase(), 0.5);
+        assert_eq!(page.level_pending.pop_front(), Some((A.into(), 0.5)));
+        assert_eq!(page.level_pending.pop_front(), Some((B.into(), 0.7)));
+        assert!(page.level_pending.is_empty());
+    }
+
+    #[test]
+    fn une_commande_retardee_ne_modifie_pas_le_micro_affiche() {
+        let mut page = WinMicPage {
+            view: Some(json!({"state":{"selected":B, "voice":wm::Voice::default()}})),
+            ..WinMicPage::default()
+        };
+        let original = page.voice();
+        page.preview_settings(&json!({"device": A, "gain_db": 6}));
+        assert_eq!(page.voice(), original);
+        page.preview_settings(&json!({"device": B, "preset": "streamer"}));
+        let mut expected = original;
+        expected.apply_preset("streamer").unwrap();
+        assert_eq!(page.voice(), expected);
+        page.preview_settings(&json!({"selected": A}));
+        assert_eq!(page.voice(), expected);
+    }
 }
