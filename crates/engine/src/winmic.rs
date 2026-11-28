@@ -149,9 +149,8 @@ impl Ctl {
         selected.ok_or_else(|| ApiError::bad("Ce micro est absent de Windows."))
     }
 
-    /// Écrit rustudio-micro-voix.txt d'après les réglages : seuls les micros actifs et branchés sont traités.
+    /// Publie les réglages natifs, puis actualise la liste des entrées et la configuration Equalizer APO.
     pub fn winmic_apply(&self) {
-        let caps = self.winmic_captures(Duration::from_secs(2));
         let settings = self.winmic.settings.lock().unwrap_or_else(|e| e.into_inner());
         let s = settings.clone();
         for (g, v) in &s.mics {
@@ -162,6 +161,7 @@ impl Ctl {
             }
         }
         drop(settings);
+        let caps = self.winmic_captures(Duration::from_secs(2));
         if !self.eqapo.installed() {
             return;
         }

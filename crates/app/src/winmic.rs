@@ -309,9 +309,10 @@ impl Mixer {
         }
         let client = self.client.clone();
         let work = cx.background_executor().spawn(async move {
-            let result = client.post_module(MODULE, action, body);
-            let view = client.get(&format!("{MODULE}/state")).ok();
-            (result, view)
+            match client.post_module(MODULE, action, body) {
+                Ok(view) if view["state"].is_object() && view["live"].is_object() => (Ok(()), Some(view)),
+                result => (result.map(|_| ()), client.get(&format!("{MODULE}/state")).ok()),
+            }
         });
         cx.spawn(async move |this, cx| {
             let (result, view) = work.await;
