@@ -6,6 +6,7 @@ Rustudio 6.11.0 te permet de régler la dynamique de ton micro Windows dans la p
 
 **Nouveau**
 
+- **Un seul espace Micro**. Choisis ton entrée dans « Mon micro ». La GoXLR Mini affiche ses réglages matériels et son assistant. Les micros USB, casques et webcams affichent leurs effets Windows dans la même page.
 - **Dynamique de la voix**. Le noise gate atténue les pauses, le compresseur réduit les écarts de volume et le limiteur retient les crêtes. Les indicateurs montrent la réduction appliquée pendant que ton micro sert.
 - **Préréglage Streamer**. Applique un point de départ pour les appels. Tu peux ajuster chaque effet et conserver tes réglages pour ce micro.
 - **Effet micro Rustudio**. Tu peux brancher le traitement sur une entrée Windows compatible ou le retirer depuis la même page. La réduction du bruit par IA se règle séparément.

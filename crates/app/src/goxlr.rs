@@ -754,14 +754,14 @@ impl Mixer {
             .map(|(id, m)| (id.clone(), format!("{} {}", m["brand"].as_str().unwrap_or(""), m["name"].as_str().or(m["label"].as_str()).unwrap_or(id)).trim().to_owned()))
             .collect();
         let model = mic["model"].as_str().unwrap_or("");
-        let model_text = models.iter().find(|(id, _)| id == model).map(|(_, l)| l.clone()).unwrap_or_else(|| "Choisir mon micro".into());
+        let model_text = models.iter().find(|(id, _)| id == model).map(|(_, l)| l.clone()).unwrap_or_else(|| "Choisir le modèle".into());
         let ids: Vec<String> = models.iter().map(|(id, _)| id.clone()).collect();
         let job = self.go.job.is_object() && self.go.job["phase"].is_string();
         let identity = div()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(ui::eyebrow("Ton micro"))
+            .child(ui::eyebrow("Modèle branché sur la GoXLR"))
             .child(div().w_full().max_w(px(340.)).child(self.dropdown("mic-model", model_text, models.iter().map(|(id, l)| (l.clone(), id == model)).collect(), enabled, move |this, i, cx| this.go_send("mic-model", json!({"model": ids[i]}), cx), cx)))
             .child(kinds)
             .child(
@@ -770,7 +770,7 @@ impl Mixer {
                     .items_center()
                     .gap(px(6.))
                     // un seul chemin pour régler le micro : l'assistant fait la détection, le gain et l'empreinte
-                    .child(ui::pill("mic-voice-setup", Some(Icon::Wave), "Régler mon micro", ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.open_mic_wizard(cx)))),
+                    .child(ui::pill("mic-voice-setup", Some(Icon::Wave), if s["mic_cal"].is_object() { "Refaire le réglage" } else { "Régler mon micro" }, ui::Tone::Primary).on_click(cx.listener(|this, _, _, cx| this.open_mic_wizard(cx)))),
             )
             .when(job, |d| {
                 d.child(
@@ -821,11 +821,10 @@ impl Mixer {
             let tile = ui::tile(SharedString::from(format!("mic-preset-{id}")), Some((preset_icon(id), preset_colour(id))), p["label"].as_str().unwrap_or(id).to_owned(), p["desc"].as_str().map(|d| d.to_owned().into()), s["mic_preset"] == id.as_str(), (id == advised).then(|| ("Conseillé".into(), ui::GREEN)));
             presets.push(self.act(tile, "mic-preset", json!({"name":id}), cx).into_any_element());
         }
-        let aside = if s["voice_print"].is_object() { "Ajustés à ta voix" } else { "Lance « Régler mon micro » pour les ajuster à ta voix" };
-        let voices = ui::section(Icon::Wave, 0x5856d6, "Préréglage", Some(aside.into())).child(ui::grid(presets, 2));
-        let chart = self.voice_chart(s["mic_preset"].as_str().filter(|p| *p != "brut" && *p != "custom").unwrap_or("studio"));
-        // ce que l'assistant a mesuré, et le moyen de le refaire ou de l'effacer
+        let measured = s["voice_print"].is_object();
+        let voices = ui::section(Icon::Wave, 0x5856d6, "Préréglage", measured.then(|| "Ajustés à ta voix".into())).child(ui::grid(presets, 2));
         let cal = &s["mic_cal"];
+        if !cal.is_object() && !measured { return voices; }
         let mut tuned = ui::section(Icon::Mic, ui::RED, "Ton réglage", None);
         if cal.is_object() {
             let when = cal["t"].as_f64().map(ago).unwrap_or_default();
@@ -841,15 +840,16 @@ impl Mixer {
                         .child(ui::fact(if s["voice_print"].is_object() { "Analysée" } else { "Non analysée" }, "Ta voix")),
                 )
                 .child(ui::caption(format!("Réglé {when}. Relance-le si tu changes de micro, de place ou de pièce.")));
-        } else {
-            tuned = tuned.child(hint("Pas encore réglé : l’assistant trouve ton micro, cale le gain sans saturer et calcule chaque son sur ta voix, en deux minutes."));
         }
-        let mut buttons = div().flex().items_center().gap(px(4.)).child(ui::pill("mic-wizard-again", Some(Icon::Wave), if cal.is_object() { "Refaire le réglage" } else { "Régler mon micro" }, if cal.is_object() { ui::Tone::Plain } else { ui::Tone::Primary }).on_click(cx.listener(|this, _, _, cx| this.open_mic_wizard(cx))));
-        if s["voice_print"].is_object() {
-            buttons = buttons.child(self.ask_go(ui::pill("voice-forget", Some(Icon::Trash), "Oublier ma voix", ui::Tone::Plain), "voice-forget", json!({}), Ask::new("Oublier l’analyse de ta voix ?", "Oublier").text("Rustudio efface ce qu’il a mesuré de ta voix avec ce micro. Les sons repartent de réglages généraux, jusqu’à ton prochain passage dans l’assistant.").danger(), cx));
+        if measured {
+            tuned = tuned.child(div().flex().child(self.ask_go(ui::pill("voice-forget", Some(Icon::Trash), "Oublier ma voix", ui::Tone::Plain), "voice-forget", json!({}), Ask::new("Oublier l’analyse de ta voix ?", "Oublier").text("Rustudio efface ce qu’il a mesuré de ta voix avec ce micro. Les sons repartent de réglages généraux, jusqu’à ton prochain passage dans l’assistant.").danger(), cx)));
         }
-        let tuned = tuned.child(buttons);
-        ui::settings_columns(width, vec![voices.into_any_element()], vec![tuned.into_any_element(), chart.into_any_element()])
+        let mut details = vec![tuned.into_any_element()];
+        if measured {
+            let preset = s["mic_preset"].as_str().filter(|p| *p != "brut" && *p != "custom").unwrap_or("studio");
+            details.push(self.voice_chart(preset).into_any_element());
+        }
+        ui::settings_columns(width, vec![voices.into_any_element()], details)
     }
 
     /// Suppression du bruit par IA (RNNoise, comme OBS), sur le PC : installation, marche, intensité, micro visé.

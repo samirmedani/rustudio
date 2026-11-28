@@ -93,7 +93,6 @@ pub const GOXLR_MINI: ModuleDescriptor = ModuleDescriptor {
     capabilities: &["mixer", "microphone", "headphone-eq", "routing", "lighting", "scenes"],
     pages: &[
         ModulePage { id: "mixer", label: "Mixeur", icon: "mixer" },
-        ModulePage { id: "mic", label: "Micro", icon: "Mic" },
         ModulePage { id: "hp", label: "Casque", icon: "Headphones" },
         ModulePage { id: "routing", label: "Routage", icon: "routing" },
         ModulePage { id: "light", label: "Éclairage", icon: "light" },

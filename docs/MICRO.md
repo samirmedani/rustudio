@@ -2,6 +2,8 @@
 
 Dans **Mes appareils > Mon micro**, choisis ton micro USB, ton micro-casque, ta webcam ou ton interface audio. Tu peux régler le volume Windows, couper le micro ou le choisir comme entrée par défaut pour les applis et les appels. Une nouvelle entrée démarre avec sa voix naturelle.
 
+La même page accueille le micro de la **GoXLR Mini**. Sélectionne son entrée pour retrouver le gain du préampli, l’alimentation 48 V, l’assistant, les préréglages matériels et le retour casque. **Options Windows** donne accès au volume de l’entrée et au choix du micro par défaut. Un ancien effet Rustudio déjà branché sur cette entrée peut être retiré ici. Les autres micros et les interfaces disponibles uniquement en USB Audio utilisent les réglages Windows ci-dessous.
+
 ## Régler la voix
 
 1. Sélectionne le micro, puis **Activer le traitement de ma voix**. Le branchement redémarre brièvement le service audio de Windows. Rustudio vérifie que Windows appelle l’effet en ouvrant uniquement cette entrée.

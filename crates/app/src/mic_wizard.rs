@@ -407,7 +407,9 @@ pub(crate) fn dsp_meter_pill(label: &'static str, reduction_db: f64, enabled: bo
 
 impl Mixer {
     pub fn open_mic_wizard(&mut self, cx: &mut Context<Self>) {
-        self.go_to(crate::desktop::Page::Go(crate::goxlr::Section::Microphone), cx);
+        if !self.winmic.hardware_active {
+            self.go_to(crate::desktop::Page::Go(crate::goxlr::Section::Microphone), cx);
+        }
         let mut w = MicWizard::new();
         if let Some(v) = self.go.view.as_ref() {
             w.snapshot = Some(MicSnapshot::capture(&v.state));

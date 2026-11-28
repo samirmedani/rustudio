@@ -83,6 +83,9 @@ pub(crate) enum Space {
 }
 
 impl Page {
+    pub(crate) fn destination(self) -> Self {
+        if self == Page::Go(Section::Microphone) { Page::WinMic } else { self }
+    }
     /// Nom court d'une page (option --page, captures de la documentation).
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
@@ -208,7 +211,6 @@ fn space_pages(space: Space) -> &'static [(Page, Icon, &'static str)] {
     match space {
         Space::GoXlr => &[
             (Page::Mixer, Icon::Sliders, "Mixeur"),
-            (Page::Go(Section::Microphone), Icon::Mic, "Micro"),
             (Page::Go(Section::Headphones), Icon::Headphones, "Casque"),
             (Page::Go(Section::Routing), Icon::Route, "Routage"),
             (Page::Go(Section::Light), Icon::Sun, "Éclairage"),
@@ -1000,7 +1002,7 @@ impl Mixer {
             Page::Webcam | Page::WebcamImage | Page::WebcamOptics | Page::WebcamInfo => acts = acts.child(self.webcam_actions(cx)),
             _ => {}
         }
-        if self.page.space() == Some(Space::GoXlr)
+        if (self.page.space() == Some(Space::GoXlr) || self.winmic.hardware_active)
             && let Some((muted, partial)) = self.mic_state() {
                 let (text, glyph, tone) = if !muted {
                     ("Micro actif", Icon::Mic, Tone::Soft)
@@ -1096,7 +1098,7 @@ impl Mixer {
 
     /// Explique les limitations des firmwares alternatifs sur les pages GoXLR.
     fn firmware_notice(&self) -> Option<Div> {
-        if self.page.space() != Some(Space::GoXlr) {
+        if self.page.space() != Some(Space::GoXlr) && !self.winmic.hardware_active {
             return None;
         }
         let device = self.device("goxlr-mini")?;
@@ -1733,6 +1735,16 @@ fn grade_text(grade: Option<Grade>) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn une_destination_micro_dans_la_navigation_et_les_anciens_liens() {
+        use super::{Page, Space, space_pages};
+        let windows = Page::from_name("windows-mic").unwrap();
+        let ancienne = Page::from_name("mic").unwrap();
+        assert_eq!(windows.destination(), Page::WinMic);
+        assert_eq!(ancienne.destination(), Page::WinMic);
+        assert_eq!(space_pages(Space::WinMic).len(), 1);
+        assert!(!space_pages(Space::GoXlr).iter().any(|(p, _, _)| p.destination() == Page::WinMic));
+    }
     use super::*;
 
     fn goxlr(device: serde_json::Value) -> Device {

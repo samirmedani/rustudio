@@ -30,7 +30,7 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     }
     let goxlr = modules::find("goxlr-mini").unwrap();
     assert_eq!(goxlr.kind, "audio-interface");
-    assert_eq!(goxlr.pages.iter().map(|p| p.id).collect::<Vec<_>>(), ["mixer", "mic", "hp", "routing", "light", "scenes"]);
+    assert_eq!(goxlr.pages.iter().map(|p| p.id).collect::<Vec<_>>(), ["mixer", "hp", "routing", "light", "scenes"]);
     assert_eq!(goxlr.capabilities, ["mixer", "microphone", "headphone-eq", "routing", "lighting", "scenes"]);
     for action in ["volume", "mute", "mic", "route", "hp-eq", "scene", "profile", "raw", "job-cancel", "echo-check", "sound-test"] {
         assert!(goxlr.actions.contains(&action));
@@ -46,6 +46,9 @@ fn registre_local_coherent_et_sans_modules_a_contribuer() {
     assert_eq!(webcam.actions, ["settings", "preset", "reset", "lock", "refresh"]);
     let mic = modules::find("windows-mic").unwrap();
     assert_eq!(mic.kind, "microphone");
+    let destinations: Vec<_> = modules::installed().iter().flat_map(|m| m.pages)
+        .filter(|p| matches!(p.id, "mic" | "windows-mic")).map(|p| p.id).collect();
+    assert_eq!(destinations, ["windows-mic"]);
     assert_eq!(mic.actions, ["settings", "setup", "remove", "noise", "attach", "detach", "native-noise"]);
     for requested in ["goxlr-full", "ddc-monitor", "inconnu"] {
         assert!(modules::find(requested).is_none(), "une fiche du catalogue n'est pas un module livré");

@@ -6,7 +6,7 @@ réglages sont calculés, et ce que Rustudio sait de l’égaliseur de la GoXLR 
 
 ## Régler ton micro et créer ton empreinte
 
-Page **Micro** › **Régler mon micro**. L’assistant te guide de A à Z (choix du modèle de micro, mesure seconde par seconde, réglage à l’oreille et choix du son) :
+Dans **Mon micro**, choisis l’entrée de la **GoXLR Mini** puis **Régler mon micro**. L’assistant te guide dans le choix du modèle, la mesure, le réglage à l’oreille et le choix du son.
 
 | Étape | Durée | Ce que tu fais | Ce que Rustudio mesure |
 | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ dans `C:\ProgramData\Rustudio\state.json` (des niveaux par bande de fréquences 
 l’efface.
 
 <p align="center">
-  <img src="captures/mic.jpg" width="720" alt="La page Micro : type et modèle du micro, gain, empreinte vocale, préréglages et réécoute">
+  <img src="captures/mic.jpg" width="720" alt="Mon micro avec la GoXLR Mini sélectionnée, le modèle branché, le gain et les préréglages">
 </p>
 
 ### Ce que l’analyse mesure
@@ -81,8 +81,7 @@ plus rien ne s’améliore. Une bande qui n’apporte presque rien reste à plat
 
 Chaque réglage est expliqué à l’écran. « M’écouter en direct » fonctionne par bail de 20 secondes renouvelé tant que
 l’appli est ouverte (si elle se ferme, le retour se coupe seul), et tu peux réécouter ta prise avant/après avec chaque
-préréglage. La page **Micro** propose aussi la **suppression du bruit par IA (RNNoise)** via Equalizer APO, réglable
-en intensité et en maintien des fins de mots, sur n’importe quel micro Windows.
+préréglage. La page **Mon micro** propose aussi la **suppression du bruit par IA (RNNoise)**. Le panneau de la GoXLR utilise son intégration Equalizer APO. Sur les autres entrées compatibles, l’effet natif Rustudio traite le signal. L’intensité et le maintien des fins de mots sont réglables.
 
 ## L’égaliseur réel de la GoXLR Mini
 

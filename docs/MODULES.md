@@ -91,7 +91,7 @@ adaptateur et ses pages fonctionnent.
 | `actions` | Noms des commandes prises en charge par l'adaptateur de ce module. Les commandes globales de Rustudio restent en dehors de cette liste. |
 
 Le registre GoXLR Mini déclare par exemple les capacités `mixer`, `microphone`, `headphone-eq`, `routing`,
-`lighting` et `scenes`, puis les pages `mixer`, `mic`, `hp`, `routing`, `light` et `scenes`.
+`lighting` et `scenes`, puis les pages `mixer`, `hp`, `routing`, `light` et `scenes`. La page commune `windows-mic` affiche les réglages matériels de la GoXLR lorsque son entrée est sélectionnée. L’ancien lien `--page mic` y ouvre directement la GoXLR.
 
 L'adaptateur [crates/engine/src/modules.rs](../crates/engine/src/modules.rs) expose l'état matériel sans nouvelle
 détection USB. Pour un autre appareil, ajoute son propre état d'exécution et son raccordement à ces vues :

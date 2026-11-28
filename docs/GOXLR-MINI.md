@@ -13,7 +13,7 @@ Le module Rustudio prend en charge la **TC-Helicon GoXLR Mini** via le pilote of
 | Écran | Réglages |
 | --- | --- |
 | **Mixeur** | Quatre faders, niveau et coupure par voie. La Mini n’est pas motorisée : le réglage à l’écran ne déplace pas le fader, et son prochain mouvement reprend la main. |
-| **Micro** | Type de micro, gain, empreinte vocale et préréglages. Les traitements et le retour micro s’activent seulement à ton choix. |
+| **Mon micro** | Choisis la GoXLR dans la page Micro commune pour retrouver le type de micro, le gain, l’empreinte vocale et les préréglages. Les traitements et le retour micro s’activent seulement à ton choix. |
 | **Routage** | Destination de chaque voie : casque, stream, chat, enceintes ou VOD. |
 | **Éclairage et scènes** | Couleurs, animations et configurations rappelables manuellement ou à l’ouverture d’une application. |
 | **Casque** | Égaliseur à dix bandes, corrections AutoEq et styles d’écoute. |

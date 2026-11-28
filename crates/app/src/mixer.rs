@@ -200,7 +200,7 @@ impl Mixer {
             voice: crate::voice::VoiceExtras::default(),
             library: crate::library::Library::default(),
             go_focus: (0..3).map(|_| cx.focus_handle()).collect(),
-            page: initial,
+            page: initial.destination(),
             store,
             profiles,
             profile_name: String::new(),
@@ -249,6 +249,10 @@ impl Mixer {
 
     /// Change de page et règle les lectures en direct de la page visible.
     pub fn go_to(&mut self, page: Page, cx: &mut Context<Self>) {
+        if page == Page::Go(crate::goxlr::Section::Microphone) {
+            self.winmic.prefer_goxlr = true;
+        }
+        let page = page.destination();
         if page != self.page {
             self.history.push(self.page);
             if self.history.len() > 40 {
@@ -334,26 +338,19 @@ impl Mixer {
             Page::WebcamInfo => self.webcam.tab = crate::webcam::WebcamTab::Device,
             _ => {}
         }
-        if page != Page::Go(crate::goxlr::Section::Microphone) && self.wizard.as_ref().is_some_and(|w| w.is_listening()) {
-            self.cut_monitor(cx);
-        }
         self.webcam_visibility(page.is_webcam());
         self.audio_visibility(page == Page::WindowsAudio, cx);
         self.winmic_visibility(page == Page::WinMic, cx);
+        self.winmic_sync_source(cx);
         if page != Page::KeyboardMacros { self.macros.stop(); }
         if page == Page::KeyboardMacros { self.macro_command("macros", json!({}), cx); }
         self.client.set_mixer_visible(page == Page::Mixer);
         self.client.set_mouse_visible(page.is_mouse());
         self.client.set_keyboard_visible(page.is_keyboard());
         self.client.set_webcam_visible(page.is_webcam());
-        self.client.set_go_visible(matches!(page, Page::Go(_)));
-        self.client.set_level_visible(page == Page::Go(crate::goxlr::Section::Microphone));
         self.client.set_latency_visible(page == Page::Go(crate::goxlr::Section::Diagnostic));
         self.client.set_audio_visible(matches!(page, Page::WindowsAudio | Page::Mixer));
         self.win.cancel();
-        if page == Page::Go(crate::goxlr::Section::Microphone) {
-            self.load_voice_info(cx);
-        }
         // le diagnostic se lit dès l'ouverture de la page, sans attendre « Actualiser »
         if page == Page::Go(crate::goxlr::Section::Diagnostic) {
             self.refresh_diag(cx);
@@ -405,7 +402,10 @@ impl Mixer {
                 self.pending.clear();
                 self.picker = None;
             }
-            Event::Inventory(inventory) => self.inventory = inventory,
+            Event::Inventory(inventory) => {
+                self.inventory = inventory;
+                if self.page == Page::WinMic { self.winmic_sync_source(cx); }
+            }
             Event::Update(update) => {
                 self.note_installed(&update, cx);
                 force_render = force_render || self.sheet.is_some();
@@ -421,11 +421,11 @@ impl Mixer {
             }
             Event::MicLevel(level) => {
                 // vumètre déjà en mouvement : sa prochaine image prend la nouvelle mesure, sans redessin en plus
-                force_render = self.page == Page::Go(crate::goxlr::Section::Microphone) && !self.go.level_moving();
+                force_render = self.winmic.hardware_active && !self.go.level_moving();
                 self.go.level = level;
             }
             Event::VoiceMeters(meters) => {
-                force_render = self.page == Page::Go(crate::goxlr::Section::Microphone);
+                force_render = self.winmic.hardware_active;
                 self.go.voice_meters = meters;
             }
             Event::Latency(value) => {
@@ -439,7 +439,7 @@ impl Mixer {
                 {
                     w.snapshot = Some(crate::mic_wizard::MicSnapshot::capture(&v.state));
                 }
-                force_render = matches!(self.page, Page::Go(_));
+                force_render = matches!(self.page, Page::Go(_)) || self.winmic.hardware_active;
             }
             Event::Mouse(view) => {
                 self.mouse.receive(view);
@@ -997,7 +997,7 @@ impl Render for Mixer {
         let dialog = self.profile_confirm_box(cx).or_else(|| self.go_confirm_box(cx)).or_else(|| self.confirm_box(cx)).or_else(|| self.win_confirm_box(cx)).or_else(|| self.winmic_confirm_box(cx));
         self.sheet_tick(cx);
         self.step_scroll(window);
-        if self.page == Page::Go(crate::goxlr::Section::Microphone) && self.go.step_level() {
+        if self.winmic.hardware_active && self.go.step_level() {
             ui::animation_frame_every(window, crate::goxlr::LEVEL_FRAME);
         }
         if self.page == Page::Keyboard && self.keyboard.shows_previews() {

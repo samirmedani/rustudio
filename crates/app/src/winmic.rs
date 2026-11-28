@@ -47,6 +47,9 @@ pub struct WinMicPage {
     /// Volume Windows du micro affiché ; en simulation, une valeur locale.
     level: Option<audio::Level>,
     advanced: bool,
+    windows_options: bool,
+    pub(crate) prefer_goxlr: bool,
+    pub(crate) hardware_active: bool,
     level_busy: bool,
     level_pending: VecDeque<(String, f32)>,
     busy: bool,
@@ -56,6 +59,7 @@ pub struct WinMicPage {
     reading_meters: bool,
     notice: Option<(bool, String)>,
     monitor: Option<spectrum::Monitor>,
+    monitored_source: Option<spectrum::Source>,
     frame: spectrum::Frame,
     shown_db: Option<f64>,
     active: bool,
@@ -111,6 +115,18 @@ impl WinMicPage {
     fn capture(&self, guid: &str) -> Option<&Value> {
         self.live()["captures"].as_array()?.iter().find(|c| c["guid"].as_str().is_some_and(|g| g.eq_ignore_ascii_case(guid)))
     }
+    fn goxlr_guid(&self) -> Option<String> {
+        if let Some(g) = self.selected().filter(|g| self.capture(g).is_some_and(|c| c["goxlr"] == true)) {
+            return Some(g);
+        }
+        self.live()["captures"].as_array()?.iter().find(|c| c["goxlr"] == true)?["guid"].as_str().map(str::to_owned)
+    }
+    fn hardware_choice(&self, status: Option<&str>) -> bool {
+        if status.is_some_and(|s| s != "ready") { return false; }
+        let selected = self.selected();
+        self.prefer_goxlr || selected.as_deref().and_then(|g| self.capture(g)).is_some_and(|c| c["goxlr"] == true)
+            || (status == Some("ready") && self.view.is_some() && selected.is_none())
+    }
     fn confirm(&mut self, action: Ask) {
         self.ask = self.selected().map(|g|(action,g));
     }
@@ -144,21 +160,41 @@ impl WinMicPage {
 }
 
 impl Mixer {
+    /// Un seul flux de mesures pour la source affichée. L’ancien lien « mic » cible la GoXLR.
+    pub(crate) fn winmic_sync_source(&mut self, cx: &mut Context<Self>) {
+        let visible = self.page == Page::WinMic;
+        let status = self.device("goxlr-mini").map(|d| d.status.as_str());
+        let hardware = visible && self.winmic.hardware_choice(status);
+        let previous = std::mem::replace(&mut self.winmic.hardware_active, hardware);
+        self.client.set_go_visible(hardware || matches!(self.page, Page::Go(_)));
+        self.client.set_level_visible(hardware);
+        if hardware && !previous { self.load_voice_info(cx); }
+        if previous && !hardware {
+            if self.wizard.as_ref().is_some_and(|w| w.is_listening()) { self.cut_monitor(cx); }
+            if let Some(s) = &self.voice.recording { s.store(true, Ordering::Relaxed); }
+            self.go.clear_confirm();
+        }
+        self.winmic_sync_monitor();
+        if visible && self.winmic.prefer_goxlr && !self.winmic.busy
+            && let Some(target) = self.winmic.goxlr_guid()
+        {
+            self.winmic.prefer_goxlr = false;
+            if self.winmic.selected().as_ref() != Some(&target) {
+                self.winmic_send("settings", json!({"selected": target}), cx);
+            }
+        }
+    }
     /// Ouvre ou ferme la page : vumètre (capture partagée) et relecture de l'état une fois par seconde.
     pub(crate) fn winmic_visibility(&mut self, visible: bool, cx: &mut Context<Self>) {
         let was = self.winmic.active;
         self.winmic.active = visible;
         if !visible {
-            if let Some(m) = &self.winmic.monitor {
-                m.stop();
-            }
             self.winmic.test_stop.store(true, Ordering::Relaxed);
             return;
         }
         if self.winmic.monitor.is_none() {
             self.winmic.monitor = Some(spectrum::Monitor::new(!self.client.is_live()));
         }
-        self.winmic_sync_monitor();
         if was {
             return;
         }
@@ -207,22 +243,22 @@ impl Mixer {
     /// Le vumètre écoute le seul micro affiché.
     fn winmic_sync_monitor(&mut self) {
         let Some(m) = &self.winmic.monitor else { return };
-        let source = self.winmic.selected().map(|g| spectrum::Source {
+        let source = self.winmic.selected().filter(|_| self.winmic.active && !self.winmic.hardware_active).map(|g| spectrum::Source {
             id: if self.client.is_live() { endpoint_id(&g) } else { "demo-mic".into() },
             output: false,
         });
-        if self.winmic.frame.selected != source {
-            self.winmic.frame = spectrum::Frame::default();
-            self.winmic.shown_db = None;
-        }
+        if self.winmic.monitored_source == source { return; }
+        self.winmic.monitored_source = source.clone();
+        self.winmic.frame = spectrum::Frame::default();
+        self.winmic.shown_db = None;
         match source {
-            Some(s) if self.winmic.active => m.configure(vec![s.clone()], Some(s)),
-            _ => m.stop(),
+            Some(s) => m.configure(vec![s.clone()], Some(s)),
+            None => m.stop(),
         }
     }
 
     fn winmic_read_meters(&mut self, cx: &mut Context<Self>) {
-        if self.winmic.reading_meters || self.winmic.live()["native"]["attached"] != true { return; }
+        if self.winmic.hardware_active || self.winmic.reading_meters || self.winmic.live()["native"]["attached"] != true { return; }
         let Some(guid) = self.winmic.selected() else { return };
         self.winmic.reading_meters = true;
         let client = self.client.clone();
@@ -279,9 +315,8 @@ impl Mixer {
                 } else if this.winmic.level.is_none() {
                     this.winmic.level = Some(audio::Level { scalar: 0.7, db: Some(-4.5), range: Some((-60., 12.)), muted: false });
                 }
-                if before != this.winmic.selected() {
-                    this.winmic_sync_monitor();
-                }
+                if before != this.winmic.selected() { this.winmic.test_stop.store(true, Ordering::Relaxed); }
+                this.winmic_sync_source(cx);
                 cx.notify();
             });
         })
@@ -327,9 +362,10 @@ impl Mixer {
                 }
                 if before != this.winmic.selected() {
                     this.winmic.level = None;
-                    this.winmic_sync_monitor();
+                    this.winmic.test_stop.store(true, Ordering::Relaxed);
                     this.winmic_refresh(cx);
                 }
+                this.winmic_sync_source(cx);
                 if let Some((a, b)) = this.winmic.pending.pop_front() {
                     this.winmic_send(a, b, cx);
                 }
@@ -511,56 +547,91 @@ impl Mixer {
     pub(crate) fn winmic_view(&self, width: f32, cx: &mut Context<Self>) -> Div {
         let w = &self.winmic;
         let mut root = div().w_full().min_w(px(0.)).flex().flex_col().gap(px(18.));
-        let Some(guid) = w.selected() else {
+        let selected = w.selected();
+        if !w.hardware_active && selected.is_none() {
             let text = if w.view.is_none() { "Lecture des micros de Windows…" } else { "Aucun micro branché. Branche ton micro : il apparaît ici tout seul." };
             return root.child(ui::card().child(hint(text)));
-        };
+        }
         if let Some((ok, text)) = &w.notice {
             root = root.child(ui::notice(*ok, text.clone()));
         }
         let setup = &w.live()["setup"];
         if setup["running"] == true {
-            root = root.child(ui::card().child(ui::status(setup["step"].as_str().unwrap_or("En cours…").to_owned(), State::Info)).child(ui::caption("Le son de Windows peut se couper environ 2 secondes.")));
+            root = root.child(ui::card().child(ui::status(setup["step"].as_str().unwrap_or("En cours…").to_owned(), State::Info)).child(ui::caption("Le service audio de Windows redémarre pendant le branchement.")));
         } else if let Some(e) = setup["error"].as_str() {
             root = root.child(ui::notice(false, format!("Échec : {e}")));
         }
         let wide = width >= 900.;
+        if w.hardware_active {
+            let hardware = self.go_controls(Section::Microphone, width, cx);
+            if self.wizard.is_some() { return root.child(hardware); }
+            let endpoint = selected.as_deref().filter(|g| w.capture(g).is_some_and(|c| c["goxlr"] == true));
+            root = root.child(match endpoint {
+                Some(g) => self.winmic_hero(g, wide, cx),
+                None => self.winmic_selector(None, cx),
+            });
+            if endpoint.is_some() && w.live()["native"]["safe_mode"] == true {
+                root = root.child(ui::status("L’effet Windows de cette entrée a déclenché le mode de secours.".to_owned(), State::Warn));
+            }
+            // Un branchement logiciel créé avant la réunion des pages reste retirable.
+            if endpoint.is_some() && (w.live()["native"]["attached"] == true || w.live()["native"]["lost"] == true) {
+                root = root.child(div().flex().flex_wrap().items_center().gap(px(10.))
+                    .child(ui::hint("Un effet Windows a déjà été configuré sur cette entrée GoXLR."))
+                    .child(ui::pill("winmic-remove-goxlr-apo", None, "Retirer l’effet Windows", Tone::Plain)
+                        .on_click(cx.listener(|this, _, _, cx| { this.winmic.confirm(Ask::Remove(true)); cx.notify(); }))));
+            }
+            return root.child(hardware);
+        }
         if w.live()["native"]["safe_mode"]==true {
             root=root.child(ui::status("Mode de secours. Les effets Windows précédents ont été rétablis.".to_owned(),State::Warn));
         } else if w.live()["native"]["lost"]==true {
             root=root.child(ui::status("Windows a débranché l’effet. Tu peux le rétablir dans Ta voix.".to_owned(),State::Warn));
         }
-        root = root.child(self.winmic_hero(&guid, wide, cx));
-        if w.capture(&guid).is_some_and(|c| c["goxlr"] == true) {
-            root = root.child(
-                ui::card().child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(ui::icon(Icon::Sliders, 18., rgb(ui::ACCENT)))
-                        .child(hint("C’est le micro de ta GoXLR : son gain, son égaliseur et sa dynamique se règlent dans la GoXLR elle-même.").flex_1().min_w(px(0.)))
-                        .child(ui::pill("winmic-open-goxlr", Some(Icon::ChevronRight), "Page Micro de la GoXLR", Tone::Plain).on_click(cx.listener(|this, _, _, cx| this.go_to(Page::Go(Section::Microphone), cx)))),
-                ),
-            );
-        }
+        if let Some(g) = selected.as_deref() { root = root.child(self.winmic_hero(g, wide, cx)); }
         let left = vec![self.winmic_voice(cx).into_any_element(), self.winmic_noise(cx).into_any_element()];
         let right = vec![self.winmic_eq(cx).into_any_element(), self.winmic_dynamics(cx).into_any_element(), self.winmic_test_card(cx).into_any_element()];
         root.child(ui::settings_columns(width, left, right))
     }
 
-    /// En-tête : le micro et Windows à gauche, son niveau en direct et son volume Windows à droite.
-    fn winmic_hero(&self, guid: &str, wide: bool, cx: &mut Context<Self>) -> Div {
+    fn winmic_selector(&self, guid: Option<&str>, cx: &mut Context<Self>) -> Div {
         let w = &self.winmic;
-        let caps: Vec<(String, String)> = w.live()["captures"]
+        let mut caps: Vec<(Option<String>, String)> = w.live()["captures"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|c| Some((c["guid"].as_str()?.to_owned(), c["name"].as_str()?.to_owned())))
+            .filter_map(|c| {
+                let name = c["name"].as_str()?;
+                let label = if c["goxlr"] == true && !name.to_lowercase().contains("goxlr") {
+                    format!("GoXLR Mini · {name}")
+                } else { name.to_owned() };
+                Some((Some(c["guid"].as_str()?.to_owned()), label))
+            })
             .collect();
-        let current = caps.iter().find(|(g, _)| g.eq_ignore_ascii_case(guid)).map(|(_, n)| n.clone()).unwrap_or_else(|| "Choisir un micro".into());
-        let ids: Vec<String> = caps.iter().map(|(g, _)| g.clone()).collect();
-        let options = caps.iter().map(|(g, n)| (n.clone(), g.eq_ignore_ascii_case(guid))).collect();
+        if w.goxlr_guid().is_none() && self.device("goxlr-mini").is_some_and(|d| d.status == "ready") {
+            caps.push((None, "Micro de la GoXLR Mini".into()));
+        }
+        let chosen = |id: &Option<String>| match (id.as_deref(), guid) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            (None, None) => true,
+            _ => false,
+        };
+        let current = caps.iter().find(|(g, _)| chosen(g)).map(|(_, n)| n.clone()).unwrap_or_else(|| "Choisir un micro".into());
+        let options = caps.iter().map(|(g, n)| (n.clone(), chosen(g))).collect();
+        div().flex().flex_col().gap(px(8.)).child(ui::eyebrow("Entrée micro"))
+            .child(div().w_full().max_w(px(380.)).child(self.dropdown("winmic-device", current, options, !w.busy, move |this, i, cx| {
+                if let Some(g) = &caps[i].0 {
+                    this.winmic.prefer_goxlr = false;
+                    this.winmic_send("settings", json!({"selected":g}), cx);
+                } else {
+                    this.winmic.prefer_goxlr = true;
+                    this.winmic_sync_source(cx);
+                    cx.notify();
+                }
+            }, cx)))
+    }
+
+    fn winmic_hero(&self, guid: &str, wide: bool, cx: &mut Context<Self>) -> Div {
+        let w = &self.winmic;
         let is_default = same_input(w.defaults.0.as_ref(), guid);
         let is_calls = same_input(w.defaults.1.as_ref(), guid);
         let mut windows = div().flex().flex_wrap().items_center().gap(px(10.));
@@ -574,13 +645,6 @@ impl Mixer {
         } else {
             windows = windows.child(ui::status("Simulation : Windows n’est pas modifié", State::Info));
         }
-        let identity = div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(ui::eyebrow("Ton micro"))
-            .child(div().w_full().max_w(px(380.)).child(self.dropdown("winmic-device", current, options, !w.busy, move |this, i, cx| this.winmic_send("settings", json!({"selected": ids[i]}), cx), cx)))
-            .child(windows);
         let level = w.level;
         let muted = level.is_some_and(|l| l.muted);
         let volume = level.map(|l| f64::from(l.scalar) * 100.).unwrap_or(0.);
@@ -589,7 +653,7 @@ impl Mixer {
             .flex()
             .flex_col()
             .gap(px(16.))
-            .child(crate::goxlr::level_meter(if muted { None } else { w.shown_db }, if muted { None } else { w.frame.ready.then_some(f64::from(w.frame.peak_db.max(-72.))) }))
+            .when(!w.hardware_active, |d| d.child(crate::goxlr::level_meter(if muted { None } else { w.shown_db }, if muted { None } else { w.frame.ready.then_some(f64::from(w.frame.peak_db.max(-72.))) })))
             .child(self.slider_row(
                 "winmic-volume",
                 "Volume du micro dans Windows",
@@ -609,9 +673,18 @@ impl Mixer {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(ui::pill("winmic-mute", Some(if muted { Icon::MicOff } else { Icon::Mic }), if muted { "Micro coupé dans Windows : réactiver" } else { "Couper le micro" }, if muted { Tone::Warn } else { Tone::Plain }).on_click(cx.listener(|this, _, _, cx| this.winmic_windows("mute", cx))))
-                    .child(ui::caption("Parle normalement : la barre doit rester dans le vert.")),
+                    .child(ui::pill("winmic-mute", Some(if muted { Icon::MicOff } else { Icon::Mic }), if muted { "Réactiver dans Windows" } else { "Couper dans Windows" }, if muted { Tone::Warn } else { Tone::Plain }).on_click(cx.listener(|this, _, _, cx| this.winmic_windows("mute", cx))))
+                    .when(!w.hardware_active, |d| d.child(ui::caption("Parle normalement : la barre doit rester dans le vert."))),
             );
+        let selector = self.winmic_selector(Some(guid), cx);
+        if w.hardware_active {
+            let toggle = ui::pill("winmic-windows-options", Some(Icon::Sliders), if w.windows_options { "Masquer les options Windows" } else { "Options Windows" }, Tone::Plain)
+                .on_click(cx.listener(|this, _, _, cx| { this.winmic.windows_options = !this.winmic.windows_options; cx.notify(); }));
+            return div().flex().flex_col().gap(px(12.))
+                .child(div().flex().items_end().flex_wrap().gap(px(14.)).child(selector).child(toggle))
+                .when(w.windows_options, |d| d.child(windows).child(live));
+        }
+        let identity = div().flex().flex_col().gap(px(14.)).child(selector).child(windows);
         if wide {
             div().flex().items_start().gap(px(48.)).child(identity.w(px(440.)).flex_none()).child(live.flex_1().min_w(px(0.)).pt(px(28.)))
         } else {
@@ -824,6 +897,28 @@ mod tests {
 
     const A: &str = "{aaaaaaaa-0000-0000-0000-000000000001}";
     const B: &str = "{bbbbbbbb-0000-0000-0000-000000000002}";
+
+    #[test]
+    fn une_seule_chaine_selon_le_micro_et_les_commandes_disponibles() {
+        let mut page = WinMicPage {
+            view: Some(json!({"state":{"selected": A}, "live":{"captures":[
+                {"guid": A,"goxlr":true},{"guid":B,"goxlr":false}
+            ]}})),
+            ..Default::default()
+        };
+        assert_eq!(page.goxlr_guid().as_deref(), Some(A));
+        assert!(page.hardware_choice(Some("ready")));
+        assert!(!page.hardware_choice(Some("audio")));
+        assert!(!page.hardware_choice(Some("disconnected")));
+        page.view.as_mut().unwrap()["state"]["selected"] = json!(B);
+        assert!(!page.hardware_choice(Some("ready")));
+        page.prefer_goxlr = true;
+        assert!(page.hardware_choice(Some("ready")));
+        page.prefer_goxlr = false;
+        page.view = Some(json!({"state":{"selected":null},"live":{"captures":[]}}));
+        assert!(page.hardware_choice(Some("ready")));
+        assert!(!page.hardware_choice(Some("disconnected")));
+    }
 
     #[test]
     fn le_dernier_volume_est_conserve_pour_chaque_entree() {
